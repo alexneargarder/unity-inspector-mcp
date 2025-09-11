@@ -63,6 +63,16 @@ class UnityInspectorClient {
     });
   }
 
+  async checkHealth() {
+    try {
+      const result = await this.sendCommand("ping", {});
+      return true;
+    } catch (error) {
+      console.error("Health check failed:", error.message);
+      return false;
+    }
+  }
+
   async sendCommand(method, params = {}) {
     if (!this.connected) {
       await this.connect();
@@ -74,6 +84,8 @@ class UnityInspectorClient {
         method: method,
         params: params
       }) + '\n';
+      
+      console.error(`Sending message: ${message.trim()}`);
 
       let responseData = '';
 
@@ -97,11 +109,11 @@ class UnityInspectorClient {
       this.socket.on('data', dataHandler);
       this.socket.write(message);
 
-      // Timeout after 5 seconds
+      // Timeout after 2 seconds
       setTimeout(() => {
         this.socket.removeListener('data', dataHandler);
         reject(new Error('Command timeout'));
-      }, 5000);
+      }, 2000);
     });
   }
 
@@ -150,6 +162,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               description: "Include inactive GameObjects",
               default: true,
             },
+            maxResults: {
+              type: "number",
+              description: "Maximum number of GameObjects to return",
+              default: 100,
+            },
           },
         },
       },
@@ -163,8 +180,31 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Path to the GameObject (e.g., '/Player')",
             },
+            detailed: {
+              type: "boolean",
+              description: "Include full component details (default: false for lightweight response)",
+              default: false,
+            },
           },
           required: ["path"],
+        },
+      },
+      {
+        name: "inspect_component",
+        description: "Inspect a specific component on a GameObject",
+        inputSchema: {
+          type: "object",
+          properties: {
+            path: {
+              type: "string",
+              description: "Path to the GameObject (e.g., '/Player')",
+            },
+            componentType: {
+              type: "string",
+              description: "Component type name to inspect",
+            },
+          },
+          required: ["path", "componentType"],
         },
       },
       {
@@ -226,16 +266,158 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "execute_code",
-        description: "Execute C# code in the Unity context (not yet implemented)",
+        description: "Execute C# expressions in the Unity context. Uses Mono.CSharp.Evaluator - expects expressions, not statements",
         inputSchema: {
           type: "object",
           properties: {
             code: {
               type: "string",
-              description: "C# code to execute",
+              description: "C# expression to evaluate. Cannot use 'return' statements",
             },
           },
           required: ["code"],
+        },
+      },
+      {
+        name: "modify_component",
+        description: "Modify properties of a component on a GameObject",
+        inputSchema: {
+          type: "object",
+          properties: {
+            path: {
+              type: "string",
+              description: "Path to the GameObject",
+            },
+            component: {
+              type: "string",
+              description: "Component type name",
+            },
+            properties: {
+              type: "object",
+              description: "Properties to modify",
+            },
+          },
+          required: ["path", "component", "properties"],
+        },
+      },
+      {
+        name: "teleport_player",
+        description: "Teleport the player to a specific position",
+        inputSchema: {
+          type: "object",
+          properties: {
+            x: {
+              type: "number",
+              description: "X coordinate",
+            },
+            y: {
+              type: "number",
+              description: "Y coordinate",
+            },
+            z: {
+              type: "number",
+              description: "Z coordinate (optional)",
+            },
+          },
+          required: ["x", "y"],
+        },
+      },
+      {
+        name: "set_player_health",
+        description: "Set the player's health",
+        inputSchema: {
+          type: "object",
+          properties: {
+            health: {
+              type: "number",
+              description: "Health value",
+            },
+          },
+          required: ["health"],
+        },
+      },
+      {
+        name: "spawn_entity",
+        description: "Spawn an entity at a specific position (limited implementation)",
+        inputSchema: {
+          type: "object",
+          properties: {
+            type: {
+              type: "string",
+              description: "Entity type to spawn",
+            },
+            x: {
+              type: "number",
+              description: "X coordinate",
+            },
+            y: {
+              type: "number",
+              description: "Y coordinate",
+            },
+          },
+          required: ["type", "x", "y"],
+        },
+      },
+      {
+        name: "set_game_speed",
+        description: "Set the game speed (time scale)",
+        inputSchema: {
+          type: "object",
+          properties: {
+            speed: {
+              type: "number",
+              description: "Speed multiplier (1.0 = normal, 0.5 = half speed, 2.0 = double speed)",
+            },
+          },
+          required: ["speed"],
+        },
+      },
+      {
+        name: "list_campaigns",
+        description: "List all available campaigns with their indices",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      {
+        name: "go_to_level",
+        description: "Go directly to a specific campaign level",
+        inputSchema: {
+          type: "object",
+          properties: {
+            campaignIndex: {
+              type: "number",
+              description: "Campaign index (0-27)",
+            },
+            levelIndex: {
+              type: "number",
+              description: "Level index within the campaign (0-based)",
+            },
+          },
+          required: ["campaignIndex", "levelIndex"],
+        },
+      },
+      {
+        name: "simulate_input",
+        description: "Simulate keyboard/controller input",
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: {
+              type: "string",
+              description: "Input action (up, down, left, right, fire, jump, special, highFive, gesture, sprint, start)",
+            },
+            duration: {
+              type: "number",
+              description: "Hold duration in milliseconds (optional)",
+            },
+            player: {
+              type: "number",
+              description: "Player number (0-3, default: 0)",
+            },
+          },
+          required: ["action"],
         },
       },
     ],
@@ -255,9 +437,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
 
       case "list_gameobjects":
-        result = await unityClient.sendCommand("list_gameobjects", {
+        const listParams = {
           includeInactive: args.includeInactive ?? true,
-        });
+          maxResults: args.maxResults ?? 100,
+        };
+        console.error(`list_gameobjects params:`, listParams);
+        result = await unityClient.sendCommand("list_gameobjects", listParams);
         break;
 
       case "inspect_gameobject":
@@ -266,6 +451,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         result = await unityClient.sendCommand("inspect_gameobject", {
           path: args.path,
+          detailed: args.detailed ?? false,
+        });
+        break;
+
+      case "inspect_component":
+        if (!args.path) {
+          throw new Error("GameObject path is required");
+        }
+        if (!args.componentType) {
+          throw new Error("Component type is required");
+        }
+        result = await unityClient.sendCommand("inspect_component", {
+          path: args.path,
+          componentType: args.componentType,
         });
         break;
 
@@ -298,6 +497,90 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         result = await unityClient.sendCommand("execute_code", {
           code: args.code,
+        });
+        break;
+
+      case "modify_component":
+        if (!args.path || !args.component || !args.properties) {
+          throw new Error("Path, component, and properties are required");
+        }
+        result = await unityClient.sendCommand("modify_component", {
+          path: args.path,
+          component: args.component,
+          properties: args.properties,
+        });
+        break;
+
+      case "teleport_player":
+        if (args.x === undefined || args.y === undefined) {
+          throw new Error("X and Y coordinates are required");
+        }
+        result = await unityClient.sendCommand("teleport_player", {
+          x: args.x,
+          y: args.y,
+          z: args.z,
+        });
+        break;
+
+      case "set_player_health":
+        if (args.health === undefined) {
+          throw new Error("Health value is required");
+        }
+        result = await unityClient.sendCommand("set_player_health", {
+          health: args.health,
+        });
+        break;
+
+      case "spawn_entity":
+        if (!args.type || args.x === undefined || args.y === undefined) {
+          throw new Error("Entity type and coordinates are required");
+        }
+        result = await unityClient.sendCommand("spawn_entity", {
+          type: args.type,
+          x: args.x,
+          y: args.y,
+        });
+        break;
+
+      case "set_game_speed":
+        if (args.speed === undefined) {
+          throw new Error("Speed value is required");
+        }
+        result = await unityClient.sendCommand("set_game_speed", {
+          speed: args.speed,
+        });
+        break;
+
+      case "list_campaigns":
+        result = await unityClient.sendCommand("list_campaigns", {});
+        break;
+
+      case "go_to_level":
+        if (args.campaignIndex === undefined || args.levelIndex === undefined) {
+          throw new Error("Campaign index and level index are required");
+        }
+        result = await unityClient.sendCommand("go_to_level", {
+          campaignIndex: args.campaignIndex,
+          levelIndex: args.levelIndex,
+        });
+        
+        // Health check after level loading
+        setTimeout(async () => {
+          const isHealthy = await unityClient.checkHealth();
+          if (!isHealthy) {
+            console.error("WARNING: Game may have crashed after go_to_level");
+          }
+        }, 3000);
+        break;
+
+      case "simulate_input":
+        if (!args.action) {
+          throw new Error("Input action is required");
+        }
+        result = await unityClient.sendCommand("simulate_input", {
+          action: args.action,
+          duration: args.duration,
+          player: args.player,
         });
         break;
 
