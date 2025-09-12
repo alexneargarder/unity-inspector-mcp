@@ -72,7 +72,15 @@ For WSL users, use the Windows path format:
 - `inspect_player` - Get detailed information about the player(s)
 - `list_enemies` - List all enemies in the scene
 - `take_screenshot` - Take a screenshot of the game
-- `execute_code` - Execute C# code in the Unity context (not yet fully implemented)
+- `execute_code` - Execute C# expressions in the Unity context
+- `inspect_component` - Inspect a specific component on a GameObject
+- `modify_component` - Modify properties of a component
+- `teleport_player` - Teleport the player to specific coordinates
+- `set_player_health` - Set the player's health
+- `set_game_speed` - Set the game speed (time scale)
+- `list_campaigns` - List all available campaigns
+- `go_to_level` - Go directly to a specific campaign level
+- `simulate_input` - Simulate keyboard/controller input
 
 ## Architecture
 
