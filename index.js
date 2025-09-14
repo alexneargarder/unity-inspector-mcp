@@ -252,16 +252,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "take_screenshot",
-        description: "Take a screenshot of the game",
+        description: "Take a screenshot of the game. Returns the path to the saved screenshot.",
         inputSchema: {
           type: "object",
-          properties: {
-            filename: {
-              type: "string",
-              description: "Filename for the screenshot",
-              default: "latest.png",
-            },
-          },
+          properties: {},
         },
       },
       {
@@ -406,11 +400,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             action: {
               type: "string",
-              description: "Input action (up, down, left, right, fire, jump, special, highFive, gesture, sprint, start)",
+              description: "Input action (up, down, left, right, fire, jump, special, highFive, gesture, sprint, start, escape)",
             },
             duration: {
               type: "number",
               description: "Hold duration in milliseconds (optional)",
+            },
+            count: {
+              type: "number",
+              description: "Number of times to press the key (optional, cannot be used with duration)",
+            },
+            interval: {
+              type: "number",
+              description: "Milliseconds between presses when count > 1 (default: 200)",
             },
             player: {
               type: "number",
@@ -486,9 +488,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
 
       case "take_screenshot":
-        result = await unityClient.sendCommand("take_screenshot", {
-          filename: args.filename ?? "latest.png",
-        });
+        result = await unityClient.sendCommand("take_screenshot");
         break;
 
       case "execute_code":
@@ -580,6 +580,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = await unityClient.sendCommand("simulate_input", {
           action: args.action,
           duration: args.duration,
+          count: args.count,
+          interval: args.interval,
           player: args.player,
         });
         break;
