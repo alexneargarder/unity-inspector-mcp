@@ -10,8 +10,14 @@ import net from 'net';
 import os from 'os';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import fs from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 const execAsync = promisify(exec);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const SCRIPTS_DIR = path.join(__dirname, 'scripts');
 
 class UnityInspectorClient {
   constructor() {
@@ -122,6 +128,133 @@ class UnityInspectorClient {
       this.socket.destroy();
       this.connected = false;
     }
+  }
+}
+
+// Test script functions
+async function listTestScripts() {
+  try {
+    const files = await fs.readdir(SCRIPTS_DIR);
+    const scripts = [];
+
+    for (const file of files) {
+      if (!file.endsWith('.json')) continue;
+
+      try {
+        const filePath = path.join(SCRIPTS_DIR, file);
+        const content = await fs.readFile(filePath, 'utf-8');
+        const script = JSON.parse(content);
+
+        scripts.push({
+          name: file,
+          title: script.name || file,
+          description: script.description || 'No description',
+          steps: script.steps?.length || 0,
+        });
+      } catch (err) {
+        console.error(`Error reading script ${file}: ${err.message}`);
+      }
+    }
+
+    return {
+      count: scripts.length,
+      scripts: scripts,
+      scriptsDirectory: SCRIPTS_DIR,
+    };
+  } catch (err) {
+    return {
+      error: err.message,
+      count: 0,
+      scripts: [],
+    };
+  }
+}
+
+async function runTestScript(scriptNameOrPath, unityClient) {
+  try {
+    let scriptPath;
+
+    if (path.isAbsolute(scriptNameOrPath)) {
+      scriptPath = scriptNameOrPath;
+    } else {
+      scriptPath = path.join(SCRIPTS_DIR, scriptNameOrPath);
+      if (!scriptPath.endsWith('.json')) {
+        scriptPath += '.json';
+      }
+    }
+
+    console.error(`Loading test script: ${scriptPath}`);
+    const content = await fs.readFile(scriptPath, 'utf-8');
+    const script = JSON.parse(content);
+
+    if (!script.steps || !Array.isArray(script.steps)) {
+      throw new Error('Script must have a "steps" array');
+    }
+
+    const results = [];
+    const startTime = Date.now();
+
+    console.error(`Executing script: ${script.name || scriptNameOrPath}`);
+    console.error(`Steps: ${script.steps.length}`);
+
+    for (let i = 0; i < script.steps.length; i++) {
+      const step = script.steps[i];
+      const stepStartTime = Date.now();
+
+      try {
+        console.error(`Step ${i + 1}/${script.steps.length}: ${step.command}`);
+
+        const stepResult = await unityClient.sendCommand(step.command, step.params || {});
+
+        const stepDuration = Date.now() - stepStartTime;
+        results.push({
+          step: i + 1,
+          command: step.command,
+          params: step.params,
+          success: true,
+          result: stepResult,
+          duration: stepDuration,
+        });
+
+        if (step.wait) {
+          console.error(`Waiting ${step.wait}ms...`);
+          await new Promise(resolve => setTimeout(resolve, step.wait));
+        }
+      } catch (err) {
+        const stepDuration = Date.now() - stepStartTime;
+        results.push({
+          step: i + 1,
+          command: step.command,
+          params: step.params,
+          success: false,
+          error: err.message,
+          duration: stepDuration,
+        });
+
+        console.error(`Step ${i + 1} failed: ${err.message}`);
+        break;
+      }
+    }
+
+    const totalDuration = Date.now() - startTime;
+    const successCount = results.filter(r => r.success).length;
+
+    return {
+      scriptName: script.name || scriptNameOrPath,
+      description: script.description,
+      totalSteps: script.steps.length,
+      completedSteps: results.length,
+      successfulSteps: successCount,
+      failedSteps: results.length - successCount,
+      totalDuration: totalDuration,
+      results: results,
+    };
+  } catch (err) {
+    console.error(`Error running test script: ${err.message}`);
+    return {
+      error: err.message,
+      scriptPath: scriptNameOrPath,
+    };
   }
 }
 
@@ -422,6 +555,28 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["action"],
         },
       },
+      {
+        name: "list_test_scripts",
+        description: "List all available test scripts in the scripts directory",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      {
+        name: "run_test_script",
+        description: "Execute a test script containing a sequence of commands. Scripts are JSON files with command sequences that can include wait delays.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            script: {
+              type: "string",
+              description: "Script name (from scripts/ directory) or absolute file path",
+            },
+          },
+          required: ["script"],
+        },
+      },
     ],
   };
 });
@@ -584,6 +739,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           interval: args.interval,
           player: args.player,
         });
+        break;
+
+      case "list_test_scripts":
+        result = await listTestScripts();
+        break;
+
+      case "run_test_script":
+        if (!args.script) {
+          throw new Error("Script name or path is required");
+        }
+        result = await runTestScript(args.script, unityClient);
         break;
 
       default:

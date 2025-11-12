@@ -1,0 +1,35 @@
+{
+  "name": "Level Sequence Test",
+  "description": "Navigate through menu and load different levels",
+  "steps": [
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 0,
+        "levelIndex": 0
+      },
+      "wait": 3000
+    },
+    {
+      "command": "inspect_player"
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "escape"
+      },
+      "wait": 2000
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 0,
+        "levelIndex": 1
+      },
+      "wait": 3000
+    },
+    {
+      "command": "take_screenshot"
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "name": "Combat Test",
+  "description": "Test combat actions and special abilities",
+  "steps": [
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 1,
+        "levelIndex": 0
+      },
+      "wait": 3000
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "right",
+        "duration": 1500
+      },
+      "wait": 500
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "fire",
+        "count": 5,
+        "interval": 200
+      },
+      "wait": 1000
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "special"
+      },
+      "wait": 1000
+    },
+    {
+      "command": "list_enemies"
+    },
+    {
+      "command": "take_screenshot"
+    }
+  ]
+}

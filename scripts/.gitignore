@@ -1,0 +1,8 @@
+# User test scripts
+*
+
+# But keep examples directory and docs
+!examples/
+!examples/**
+!.gitignore
+!README.md

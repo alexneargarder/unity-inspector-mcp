@@ -1,0 +1,40 @@
+{
+  "name": "Movement Test",
+  "description": "Test basic movement and jumping mechanics",
+  "steps": [
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 0,
+        "levelIndex": 0
+      },
+      "wait": 3000
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "right",
+        "duration": 1000
+      },
+      "wait": 500
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "jump"
+      },
+      "wait": 1000
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "left",
+        "duration": 800
+      },
+      "wait": 500
+    },
+    {
+      "command": "take_screenshot"
+    }
+  ]
+}
