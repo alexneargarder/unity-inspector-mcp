@@ -206,19 +206,40 @@ async function runTestScript(scriptNameOrPath, unityClient) {
 
         const stepResult = await unityClient.sendCommand(step.command, step.params || {});
 
-        const stepDuration = Date.now() - stepStartTime;
-        results.push({
-          step: i + 1,
-          command: step.command,
-          params: step.params,
-          success: true,
-          result: stepResult,
-          duration: stepDuration,
-        });
+        // Check if the result indicates a failure (e.g., execute_code can return success: false)
+        const resultFailed = stepResult && typeof stepResult === 'object' && stepResult.success === false;
 
-        if (step.wait) {
-          console.error(`Waiting ${step.wait}ms...`);
-          await new Promise(resolve => setTimeout(resolve, step.wait));
+        const stepDuration = Date.now() - stepStartTime;
+
+        if (resultFailed) {
+          // Command executed but reported failure
+          results.push({
+            step: i + 1,
+            command: step.command,
+            params: step.params,
+            success: false,
+            error: stepResult.error || 'Command reported failure',
+            result: stepResult,
+            duration: stepDuration,
+          });
+
+          console.error(`Step ${i + 1} failed: ${stepResult.error || 'Command reported failure'}`);
+          break;
+        } else {
+          // Command succeeded
+          results.push({
+            step: i + 1,
+            command: step.command,
+            params: step.params,
+            success: true,
+            result: stepResult,
+            duration: stepDuration,
+          });
+
+          if (step.wait) {
+            console.error(`Waiting ${step.wait}ms...`);
+            await new Promise(resolve => setTimeout(resolve, step.wait));
+          }
         }
       } catch (err) {
         const stepDuration = Date.now() - stepStartTime;
