@@ -115,11 +115,21 @@ class UnityInspectorClient {
       this.socket.on('data', dataHandler);
       this.socket.write(message);
 
-      // Timeout after 2 seconds
+      // Calculate timeout based on command type
+      let timeout = 2000; // Default 2 seconds
+
+      // For simulate_input with multiple presses, calculate expected completion time
+      if (method === 'simulate_input' && params.count > 1) {
+        const count = params.count;
+        const interval = params.interval || 200;
+        // (count - 1) * interval + 1000ms buffer
+        timeout = (count - 1) * interval + 1000;
+      }
+
       setTimeout(() => {
         this.socket.removeListener('data', dataHandler);
         reject(new Error('Command timeout'));
-      }, 2000);
+      }, timeout);
     });
   }
 
