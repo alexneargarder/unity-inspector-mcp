@@ -19,6 +19,13 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const SCRIPTS_DIR = path.join(__dirname, 'scripts');
 
+// UMM log file tracking
+const UMM_LOG_PATHS = [
+  path.join(os.homedir(), '.config/r2modmanPlus-local/Broforce/profiles/Default/UMM/Core/Log.txt'),
+  path.join(os.homedir(), 'AppData/Roaming/r2modmanPlus-local/Broforce/profiles/Default/BepInEx/LogOutput.log'),
+];
+let watchLogOffset = 0;
+
 class UnityInspectorClient {
   constructor() {
     this.host = null;
@@ -237,6 +244,19 @@ class UnityInspectorClient {
       this.connected = false;
     }
   }
+}
+
+// Find the UMM log file
+async function findLogPath() {
+  for (const logPath of UMM_LOG_PATHS) {
+    try {
+      await fs.access(logPath);
+      return logPath;
+    } catch {
+      continue;
+    }
+  }
+  return null;
 }
 
 // Test script functions
@@ -713,6 +733,44 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: "game_state",
+        description: "Get a high-level summary of the current game state: scene, game mode, level info, player status, and bro type. Single call to orient yourself.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      {
+        name: "read_log",
+        description: "Read the UMM mod manager log file. Returns the last N lines by default, or filter by pattern.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            lines: {
+              type: "number",
+              description: "Number of lines to return from the end of the log (default: 50)",
+            },
+            filter: {
+              type: "string",
+              description: "Only return lines containing this string (case-insensitive)",
+            },
+          },
+        },
+      },
+      {
+        name: "watch_log",
+        description: "Return log entries that appeared since the last call to watch_log. First call returns the last 20 lines as a baseline. Use this for iterative debug loops.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            reset: {
+              type: "boolean",
+              description: "Reset the watch position to the end of the log (default: false)",
+            },
+          },
+        },
+      },
+      {
         name: "run_test_script",
         description: "Execute a test script containing a sequence of commands. Scripts are JSON files with command sequences that can include wait delays.",
         inputSchema: {
@@ -931,6 +989,93 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             lastError,
           };
         }
+        break;
+      }
+
+      case "game_state":
+        result = await unityClient.sendCommand("game_state", {});
+        break;
+
+      case "read_log": {
+        const logPath = await findLogPath();
+        if (!logPath) {
+          throw new Error("UMM log file not found");
+        }
+        const logContent = await fs.readFile(logPath, 'utf-8');
+        const allLines = logContent.split('\n');
+        let lines = allLines;
+
+        if (args.filter) {
+          const filterLower = args.filter.toLowerCase();
+          lines = lines.filter(l => l.toLowerCase().includes(filterLower));
+        }
+
+        const count = args.lines ?? 50;
+        lines = lines.slice(-count);
+
+        result = {
+          path: logPath,
+          totalLines: allLines.length,
+          returnedLines: lines.length,
+          content: lines.join('\n'),
+        };
+        break;
+      }
+
+      case "watch_log": {
+        const logPath = await findLogPath();
+        if (!logPath) {
+          throw new Error("UMM log file not found");
+        }
+
+        const stat = await fs.stat(logPath);
+        const fileSize = stat.size;
+
+        if (args.reset) {
+          watchLogOffset = fileSize;
+          result = {
+            message: "Watch position reset to end of log",
+            fileSize,
+          };
+          break;
+        }
+
+        if (watchLogOffset === 0 || watchLogOffset > fileSize) {
+          // First call or log was truncated/rotated — return last 20 lines as baseline
+          const logContent = await fs.readFile(logPath, 'utf-8');
+          const lines = logContent.split('\n').slice(-20);
+          watchLogOffset = fileSize;
+          result = {
+            isBaseline: true,
+            newLines: lines.length,
+            content: lines.join('\n'),
+          };
+          break;
+        }
+
+        if (watchLogOffset === fileSize) {
+          result = {
+            newLines: 0,
+            content: "",
+            message: "No new log entries",
+          };
+          break;
+        }
+
+        // Read only the new bytes
+        const fh = await fs.open(logPath, 'r');
+        const bytesToRead = fileSize - watchLogOffset;
+        const buffer = Buffer.alloc(bytesToRead);
+        await fh.read(buffer, 0, bytesToRead, watchLogOffset);
+        await fh.close();
+        watchLogOffset = fileSize;
+
+        const newContent = buffer.toString('utf-8');
+        const newLines = newContent.split('\n').filter(l => l.length > 0);
+        result = {
+          newLines: newLines.length,
+          content: newContent.trimEnd(),
+        };
         break;
       }
 
