@@ -24,16 +24,100 @@ class UnityInspectorClient {
     this.host = null;
     this.port = 9999;
     this.connected = false;
+    this.platform = null; // 'wsl', 'linux', or 'native'
+    this.gamePath = null;
+    this.protonPrefix = null;
+  }
+
+  async detectPlatform() {
+    if (this.platform) return;
+
+    if (os.release().toLowerCase().includes('microsoft')) {
+      this.platform = 'wsl';
+      console.error('Platform: WSL');
+    } else if (os.platform() === 'linux') {
+      this.platform = 'linux';
+      // Try to find Proton prefix for path translation
+      await this.detectGamePaths();
+      console.error(`Platform: Linux (game path: ${this.gamePath || 'not found'})`);
+    } else {
+      this.platform = 'native';
+      console.error('Platform: native Windows/macOS');
+    }
+  }
+
+  async detectGamePaths() {
+    // Common Steam library locations
+    const steamPaths = [
+      path.join(os.homedir(), '.local/share/Steam'),
+      path.join(os.homedir(), '.steam/steam'),
+    ];
+
+    for (const steamPath of steamPaths) {
+      const gamePath = path.join(steamPath, 'steamapps/common/Broforce');
+      try {
+        await fs.access(gamePath);
+        this.gamePath = gamePath;
+
+        // Check for Proton prefix (appid 274190)
+        const prefixPath = path.join(steamPath, 'steamapps/compatdata/274190/pfx');
+        try {
+          await fs.access(prefixPath);
+          this.protonPrefix = prefixPath;
+          console.error(`Proton prefix found: ${prefixPath}`);
+        } catch {
+          console.error('No Proton prefix found - assuming native Linux/Distrobox');
+        }
+        return;
+      } catch {
+        continue;
+      }
+    }
+    console.error('Could not auto-detect game path');
+  }
+
+  translateScreenshotPath(gameSidePath) {
+    if (!gameSidePath) return gameSidePath;
+
+    // If it's already a valid absolute Linux path, no translation needed
+    if (gameSidePath.startsWith('/')) {
+      return gameSidePath;
+    }
+
+    if (this.platform === 'wsl') {
+      // WSL: game runs on Windows, path comes as forward-slash Windows path
+      // Convert C:/Users/... to /mnt/c/Users/...
+      const match = gameSidePath.match(/^([A-Za-z]):\/(.*)/);
+      if (match) {
+        return `/mnt/${match[1].toLowerCase()}/${match[2]}`;
+      }
+      return gameSidePath;
+    }
+
+    if (this.platform === 'linux' && this.protonPrefix) {
+      // Proton: game sees Windows-style paths with drive letters
+      const match = gameSidePath.match(/^([A-Za-z]):\/(.*)/);
+      if (match) {
+        const driveLetter = match[1].toLowerCase();
+        if (driveLetter === 'z') {
+          // Z: drive maps to real Linux root
+          return '/' + match[2];
+        }
+        return path.join(this.protonPrefix, `dosdevices/${driveLetter}:`, match[2]);
+      }
+    }
+
+    return gameSidePath;
   }
 
   async getServerHost() {
-    // Check if running in WSL
-    if (os.release().toLowerCase().includes('microsoft')) {
+    await this.detectPlatform();
+
+    if (this.platform === 'wsl') {
       try {
-        // Get Windows host IP from default route
         const result = await execAsync('ip route show default');
         const host = result.stdout.split(' ')[2];
-        console.error(`WSL detected, using Windows host: ${host}`);
+        console.error(`WSL: using Windows host: ${host}`);
         return host;
       } catch (e) {
         console.error('Failed to get WSL host, using fallback: 172.21.80.1');
@@ -48,10 +132,19 @@ class UnityInspectorClient {
       this.host = await this.getServerHost();
     }
 
+    // Clean up any existing socket
+    if (this.socket) {
+      this.socket.removeAllListeners();
+      this.socket.destroy();
+      this.socket = null;
+    }
+
     return new Promise((resolve, reject) => {
       this.socket = new net.Socket();
-      
+      let settled = false;
+
       this.socket.connect(this.port, this.host, () => {
+        settled = true;
         this.connected = true;
         console.error(`Connected to Unity Inspector at ${this.host}:${this.port}`);
         resolve();
@@ -59,7 +152,12 @@ class UnityInspectorClient {
 
       this.socket.on('error', (err) => {
         this.connected = false;
-        reject(err);
+        if (!settled) {
+          settled = true;
+          reject(err);
+        } else {
+          console.error(`Socket error (idle): ${err.message}`);
+        }
       });
 
       this.socket.on('close', () => {
@@ -214,7 +312,10 @@ async function runTestScript(scriptNameOrPath, unityClient) {
       try {
         console.error(`Step ${i + 1}/${script.steps.length}: ${step.command}`);
 
-        const stepResult = await unityClient.sendCommand(step.command, step.params || {});
+        let stepResult = await unityClient.sendCommand(step.command, step.params || {});
+        if (step.command === 'take_screenshot' && stepResult && stepResult.path) {
+          stepResult.path = unityClient.translateScreenshotPath(stepResult.path);
+        }
 
         // Check if the result indicates a failure (e.g., execute_code can return success: false)
         const resultFailed = stepResult && typeof stepResult === 'object' && stepResult.success === false;
@@ -595,6 +696,23 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: "wait_for_game",
+        description: "Wait for the game to start up and the Unity Inspector TCP server to become responsive. Polls the connection until a ping succeeds or timeout is reached.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            timeout: {
+              type: "number",
+              description: "Maximum time to wait in seconds (default: 60)",
+            },
+            interval: {
+              type: "number",
+              description: "Seconds between connection attempts (default: 3)",
+            },
+          },
+        },
+      },
+      {
         name: "run_test_script",
         description: "Execute a test script containing a sequence of commands. Scripts are JSON files with command sequences that can include wait delays.",
         inputSchema: {
@@ -675,6 +793,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "take_screenshot":
         result = await unityClient.sendCommand("take_screenshot");
+        if (result && result.path) {
+          result.path = unityClient.translateScreenshotPath(result.path);
+        }
         break;
 
       case "execute_code":
@@ -776,6 +897,43 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = await listTestScripts();
         break;
 
+      case "wait_for_game": {
+        const timeout = (args.timeout ?? 60) * 1000;
+        const interval = (args.interval ?? 3) * 1000;
+        const startTime = Date.now();
+        let attempts = 0;
+        let lastError = null;
+
+        while (Date.now() - startTime < timeout) {
+          attempts++;
+          try {
+            // Force a fresh connection each attempt
+            unityClient.disconnect();
+            await unityClient.connect();
+            await unityClient.sendCommand("ping", {});
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+            result = {
+              success: true,
+              message: `Game is ready (${attempts} attempts, ${elapsed}s)`,
+            };
+            break;
+          } catch (err) {
+            lastError = err.message;
+            console.error(`Attempt ${attempts}: ${err.message}`);
+            await new Promise(resolve => setTimeout(resolve, interval));
+          }
+        }
+
+        if (!result) {
+          result = {
+            success: false,
+            message: `Game not ready after ${timeout / 1000}s (${attempts} attempts)`,
+            lastError,
+          };
+        }
+        break;
+      }
+
       case "run_test_script":
         if (!args.script) {
           throw new Error("Script name or path is required");
@@ -807,6 +965,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       isError: true,
     };
   }
+});
+
+// Prevent unhandled rejections from crashing the MCP server
+// (e.g., TCP socket errors when the game closes)
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled rejection:', reason);
 });
 
 // Cleanup on exit
