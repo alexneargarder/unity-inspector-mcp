@@ -5,10 +5,12 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import net from 'net';
 import os from 'os';
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs/promises';
 import path from 'path';
@@ -18,6 +20,7 @@ const execAsync = promisify(exec);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const SCRIPTS_DIR = path.join(__dirname, 'scripts');
+const CSHARP_SCRIPTS_DIR = path.join(SCRIPTS_DIR, 'csharp');
 
 // UMM log file tracking
 const UMM_LOG_PATHS = [
@@ -231,6 +234,14 @@ class UnityInspectorClient {
         timeout = (count - 1) * interval + 1000;
       }
 
+      // Script compilation + execution can be slow
+      if (method === 'execute_script' || method === 'compile_script') {
+        timeout = 30000;
+      }
+      if (method === 'unload_script') {
+        timeout = 10000;
+      }
+
       setTimeout(() => {
         this.socket.removeListener('data', dataHandler);
         reject(new Error('Command timeout'));
@@ -257,6 +268,111 @@ async function findLogPath() {
     }
   }
   return null;
+}
+
+// C# script library functions
+function parseScriptMetadata(content) {
+  const metadata = {};
+  const lines = content.split('\n');
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('//')) break;
+
+    const match = trimmed.match(/^\/\/\s*#(\w+)\s+(.*)/);
+    if (match) {
+      const key = match[1];
+      const value = match[2].trim();
+      if (key === 'args') {
+        if (!metadata.args) metadata.args = [];
+        metadata.args.push(value);
+      } else {
+        metadata[key] = value;
+      }
+    }
+  }
+  return metadata;
+}
+
+async function listCSharpScripts() {
+  try {
+    await fs.mkdir(CSHARP_SCRIPTS_DIR, { recursive: true });
+    const files = await fs.readdir(CSHARP_SCRIPTS_DIR);
+    const scripts = [];
+
+    for (const file of files) {
+      if (!file.endsWith('.cs')) continue;
+
+      try {
+        const filePath = path.join(CSHARP_SCRIPTS_DIR, file);
+        const content = await fs.readFile(filePath, 'utf-8');
+        const metadata = parseScriptMetadata(content);
+
+        scripts.push({
+          file,
+          name: metadata.name || file.replace('.cs', ''),
+          description: metadata.description || 'No description',
+          tags: metadata.tags || '',
+          args: metadata.args || [],
+          path: filePath,
+        });
+      } catch (err) {
+        console.error(`Error reading script ${file}: ${err.message}`);
+      }
+    }
+
+    return {
+      count: scripts.length,
+      scripts,
+      scriptsDirectory: CSHARP_SCRIPTS_DIR,
+    };
+  } catch (err) {
+    return {
+      error: err.message,
+      count: 0,
+      scripts: [],
+    };
+  }
+}
+
+async function buildScriptCatalog() {
+  const result = await listCSharpScripts();
+  if (result.count === 0) {
+    return '# C# Script Library\n\nNo scripts available yet. Create .cs files in scripts/csharp/ to add to the library.';
+  }
+
+  let catalog = '# C# Script Library\n\n';
+  for (const script of result.scripts) {
+    let line = `- ${script.name}: ${script.description}`;
+    if (script.tags) {
+      line += ` [tags: ${script.tags}]`;
+    }
+    if (script.args.length > 0) {
+      line += ` [args: ${script.args.map(a => a.split(':')[0].trim()).join(', ')}]`;
+    }
+    catalog += line + '\n';
+  }
+  return catalog;
+}
+
+async function readScriptSource(scriptPath) {
+  // If it's an absolute path, read directly
+  if (path.isAbsolute(scriptPath)) {
+    return {
+      source: await fs.readFile(scriptPath, 'utf-8'),
+      name: path.basename(scriptPath, '.cs'),
+    };
+  }
+
+  // Otherwise resolve from library
+  let resolved = scriptPath;
+  if (!resolved.endsWith('.cs')) {
+    resolved += '.cs';
+  }
+  const filePath = path.join(CSHARP_SCRIPTS_DIR, resolved);
+  return {
+    source: await fs.readFile(filePath, 'utf-8'),
+    name: path.basename(resolved, '.cs'),
+  };
 }
 
 // Test script functions
@@ -420,12 +536,28 @@ const server = new Server(
   {
     capabilities: {
       tools: {},
+      resources: {},
     },
   }
 );
 
 // Define available tools
 server.setRequestHandler(ListToolsRequestSchema, async () => {
+  // Build dynamic script catalog for execute_script description
+  let scriptCatalog = "";
+  try {
+    const scripts = await listCSharpScripts();
+    if (scripts.count > 0) {
+      scriptCatalog = "\n\nAvailable library scripts:\n" + scripts.scripts.map(s => {
+        let line = `- ${s.name}: ${s.description}`;
+        if (s.args.length > 0) {
+          line += ` [args: ${s.args.map(a => a.split(':')[0].trim()).join(', ')}]`;
+        }
+        return line;
+      }).join("\n");
+    }
+  } catch {}
+
   return {
     tools: [
       {
@@ -784,6 +916,81 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["script"],
         },
       },
+      {
+        name: "execute_script",
+        description: "Compile and run a C# script file in the Unity runtime. Supports full class definitions, MonoBehaviours, Harmony patches, and private member access. Scripts can define Main() for execution and Unload() for cleanup. Use ScriptContext for Harmony instances, logging, and arguments." + scriptCatalog,
+        inputSchema: {
+          type: "object",
+          properties: {
+            path: {
+              type: "string",
+              description: "Script name (from scripts/csharp/) or absolute file path to a .cs file",
+            },
+            args: {
+              type: "object",
+              description: "Optional key-value arguments passed to the script via ScriptContext.Args",
+            },
+          },
+          required: ["path"],
+        },
+      },
+      {
+        name: "compile_script",
+        description: "Compile a C# script without running it. Returns compilation success/failure and any compiler errors. Useful for validating scripts before execution.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            path: {
+              type: "string",
+              description: "Script name (from scripts/csharp/) or absolute file path to a .cs file",
+            },
+          },
+          required: ["path"],
+        },
+      },
+      {
+        name: "list_scripts",
+        description: "List available C# scripts in the script library with their metadata (name, description, tags, arguments).",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      {
+        name: "unload_script",
+        description: "Unload an active C# script, cleaning up its Harmony patches, GameObjects, and calling its Unload() method if defined.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            name: {
+              type: "string",
+              description: "Name of the script to unload",
+            },
+          },
+          required: ["name"],
+        },
+      },
+      {
+        name: "launch_game",
+        description: "Launch Broforce using the bf command. Waits for the game to become responsive.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            vanilla: {
+              type: "boolean",
+              description: "Launch without mods (default: false)",
+            },
+          },
+        },
+      },
+      {
+        name: "stop_game",
+        description: "Stop the running Broforce process.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
     ],
   };
 });
@@ -1086,6 +1293,106 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = await runTestScript(args.script, unityClient);
         break;
 
+      case "execute_script": {
+        if (!args.path) {
+          throw new Error("Script path is required");
+        }
+        const scriptData = await readScriptSource(args.path);
+        result = await unityClient.sendCommand("execute_script", {
+          source: scriptData.source,
+          name: scriptData.name,
+          args: args.args || {},
+        });
+        break;
+      }
+
+      case "compile_script": {
+        if (!args.path) {
+          throw new Error("Script path is required");
+        }
+        const compileData = await readScriptSource(args.path);
+        result = await unityClient.sendCommand("compile_script", {
+          source: compileData.source,
+          name: compileData.name,
+        });
+        break;
+      }
+
+      case "list_scripts":
+        result = await listCSharpScripts();
+        break;
+
+      case "unload_script":
+        if (!args.name) {
+          throw new Error("Script name is required");
+        }
+        result = await unityClient.sendCommand("unload_script", {
+          name: args.name,
+        });
+        break;
+
+      case "launch_game": {
+        const vanillaFlag = args.vanilla ? " --vanilla" : "";
+        try {
+          // Launch bf in background with stdio detached to avoid corrupting MCP's stdio transport
+          const bfArgs = vanillaFlag ? ["--vanilla"] : [];
+          const bfProcess = spawn("bf", bfArgs, {
+            detached: true,
+            stdio: "ignore",
+          });
+          bfProcess.unref();
+
+          // Wait for the game to become responsive
+          const launchTimeout = 60000;
+          const launchInterval = 3000;
+          const launchStart = Date.now();
+          let launchAttempts = 0;
+
+          while (Date.now() - launchStart < launchTimeout) {
+            launchAttempts++;
+            await new Promise(resolve => setTimeout(resolve, launchInterval));
+            try {
+              unityClient.disconnect();
+              await unityClient.connect();
+              await unityClient.sendCommand("ping", {});
+              result = {
+                success: true,
+                message: `Game launched and ready (${launchAttempts} attempts, ${((Date.now() - launchStart) / 1000).toFixed(1)}s)`,
+              };
+              break;
+            } catch {
+              console.error(`Launch attempt ${launchAttempts}: waiting...`);
+            }
+          }
+
+          if (!result) {
+            result = {
+              success: false,
+              message: `Game launched but not responsive after ${launchTimeout / 1000}s`,
+            };
+          }
+        } catch (err) {
+          throw new Error(`Failed to launch game: ${err.message}`);
+        }
+        break;
+      }
+
+      case "stop_game": {
+        // Disconnect TCP first
+        unityClient.disconnect();
+        try {
+          // Use spawn with ignored stdio to avoid corrupting MCP transport
+          const kill = spawn("sh", ["-c", "pkill -9 -x 'Broforce.x86_64' 2>/dev/null || pkill -9 -x Broforce 2>/dev/null || pkill -9 -f 'Broforce_beta.exe' 2>/dev/null || true"], {
+            stdio: "ignore",
+          });
+          await new Promise((resolve) => kill.on("close", resolve));
+          result = { success: true, message: "Game stopped" };
+        } catch {
+          result = { success: true, message: "Game may already be stopped" };
+        }
+        break;
+      }
+
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -1110,6 +1417,36 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       isError: true,
     };
   }
+});
+
+// MCP Resource: C# Script Library Catalog
+server.setRequestHandler(ListResourcesRequestSchema, async () => {
+  return {
+    resources: [
+      {
+        uri: "scripts://csharp/catalog",
+        name: "C# Script Library",
+        description: "Available C# scripts for Unity runtime execution",
+        mimeType: "text/plain",
+      },
+    ],
+  };
+});
+
+server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+  if (request.params.uri === "scripts://csharp/catalog") {
+    const catalog = await buildScriptCatalog();
+    return {
+      contents: [
+        {
+          uri: "scripts://csharp/catalog",
+          text: catalog,
+          mimeType: "text/plain",
+        },
+      ],
+    };
+  }
+  throw new Error(`Unknown resource: ${request.params.uri}`);
 });
 
 // Prevent unhandled rejections from crashing the MCP server

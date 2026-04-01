@@ -1,8 +1,10 @@
 # User test scripts
 *
 
-# But keep examples directory and docs
+# But keep examples directory, C# script library, and docs
 !examples/
 !examples/**
+!csharp/
+!csharp/**
 !.gitignore
 !README.md
