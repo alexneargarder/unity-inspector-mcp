@@ -1,16 +1,26 @@
 # Unity Inspector MCP Server
 
-Node.js MCP server bridging Claude to the Unity Inspector Mod running inside Broforce. Single file (`index.js`).
+Node.js MCP server bridging Claude to the Unity Inspector Mod running inside Broforce.
 
 ## Architecture
 
 ```
-Claude Code --stdio/MCP--> index.js --TCP:9999--> Unity Inspector Mod (C#) --> Unity Game
+Claude Code --stdio/MCP--> wrapper.js --stdio--> index.js --TCP:9999--> Unity Inspector Mod (C#) --> Unity Game
 ```
 
+- `wrapper.js` is a hot-reload proxy — proxies MCP messages between Claude Code and `index.js`, injects a `restart_server` tool
+- `index.js` is the actual MCP server with all tool implementations
 - **stdio** carries the MCP protocol — NEVER let child processes write to stdout (use `spawn` with `stdio: "ignore"`)
 - TCP JSON protocol: `{"id":"...","method":"...","params":{...}}\n` → `{"id":"...","success":true,"result":{...}}\n`
 - Some tools are Node.js-only (file operations, process management), others route through TCP to the game
+
+### Hot Reload (wrapper.js)
+
+- `.mcp.json` points to `wrapper.js`, which spawns `index.js` as a child
+- `restart_server` tool: kills the child, respawns it, replays the MCP `initialize` handshake — Claude Code doesn't notice the swap
+- Use `restart_server` after modifying `index.js` instead of asking the user to `/mcp`
+- The wrapper itself is thin (~200 lines) — changes to wrapper.js still require manual `/mcp` or Claude Code restart
+- **id=0 gotcha**: MCP protocol uses `id: 0` for the init message — always use `!== undefined && !== null` checks, never truthiness checks on message ids
 
 ### Adding a New MCP Tool
 
