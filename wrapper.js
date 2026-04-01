@@ -4,13 +4,15 @@
 // Spawns index.js as a child, proxies stdio, and handles restart_server tool calls.
 
 import { spawn } from 'child_process';
+import { appendFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import path from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const SERVER_PATH = path.join(__dirname, 'index.js');
-const NODE_PATH = process.execPath; // Use the same node binary that's running the wrapper
+const NODE_PATH = process.execPath;
+const LOG_FILE = `/tmp/mcp-wrapper-${process.pid}.log`;
 
 const RESTART_TOOL = {
   name: "restart_server",
@@ -24,7 +26,9 @@ let childBuffer = '';
 let pendingRequests = new Map(); // id -> callback for intercepted responses
 
 function log(msg) {
-  process.stderr.write(`[wrapper] ${msg}\n`);
+  const line = `[${new Date().toISOString()}] ${msg}`;
+  process.stderr.write(`[wrapper] ${line}\n`);
+  try { appendFileSync(LOG_FILE, line + '\n'); } catch {}
 }
 
 function spawnChild() {
@@ -220,6 +224,10 @@ process.on('SIGTERM', () => {
 
 process.on('unhandledRejection', (reason) => {
   log(`Unhandled rejection: ${reason}`);
+});
+
+process.on('uncaughtException', (err) => {
+  log(`Uncaught exception: ${err.message}\n${err.stack}`);
 });
 
 // Start
