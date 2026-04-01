@@ -189,7 +189,14 @@ class UnityInspectorClient {
 
   async sendCommand(method, params = {}) {
     if (!this.connected) {
-      await this.connect();
+      try {
+        await this.connect();
+      } catch (err) {
+        if (err.code === 'ECONNREFUSED') {
+          throw new Error('Game is not running. Use launch_game to start it.');
+        }
+        throw err;
+      }
     }
 
     return new Promise((resolve, reject) => {
@@ -203,10 +210,19 @@ class UnityInspectorClient {
 
       let responseData = '';
 
+      let processCheckInterval = null;
+      let timeoutHandle = null;
+
+      const cleanup = () => {
+        if (processCheckInterval) clearInterval(processCheckInterval);
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+        this.socket.removeListener('data', dataHandler);
+      };
+
       const dataHandler = (data) => {
         responseData += data.toString();
         if (responseData.includes('\n')) {
-          this.socket.removeListener('data', dataHandler);
+          cleanup();
           try {
             const response = JSON.parse(responseData.trim());
             if (response.success) {
@@ -242,8 +258,19 @@ class UnityInspectorClient {
         timeout = 10000;
       }
 
-      setTimeout(() => {
-        this.socket.removeListener('data', dataHandler);
+      // Poll for game process death while waiting (faster crash detection)
+      processCheckInterval = setInterval(async () => {
+        try {
+          await execAsync("pgrep -x 'Broforce.x86_64' || pgrep -x Broforce || pgrep -f 'Broforce_beta.exe'");
+        } catch {
+          cleanup();
+          this.connected = false;
+          reject(new Error('Game process died — the command likely caused a crash'));
+        }
+      }, 500);
+
+      timeoutHandle = setTimeout(() => {
+        cleanup();
         reject(new Error('Command timeout'));
       }, timeout);
     });
@@ -972,13 +999,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "launch_game",
-        description: "Launch Broforce using the bf command. Waits for the game to become responsive.",
+        description: "Launch Broforce using the bf command. Waits for the game to become responsive. Returns a warning if the game is already running unless restart is true.",
         inputSchema: {
           type: "object",
           properties: {
             vanilla: {
               type: "boolean",
               description: "Launch without mods (default: false)",
+            },
+            restart: {
+              type: "boolean",
+              description: "If true, stop the running game first then relaunch (default: false)",
             },
           },
         },
@@ -1332,10 +1363,40 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
 
       case "launch_game": {
-        const vanillaFlag = args.vanilla ? " --vanilla" : "";
+        // Check if game is already running
+        let gameRunning = false;
+        try {
+          unityClient.disconnect();
+          await unityClient.connect();
+          await unityClient.sendCommand("ping", {});
+          gameRunning = true;
+        } catch {
+          gameRunning = false;
+        }
+
+        if (gameRunning && !args.restart) {
+          result = {
+            success: true,
+            alreadyRunning: true,
+            message: "Game is already running. Use restart: true to stop and relaunch.",
+          };
+          break;
+        }
+
+        if (gameRunning && args.restart) {
+          // Stop the game first
+          unityClient.disconnect();
+          const kill = spawn("sh", ["-c", "pkill -9 -x 'Broforce.x86_64' 2>/dev/null || pkill -9 -x Broforce 2>/dev/null || pkill -9 -f 'Broforce_beta.exe' 2>/dev/null || true"], {
+            stdio: "ignore",
+          });
+          await new Promise((resolve) => kill.on("close", resolve));
+          // Brief wait for process to fully exit
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+
         try {
           // Launch bf in background with stdio detached to avoid corrupting MCP's stdio transport
-          const bfArgs = vanillaFlag ? ["--vanilla"] : [];
+          const bfArgs = args.vanilla ? ["--vanilla"] : [];
           const bfProcess = spawn("bf", bfArgs, {
             detached: true,
             stdio: "ignore",
@@ -1357,7 +1418,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               await unityClient.sendCommand("ping", {});
               result = {
                 success: true,
-                message: `Game launched and ready (${launchAttempts} attempts, ${((Date.now() - launchStart) / 1000).toFixed(1)}s)`,
+                message: `Game ${args.restart ? 'restarted' : 'launched'} and ready (${launchAttempts} attempts, ${((Date.now() - launchStart) / 1000).toFixed(1)}s)`,
               };
               break;
             } catch {
