@@ -4,7 +4,7 @@
 // Spawns index.js as a child, proxies stdio, and handles restart_server tool calls.
 
 import { spawn } from 'child_process';
-import { appendFileSync } from 'fs';
+import { appendFileSync, openSync, closeSync } from 'fs';
 import { fileURLToPath } from 'url';
 import path from 'path';
 
@@ -32,10 +32,12 @@ function log(msg) {
 }
 
 function spawnChild() {
+  const stderrFd = openSync(LOG_FILE, 'a');
   child = spawn(NODE_PATH, [SERVER_PATH], {
-    stdio: ['pipe', 'pipe', 'inherit'], // inherit stderr so child logs pass through
+    stdio: ['pipe', 'pipe', stderrFd],
     cwd: __dirname,
   });
+  closeSync(stderrFd);
 
   child.stdout.on('data', (data) => {
     childBuffer += data.toString();

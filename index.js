@@ -209,6 +209,7 @@ class UnityInspectorClient {
       console.error(`Sending message: ${message.trim()}`);
 
       let responseData = '';
+      let settled = false;
 
       let processCheckInterval = null;
       let timeoutHandle = null;
@@ -216,27 +217,55 @@ class UnityInspectorClient {
       const cleanup = () => {
         if (processCheckInterval) clearInterval(processCheckInterval);
         if (timeoutHandle) clearTimeout(timeoutHandle);
-        this.socket.removeListener('data', dataHandler);
+        if (this.socket) {
+          this.socket.removeListener('data', dataHandler);
+          this.socket.removeListener('error', errorHandler);
+          this.socket.removeListener('close', closeHandler);
+        }
+      };
+
+      const settle = (fn) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        fn();
       };
 
       const dataHandler = (data) => {
         responseData += data.toString();
         if (responseData.includes('\n')) {
-          cleanup();
-          try {
-            const response = JSON.parse(responseData.trim());
-            if (response.success) {
-              resolve(response.result);
-            } else {
-              reject(new Error(response.error || 'Command failed'));
+          settle(() => {
+            try {
+              const response = JSON.parse(responseData.trim());
+              if (response.success) {
+                resolve(response.result);
+              } else {
+                reject(new Error(response.error || 'Command failed'));
+              }
+            } catch (e) {
+              reject(new Error(`Invalid response: ${responseData}`));
             }
-          } catch (e) {
-            reject(new Error(`Invalid response: ${responseData}`));
-          }
+          });
         }
       };
 
+      const errorHandler = (err) => {
+        settle(() => {
+          this.connected = false;
+          reject(new Error(`Connection lost during command: ${err.message}`));
+        });
+      };
+
+      const closeHandler = () => {
+        settle(() => {
+          this.connected = false;
+          reject(new Error('Connection closed — game likely crashed'));
+        });
+      };
+
       this.socket.on('data', dataHandler);
+      this.socket.on('error', errorHandler);
+      this.socket.on('close', closeHandler);
       this.socket.write(message);
 
       // Calculate timeout based on command type
@@ -250,7 +279,10 @@ class UnityInspectorClient {
         timeout = (count - 1) * interval + 1000;
       }
 
-      // Script compilation + execution can be slow
+      // Code/script execution can be slow
+      if (method === 'execute_code') {
+        timeout = 10000;
+      }
       if (method === 'execute_script' || method === 'compile_script') {
         timeout = 30000;
       }
@@ -263,15 +295,17 @@ class UnityInspectorClient {
         try {
           await execAsync("pgrep -x 'Broforce.x86_64' || pgrep -x Broforce || pgrep -f 'Broforce_beta.exe'");
         } catch {
-          cleanup();
-          this.connected = false;
-          reject(new Error('Game process died — the command likely caused a crash'));
+          settle(() => {
+            this.connected = false;
+            reject(new Error('Game process died — the command likely caused a crash'));
+          });
         }
       }, 500);
 
       timeoutHandle = setTimeout(() => {
-        cleanup();
-        reject(new Error('Command timeout'));
+        settle(() => {
+          reject(new Error('Command timeout'));
+        });
       }, timeout);
     });
   }
