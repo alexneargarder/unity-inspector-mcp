@@ -871,6 +871,64 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: "swap_bro",
+        description:
+          "Swap the current player's bro mid-level. Kills the current bro and spawns the new one at the same position. Integrates with Swap Bros Mod when available, falls back to direct game manipulation.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            broName: {
+              type: "string",
+              description:
+                "Bro name (e.g., 'Rambro', 'Brommando', 'B. A. Broracus'). Use list_bros to see available names.",
+            },
+            playerNum: {
+              type: "number",
+              description: "Player number 0-3 (default: 0)",
+            },
+          },
+          required: ["broName"],
+        },
+      },
+      {
+        name: "set_bro",
+        description:
+          "Set which bro the player will spawn as next (on death/respawn/next level). Does NOT change the current bro mid-level.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            broName: {
+              type: "string",
+              description:
+                "Bro name (e.g., 'Rambro', 'Brommando'). Use list_bros to see available names.",
+            },
+            playerNum: {
+              type: "number",
+              description: "Player number 0-3 (default: 0)",
+            },
+          },
+          required: ["broName"],
+        },
+      },
+      {
+        name: "list_bros",
+        description:
+          "List all available bros that can be used with swap_bro and set_bro.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      {
+        name: "restart_level",
+        description:
+          "Restart the current level from the beginning. Clears checkpoints and trigger state for a full reset.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      {
         name: "simulate_input",
         description: "Simulate keyboard/controller input",
         inputSchema: {
@@ -1200,7 +1258,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           campaignIndex: args.campaignIndex,
           levelIndex: args.levelIndex,
         });
-        
+
         // Health check after level loading
         setTimeout(async () => {
           const isHealthy = await unityClient.checkHealth();
@@ -1208,6 +1266,34 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             console.error("WARNING: Game may have crashed after go_to_level");
           }
         }, 3000);
+        break;
+
+      case "swap_bro":
+        if (!args.broName) {
+          throw new Error("Bro name is required");
+        }
+        result = await unityClient.sendCommand("swap_bro", {
+          broName: args.broName,
+          playerNum: args.playerNum ?? 0,
+        });
+        break;
+
+      case "set_bro":
+        if (!args.broName) {
+          throw new Error("Bro name is required");
+        }
+        result = await unityClient.sendCommand("set_bro", {
+          broName: args.broName,
+          playerNum: args.playerNum ?? 0,
+        });
+        break;
+
+      case "list_bros":
+        result = await unityClient.sendCommand("list_bros", {});
+        break;
+
+      case "restart_level":
+        result = await unityClient.sendCommand("restart_level", {});
         break;
 
       case "simulate_input":

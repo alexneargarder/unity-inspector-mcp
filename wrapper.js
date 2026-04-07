@@ -180,6 +180,12 @@ async function handleRestart(request) {
         }],
       },
     }));
+
+    // Notify client that tools may have changed so it re-fetches the tool list
+    sendToParent(JSON.stringify({
+      jsonrpc: "2.0",
+      method: "notifications/tools/list_changed",
+    }));
   } catch (err) {
     log(`Restart failed: ${err.message}`);
     sendToParent(JSON.stringify({
