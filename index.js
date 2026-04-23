@@ -774,7 +774,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "teleport_player",
-        description: "Teleport the player to a specific position",
+        description: "Teleport a player to a specific position",
         inputSchema: {
           type: "object",
           properties: {
@@ -790,19 +790,27 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "number",
               description: "Z coordinate (optional)",
             },
+            playerNum: {
+              type: "number",
+              description: "Player index 0-3, or -1 for all active players (default: 0)",
+            },
           },
           required: ["x", "y"],
         },
       },
       {
         name: "set_player_health",
-        description: "Set the player's health",
+        description: "Set a player's health",
         inputSchema: {
           type: "object",
           properties: {
             health: {
               type: "number",
               description: "Health value",
+            },
+            playerNum: {
+              type: "number",
+              description: "Player index 0-3, or -1 for all active players (default: 0)",
             },
           },
           required: ["health"],
@@ -913,10 +921,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "list_bros",
         description:
-          "List all available bros that can be used with swap_bro and set_bro.",
+          "List all available bros that can be used with swap_bro and set_bro. Reports the selected bro for the given player (currentBro) and for all active players (currentBros array).",
         inputSchema: {
           type: "object",
-          properties: {},
+          properties: {
+            playerNum: {
+              type: "number",
+              description: "Player number 0-3 for the currentBro readout (default: 0). The bro lists and currentBros array are always returned regardless.",
+            },
+          },
         },
       },
       {
@@ -1214,6 +1227,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           x: args.x,
           y: args.y,
           z: args.z,
+          playerNum: args.playerNum ?? 0,
         });
         break;
 
@@ -1223,6 +1237,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         result = await unityClient.sendCommand("set_player_health", {
           health: args.health,
+          playerNum: args.playerNum ?? 0,
         });
         break;
 
@@ -1289,7 +1304,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
 
       case "list_bros":
-        result = await unityClient.sendCommand("list_bros", {});
+        result = await unityClient.sendCommand("list_bros", {
+          playerNum: args.playerNum ?? 0,
+        });
         break;
 
       case "restart_level":
