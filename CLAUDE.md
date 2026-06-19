@@ -1,4 +1,5 @@
 # Unity Inspector MCP Server
+<!-- claude-config: committed in this repo — commit edits here -->
 
 Node.js MCP server bridging Claude to the Unity Inspector Mod running inside Broforce.
 
