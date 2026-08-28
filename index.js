@@ -8,583 +8,130 @@ import {
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import net from 'net';
 import os from 'os';
-import { exec, spawn } from 'child_process';
-import { promisify } from 'util';
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-const execAsync = promisify(exec);
+import { UnityInspectorClient } from './lib/unity-client.js';
+import { isGameRunning, killGame, resolveLaunchCommand, spawnDetached } from './lib/game-process.js';
+import {
+  buildScriptCatalog,
+  listCSharpScripts,
+  listTestScripts,
+  readScriptSource,
+  runTestScript,
+} from './lib/script-library.js';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const SCRIPTS_DIR = path.join(__dirname, 'scripts');
-const CSHARP_SCRIPTS_DIR = path.join(SCRIPTS_DIR, 'csharp');
 
-// UMM log file tracking
-const UMM_LOG_PATHS = [
-  path.join(os.homedir(), '.config/r2modmanPlus-local/Broforce/profiles/Default/UMM/Core/Log.txt'),
-  path.join(os.homedir(), 'AppData/Roaming/r2modmanPlus-local/Broforce/profiles/Default/BepInEx/LogOutput.log'),
-];
-let watchLogOffset = 0;
+// Cap on how much new log text watch_log will hand back in one call
+const WATCH_LOG_MAX_BYTES = 64 * 1024;
 
-class UnityInspectorClient {
-  constructor() {
-    this.host = null;
-    this.port = 9999;
-    this.connected = false;
-    this.platform = null; // 'wsl', 'linux', or 'native'
-    this.gamePath = null;
-    this.protonPrefix = null;
-  }
+// Unity Mod Manager writes Log.txt under UMM/Core inside an r2modman profile
+// (profile names are arbitrary, not just "Default"), or under Mods for a direct
+// install. UNITY_INSPECTOR_LOG overrides the search entirely.
+const R2_PROFILES_SUFFIX = 'r2modmanPlus-local/Broforce/profiles';
+const UMM_LOG_IN_PROFILE = 'UMM/Core/Log.txt';
+const DIRECT_INSTALL_LOGS = ['Mods/UnityModManager/Log.txt', 'Mods/Log.txt'];
 
-  async detectPlatform() {
-    if (this.platform) return;
-
-    if (os.release().toLowerCase().includes('microsoft')) {
-      this.platform = 'wsl';
-      console.error('Platform: WSL');
-    } else if (os.platform() === 'linux') {
-      this.platform = 'linux';
-      // Try to find Proton prefix for path translation
-      await this.detectGamePaths();
-      console.error(`Platform: Linux (game path: ${this.gamePath || 'not found'})`);
-    } else {
-      this.platform = 'native';
-      console.error('Platform: native Windows/macOS');
-    }
-  }
-
-  async detectGamePaths() {
-    // Common Steam library locations
-    const steamPaths = [
-      path.join(os.homedir(), '.local/share/Steam'),
-      path.join(os.homedir(), '.steam/steam'),
-    ];
-
-    for (const steamPath of steamPaths) {
-      const gamePath = path.join(steamPath, 'steamapps/common/Broforce');
-      try {
-        await fs.access(gamePath);
-        this.gamePath = gamePath;
-
-        // Check for Proton prefix (appid 274190)
-        const prefixPath = path.join(steamPath, 'steamapps/compatdata/274190/pfx');
-        try {
-          await fs.access(prefixPath);
-          this.protonPrefix = prefixPath;
-          console.error(`Proton prefix found: ${prefixPath}`);
-        } catch {
-          console.error('No Proton prefix found - assuming native Linux/Distrobox');
-        }
-        return;
-      } catch {
-        continue;
-      }
-    }
-    console.error('Could not auto-detect game path');
-  }
-
-  translateScreenshotPath(gameSidePath) {
-    if (!gameSidePath) return gameSidePath;
-
-    // If it's already a valid absolute Linux path, no translation needed
-    if (gameSidePath.startsWith('/')) {
-      return gameSidePath;
-    }
-
-    if (this.platform === 'wsl') {
-      // WSL: game runs on Windows, path comes as forward-slash Windows path
-      // Convert C:/Users/... to /mnt/c/Users/...
-      const match = gameSidePath.match(/^([A-Za-z]):\/(.*)/);
-      if (match) {
-        return `/mnt/${match[1].toLowerCase()}/${match[2]}`;
-      }
-      return gameSidePath;
-    }
-
-    if (this.platform === 'linux' && this.protonPrefix) {
-      // Proton: game sees Windows-style paths with drive letters
-      const match = gameSidePath.match(/^([A-Za-z]):\/(.*)/);
-      if (match) {
-        const driveLetter = match[1].toLowerCase();
-        if (driveLetter === 'z') {
-          // Z: drive maps to real Linux root
-          return '/' + match[2];
-        }
-        return path.join(this.protonPrefix, `dosdevices/${driveLetter}:`, match[2]);
-      }
-    }
-
-    return gameSidePath;
-  }
-
-  async getServerHost() {
-    await this.detectPlatform();
-
-    if (this.platform === 'wsl') {
-      try {
-        const result = await execAsync('ip route show default');
-        const host = result.stdout.split(' ')[2];
-        console.error(`WSL: using Windows host: ${host}`);
-        return host;
-      } catch (e) {
-        console.error('Failed to get WSL host, using fallback: 172.21.80.1');
-        return '172.21.80.1';
-      }
-    }
-    return '127.0.0.1';
-  }
-
-  async connect() {
-    if (!this.host) {
-      this.host = await this.getServerHost();
-    }
-
-    // Clean up any existing socket
-    if (this.socket) {
-      this.socket.removeAllListeners();
-      this.socket.destroy();
-      this.socket = null;
-    }
-
-    return new Promise((resolve, reject) => {
-      this.socket = new net.Socket();
-      let settled = false;
-
-      this.socket.connect(this.port, this.host, () => {
-        settled = true;
-        this.connected = true;
-        console.error(`Connected to Unity Inspector at ${this.host}:${this.port}`);
-        resolve();
-      });
-
-      this.socket.on('error', (err) => {
-        this.connected = false;
-        if (!settled) {
-          settled = true;
-          reject(err);
-        } else {
-          console.error(`Socket error (idle): ${err.message}`);
-        }
-      });
-
-      this.socket.on('close', () => {
-        this.connected = false;
-        console.error('Connection to Unity Inspector closed');
-      });
-    });
-  }
-
-  async checkHealth() {
-    try {
-      const result = await this.sendCommand("ping", {});
-      return true;
-    } catch (error) {
-      console.error("Health check failed:", error.message);
-      return false;
-    }
-  }
-
-  async sendCommand(method, params = {}) {
-    if (!this.connected) {
-      try {
-        await this.connect();
-      } catch (err) {
-        if (err.code === 'ECONNREFUSED') {
-          throw new Error('Game is not running. Use launch_game to start it.');
-        }
-        throw err;
-      }
-    }
-
-    return new Promise((resolve, reject) => {
-      const message = JSON.stringify({
-        id: Date.now().toString(),
-        method: method,
-        params: params
-      }) + '\n';
-      
-      console.error(`Sending message: ${message.trim()}`);
-
-      let responseData = '';
-      let settled = false;
-
-      let processCheckInterval = null;
-      let timeoutHandle = null;
-
-      const cleanup = () => {
-        if (processCheckInterval) clearInterval(processCheckInterval);
-        if (timeoutHandle) clearTimeout(timeoutHandle);
-        if (this.socket) {
-          this.socket.removeListener('data', dataHandler);
-          this.socket.removeListener('error', errorHandler);
-          this.socket.removeListener('close', closeHandler);
-        }
-      };
-
-      const settle = (fn) => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        fn();
-      };
-
-      const dataHandler = (data) => {
-        responseData += data.toString();
-        if (responseData.includes('\n')) {
-          settle(() => {
-            try {
-              const response = JSON.parse(responseData.trim());
-              if (response.success) {
-                resolve(response.result);
-              } else {
-                reject(new Error(response.error || 'Command failed'));
-              }
-            } catch (e) {
-              reject(new Error(`Invalid response: ${responseData}`));
-            }
-          });
-        }
-      };
-
-      const errorHandler = (err) => {
-        settle(() => {
-          this.connected = false;
-          reject(new Error(`Connection lost during command: ${err.message}`));
-        });
-      };
-
-      const closeHandler = () => {
-        settle(() => {
-          this.connected = false;
-          reject(new Error('Connection closed — game likely crashed'));
-        });
-      };
-
-      this.socket.on('data', dataHandler);
-      this.socket.on('error', errorHandler);
-      this.socket.on('close', closeHandler);
-      this.socket.write(message);
-
-      // Calculate timeout based on command type
-      let timeout = 2000; // Default 2 seconds
-
-      // For simulate_input with multiple presses, calculate expected completion time
-      if (method === 'simulate_input' && params.count > 1) {
-        const count = params.count;
-        const interval = params.interval || 200;
-        // (count - 1) * interval + 1000ms buffer
-        timeout = (count - 1) * interval + 1000;
-      }
-
-      // Code/script execution can be slow
-      if (method === 'execute_code') {
-        timeout = 10000;
-      }
-      if (method === 'execute_script' || method === 'compile_script') {
-        timeout = 30000;
-      }
-      if (method === 'unload_script') {
-        timeout = 10000;
-      }
-
-      // Poll for game process death while waiting (faster crash detection)
-      processCheckInterval = setInterval(async () => {
-        try {
-          await execAsync("pgrep -x 'Broforce.x86_64' || pgrep -x Broforce || pgrep -f 'Broforce_beta.exe'");
-        } catch {
-          settle(() => {
-            this.connected = false;
-            reject(new Error('Game process died — the command likely caused a crash'));
-          });
-        }
-      }, 500);
-
-      timeoutHandle = setTimeout(() => {
-        settle(() => {
-          reject(new Error('Command timeout'));
-        });
-      }, timeout);
-    });
-  }
-
-  disconnect() {
-    if (this.socket) {
-      this.socket.destroy();
-      this.connected = false;
-    }
-  }
+function r2ProfileRoots() {
+  const roots = [path.join(os.homedir(), '.config', R2_PROFILES_SUFFIX)];
+  if (process.env.APPDATA) roots.push(path.join(process.env.APPDATA, R2_PROFILES_SUFFIX));
+  roots.push(path.join(os.homedir(), 'AppData/Roaming', R2_PROFILES_SUFFIX));
+  return [...new Set(roots)];
 }
 
-// Find the UMM log file
-async function findLogPath() {
-  for (const logPath of UMM_LOG_PATHS) {
+function logOverride() {
+  return (process.env.UNITY_INSPECTOR_LOG || '').trim();
+}
+
+/**
+ * Every place a UMM log could be, plus display strings for the error message
+ * (an unreadable profile root shows as a glob rather than vanishing).
+ */
+async function ummLogSearch() {
+  const override = logOverride();
+  if (override) return { paths: [override], displays: [override], override: true };
+
+  const paths = [];
+  const displays = [];
+
+  for (const root of r2ProfileRoots()) {
+    let profiles = [];
     try {
-      await fs.access(logPath);
-      return logPath;
+      profiles = (await fs.readdir(root, { withFileTypes: true }))
+        .filter(entry => entry.isDirectory())
+        .map(entry => entry.name);
+    } catch {
+      displays.push(path.join(root, '*', UMM_LOG_IN_PROFILE));
+      continue;
+    }
+
+    if (profiles.length === 0) {
+      displays.push(path.join(root, '*', UMM_LOG_IN_PROFILE));
+      continue;
+    }
+    for (const profile of profiles) {
+      const candidate = path.join(root, profile, UMM_LOG_IN_PROFILE);
+      paths.push(candidate);
+      displays.push(candidate);
+    }
+  }
+
+  // Direct (non-r2modman) UMM installs keep their log next to the game. The
+  // game path comes from platform detection, which must not require a live
+  // connection — read_log is useful precisely when the game is not running.
+  try {
+    await unityClient.detectPlatform();
+  } catch (err) {
+    console.error(`Game path detection failed while looking for the log: ${err.message}`);
+  }
+  if (unityClient.gamePath) {
+    for (const relative of DIRECT_INSTALL_LOGS) {
+      const candidate = path.join(unityClient.gamePath, relative);
+      paths.push(candidate);
+      displays.push(candidate);
+    }
+  }
+
+  return { paths: [...new Set(paths)], displays: [...new Set(displays)], override: false };
+}
+
+let watchLogOffset = 0;
+
+/** The most recently written log among the candidates, or null. */
+async function findLogPath() {
+  const { paths, override } = await ummLogSearch();
+
+  let newest = null;
+  for (const candidate of paths) {
+    try {
+      const stat = await fs.stat(candidate);
+      if (!stat.isFile()) continue;
+      // An explicit override is authoritative — never fall back past it
+      if (override) return candidate;
+      if (!newest || stat.mtimeMs > newest.mtimeMs) {
+        newest = { path: candidate, mtimeMs: stat.mtimeMs };
+      }
     } catch {
       continue;
     }
   }
-  return null;
+
+  return newest ? newest.path : null;
 }
 
-// C# script library functions
-function parseScriptMetadata(content) {
-  const metadata = {};
-  const lines = content.split('\n');
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith('//')) break;
-
-    const match = trimmed.match(/^\/\/\s*#(\w+)\s+(.*)/);
-    if (match) {
-      const key = match[1];
-      const value = match[2].trim();
-      if (key === 'args') {
-        if (!metadata.args) metadata.args = [];
-        metadata.args.push(value);
-      } else {
-        metadata[key] = value;
-      }
-    }
+async function logNotFoundError() {
+  const { displays, override } = await ummLogSearch();
+  if (override) {
+    return new Error(`UMM log file not found: UNITY_INSPECTOR_LOG points at ${displays[0]}, which does not exist.`);
   }
-  return metadata;
-}
-
-async function listCSharpScripts() {
-  try {
-    await fs.mkdir(CSHARP_SCRIPTS_DIR, { recursive: true });
-    const files = await fs.readdir(CSHARP_SCRIPTS_DIR);
-    const scripts = [];
-
-    for (const file of files) {
-      if (!file.endsWith('.cs')) continue;
-
-      try {
-        const filePath = path.join(CSHARP_SCRIPTS_DIR, file);
-        const content = await fs.readFile(filePath, 'utf-8');
-        const metadata = parseScriptMetadata(content);
-
-        scripts.push({
-          file,
-          name: metadata.name || file.replace('.cs', ''),
-          description: metadata.description || 'No description',
-          tags: metadata.tags || '',
-          args: metadata.args || [],
-          path: filePath,
-        });
-      } catch (err) {
-        console.error(`Error reading script ${file}: ${err.message}`);
-      }
-    }
-
-    return {
-      count: scripts.length,
-      scripts,
-      scriptsDirectory: CSHARP_SCRIPTS_DIR,
-    };
-  } catch (err) {
-    return {
-      error: err.message,
-      count: 0,
-      scripts: [],
-    };
-  }
-}
-
-async function buildScriptCatalog() {
-  const result = await listCSharpScripts();
-  if (result.count === 0) {
-    return '# C# Script Library\n\nNo scripts available yet. Create .cs files in scripts/csharp/ to add to the library.';
-  }
-
-  let catalog = '# C# Script Library\n\n';
-  for (const script of result.scripts) {
-    let line = `- ${script.name}: ${script.description}`;
-    if (script.tags) {
-      line += ` [tags: ${script.tags}]`;
-    }
-    if (script.args.length > 0) {
-      line += ` [args: ${script.args.map(a => a.split(':')[0].trim()).join(', ')}]`;
-    }
-    catalog += line + '\n';
-  }
-  return catalog;
-}
-
-async function readScriptSource(scriptPath) {
-  // If it's an absolute path, read directly
-  if (path.isAbsolute(scriptPath)) {
-    return {
-      source: await fs.readFile(scriptPath, 'utf-8'),
-      name: path.basename(scriptPath, '.cs'),
-    };
-  }
-
-  // Otherwise resolve from library
-  let resolved = scriptPath;
-  if (!resolved.endsWith('.cs')) {
-    resolved += '.cs';
-  }
-  const filePath = path.join(CSHARP_SCRIPTS_DIR, resolved);
-  return {
-    source: await fs.readFile(filePath, 'utf-8'),
-    name: path.basename(resolved, '.cs'),
-  };
-}
-
-// Test script functions
-async function listTestScripts() {
-  try {
-    const files = await fs.readdir(SCRIPTS_DIR);
-    const scripts = [];
-
-    for (const file of files) {
-      if (!file.endsWith('.json')) continue;
-
-      try {
-        const filePath = path.join(SCRIPTS_DIR, file);
-        const content = await fs.readFile(filePath, 'utf-8');
-        const script = JSON.parse(content);
-
-        scripts.push({
-          name: file,
-          title: script.name || file,
-          description: script.description || 'No description',
-          steps: script.steps?.length || 0,
-        });
-      } catch (err) {
-        console.error(`Error reading script ${file}: ${err.message}`);
-      }
-    }
-
-    return {
-      count: scripts.length,
-      scripts: scripts,
-      scriptsDirectory: SCRIPTS_DIR,
-    };
-  } catch (err) {
-    return {
-      error: err.message,
-      count: 0,
-      scripts: [],
-    };
-  }
-}
-
-async function runTestScript(scriptNameOrPath, unityClient) {
-  try {
-    let scriptPath;
-
-    if (path.isAbsolute(scriptNameOrPath)) {
-      scriptPath = scriptNameOrPath;
-    } else {
-      scriptPath = path.join(SCRIPTS_DIR, scriptNameOrPath);
-      if (!scriptPath.endsWith('.json')) {
-        scriptPath += '.json';
-      }
-    }
-
-    console.error(`Loading test script: ${scriptPath}`);
-    const content = await fs.readFile(scriptPath, 'utf-8');
-    const script = JSON.parse(content);
-
-    if (!script.steps || !Array.isArray(script.steps)) {
-      throw new Error('Script must have a "steps" array');
-    }
-
-    const results = [];
-    const startTime = Date.now();
-
-    console.error(`Executing script: ${script.name || scriptNameOrPath}`);
-    console.error(`Steps: ${script.steps.length}`);
-
-    for (let i = 0; i < script.steps.length; i++) {
-      const step = script.steps[i];
-      const stepStartTime = Date.now();
-
-      try {
-        console.error(`Step ${i + 1}/${script.steps.length}: ${step.command}`);
-
-        let stepResult = await unityClient.sendCommand(step.command, step.params || {});
-        if (step.command === 'take_screenshot' && stepResult && stepResult.path) {
-          stepResult.path = unityClient.translateScreenshotPath(stepResult.path);
-        }
-
-        // Check if the result indicates a failure (e.g., execute_code can return success: false)
-        const resultFailed = stepResult && typeof stepResult === 'object' && stepResult.success === false;
-
-        const stepDuration = Date.now() - stepStartTime;
-
-        if (resultFailed) {
-          // Command executed but reported failure
-          results.push({
-            step: i + 1,
-            command: step.command,
-            params: step.params,
-            success: false,
-            error: stepResult.error || 'Command reported failure',
-            result: stepResult,
-            duration: stepDuration,
-          });
-
-          console.error(`Step ${i + 1} failed: ${stepResult.error || 'Command reported failure'}`);
-          break;
-        } else {
-          // Command succeeded
-          results.push({
-            step: i + 1,
-            command: step.command,
-            params: step.params,
-            success: true,
-            result: stepResult,
-            duration: stepDuration,
-          });
-
-          if (step.wait) {
-            console.error(`Waiting ${step.wait}ms...`);
-            await new Promise(resolve => setTimeout(resolve, step.wait));
-          }
-        }
-      } catch (err) {
-        const stepDuration = Date.now() - stepStartTime;
-        results.push({
-          step: i + 1,
-          command: step.command,
-          params: step.params,
-          success: false,
-          error: err.message,
-          duration: stepDuration,
-        });
-
-        console.error(`Step ${i + 1} failed: ${err.message}`);
-        break;
-      }
-    }
-
-    const totalDuration = Date.now() - startTime;
-    const successCount = results.filter(r => r.success).length;
-
-    return {
-      scriptName: script.name || scriptNameOrPath,
-      description: script.description,
-      totalSteps: script.steps.length,
-      completedSteps: results.length,
-      successfulSteps: successCount,
-      failedSteps: results.length - successCount,
-      totalDuration: totalDuration,
-      results: results,
-    };
-  } catch (err) {
-    console.error(`Error running test script: ${err.message}`);
-    return {
-      error: err.message,
-      scriptPath: scriptNameOrPath,
-    };
-  }
+  return new Error(
+    `UMM log file not found. Looked in:\n  ${displays.join('\n  ')}\n` +
+    `Set UNITY_INSPECTOR_LOG to the log path if it lives elsewhere.`
+  );
 }
 
 const unityClient = new UnityInspectorClient();
@@ -973,7 +520,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "list_test_scripts",
-        description: "List all available test scripts in the scripts directory",
+        description: "List all available test scripts in scripts/ and scripts/examples/",
         inputSchema: {
           type: "object",
           properties: {},
@@ -1036,13 +583,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "run_test_script",
-        description: "Execute a test script containing a sequence of commands. Scripts are JSON files with command sequences that can include wait delays.",
+        description: "Execute a test script containing a sequence of commands. Scripts are JSON files with command sequences that can include wait delays. Steps run directly against the game, so only game-side commands work — server-side tools (read_log, watch_log, list_scripts, launch_game, stop_game, wait_for_game, ...) cannot be used as steps.",
         inputSchema: {
           type: "object",
           properties: {
             script: {
               type: "string",
-              description: "Script name (from scripts/ directory) or absolute file path",
+              description: "Script name (from scripts/ or scripts/examples/) or absolute file path",
             },
           },
           required: ["script"],
@@ -1104,7 +651,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "launch_game",
-        description: "Launch Broforce using the bf command. Waits for the game to become responsive. Returns a warning if the game is already running unless restart is true.",
+        description: "Launch Broforce and wait for it to become responsive. Uses the BROFORCE_LAUNCH_CMD environment variable when set, otherwise launches Steam app 274190. Returns a warning if the game is already running unless restart is true.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1132,8 +679,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 });
 
 // Handle tool calls
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
+export async function handleToolCall(request) {
+  const name = request.params.name;
+  // `arguments` is optional in the MCP schema, so it may be absent entirely
+  const args = request.params.arguments ?? {};
 
   try {
     let result;
@@ -1374,7 +923,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "read_log": {
         const logPath = await findLogPath();
         if (!logPath) {
-          throw new Error("UMM log file not found");
+          throw await logNotFoundError();
         }
         const logContent = await fs.readFile(logPath, 'utf-8');
         const allLines = logContent.split('\n');
@@ -1400,7 +949,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "watch_log": {
         const logPath = await findLogPath();
         if (!logPath) {
-          throw new Error("UMM log file not found");
+          throw await logNotFoundError();
         }
 
         const stat = await fs.stat(logPath);
@@ -1437,19 +986,38 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           break;
         }
 
-        // Read only the new bytes
+        // Read only the new bytes, capped so a burst of logging can't return
+        // megabytes of text in one response
+        let readFrom = watchLogOffset;
+        let skippedBytes = 0;
+        if (fileSize - readFrom > WATCH_LOG_MAX_BYTES) {
+          skippedBytes = fileSize - readFrom - WATCH_LOG_MAX_BYTES;
+          readFrom = fileSize - WATCH_LOG_MAX_BYTES;
+        }
+        const bytesToRead = fileSize - readFrom;
+
+        let newContent;
         const fh = await fs.open(logPath, 'r');
-        const bytesToRead = fileSize - watchLogOffset;
-        const buffer = Buffer.alloc(bytesToRead);
-        await fh.read(buffer, 0, bytesToRead, watchLogOffset);
-        await fh.close();
+        try {
+          const buffer = Buffer.alloc(bytesToRead);
+          const { bytesRead } = await fh.read(buffer, 0, bytesToRead, readFrom);
+          newContent = buffer.subarray(0, bytesRead).toString('utf-8');
+        } finally {
+          await fh.close();
+        }
         watchLogOffset = fileSize;
 
-        const newContent = buffer.toString('utf-8');
         const newLines = newContent.split('\n').filter(l => l.length > 0);
         result = {
           newLines: newLines.length,
           content: newContent.trimEnd(),
+          ...(skippedBytes > 0
+            ? {
+                truncated: true,
+                skippedBytes,
+                message: `Output truncated: skipped ${skippedBytes} earlier bytes, showing the last ${WATCH_LOG_MAX_BYTES} bytes. Use read_log for the full log.`,
+              }
+            : {}),
         };
         break;
       }
@@ -1520,57 +1088,82 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           break;
         }
 
+        // A live process that doesn't answer on TCP usually means the mod
+        // failed to load; say so rather than silently starting a second copy.
+        if (!gameRunning && !args.restart && (await isGameRunning()) === true) {
+          result = {
+            success: false,
+            alreadyRunning: true,
+            message:
+              "A Broforce process is running but the Unity Inspector Mod is not responding on TCP. " +
+              "The mod may have failed to load. Use restart: true to stop and relaunch.",
+          };
+          break;
+        }
+
         if (gameRunning && args.restart) {
-          // Stop the game first
           unityClient.disconnect();
-          const kill = spawn("sh", ["-c", "pkill -9 -x 'Broforce.x86_64' 2>/dev/null || pkill -9 -x Broforce 2>/dev/null || pkill -9 -f 'Broforce_beta.exe' 2>/dev/null || true"], {
-            stdio: "ignore",
-          });
-          await new Promise((resolve) => kill.on("close", resolve));
+          const killResult = await killGame();
+          console.error(`launch_game: ${killResult.detail}`);
           // Brief wait for process to fully exit
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
 
+        const extraArgs = args.vanilla ? ["--vanilla"] : [];
+        let launch;
         try {
-          // Launch bf in background with stdio detached to avoid corrupting MCP's stdio transport
-          const bfArgs = args.vanilla ? ["--vanilla"] : [];
-          const bfProcess = spawn("bf", bfArgs, {
-            detached: true,
-            stdio: "ignore",
-          });
-          bfProcess.unref();
-
-          // Wait for the game to become responsive
-          const launchTimeout = 60000;
-          const launchInterval = 3000;
-          const launchStart = Date.now();
-          let launchAttempts = 0;
-
-          while (Date.now() - launchStart < launchTimeout) {
-            launchAttempts++;
-            await new Promise(resolve => setTimeout(resolve, launchInterval));
-            try {
-              unityClient.disconnect();
-              await unityClient.connect();
-              await unityClient.sendCommand("ping", {});
-              result = {
-                success: true,
-                message: `Game ${args.restart ? 'restarted' : 'launched'} and ready (${launchAttempts} attempts, ${((Date.now() - launchStart) / 1000).toFixed(1)}s)`,
-              };
-              break;
-            } catch {
-              console.error(`Launch attempt ${launchAttempts}: waiting...`);
-            }
-          }
-
-          if (!result) {
-            result = {
-              success: false,
-              message: `Game launched but not responsive after ${launchTimeout / 1000}s`,
-            };
-          }
+          launch = resolveLaunchCommand(extraArgs);
         } catch (err) {
-          throw new Error(`Failed to launch game: ${err.message}`);
+          throw new Error(
+            `${err.message}. BROFORCE_LAUNCH_CMD should hold the command that starts Broforce on this machine.`
+          );
+        }
+
+        try {
+          await spawnDetached(launch.command, launch.args);
+        } catch (err) {
+          throw new Error(
+            `Failed to launch Broforce with \`${launch.display}\`: ${err.message}. ` +
+            `Set the BROFORCE_LAUNCH_CMD environment variable to the command that starts the game on this machine.`
+          );
+        }
+
+        const ignoredArgsNote = launch.ignoredArgs?.length
+          ? `Ignored launch arguments ${launch.ignoredArgs.join(' ')} — the Steam protocol launch does not accept them. Set BROFORCE_LAUNCH_CMD to use a launcher that does.`
+          : null;
+
+        // Wait for the game to become responsive
+        const launchTimeout = 60000;
+        const launchInterval = 3000;
+        const launchStart = Date.now();
+        let launchAttempts = 0;
+
+        while (Date.now() - launchStart < launchTimeout) {
+          launchAttempts++;
+          await new Promise(resolve => setTimeout(resolve, launchInterval));
+          try {
+            unityClient.disconnect();
+            await unityClient.connect();
+            await unityClient.sendCommand("ping", {});
+            result = {
+              success: true,
+              launchCommand: launch.display,
+              message: `Game ${args.restart ? 'restarted' : 'launched'} and ready (${launchAttempts} attempts, ${((Date.now() - launchStart) / 1000).toFixed(1)}s)`,
+              ...(ignoredArgsNote ? { note: ignoredArgsNote } : {}),
+            };
+            break;
+          } catch {
+            console.error(`Launch attempt ${launchAttempts}: waiting...`);
+          }
+        }
+
+        if (!result) {
+          result = {
+            success: false,
+            launchCommand: launch.display,
+            message: `Game launched with \`${launch.display}\` but not responsive after ${launchTimeout / 1000}s`,
+            ...(ignoredArgsNote ? { note: ignoredArgsNote } : {}),
+          };
         }
         break;
       }
@@ -1578,16 +1171,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "stop_game": {
         // Disconnect TCP first
         unityClient.disconnect();
-        try {
-          // Use spawn with ignored stdio to avoid corrupting MCP transport
-          const kill = spawn("sh", ["-c", "pkill -9 -x 'Broforce.x86_64' 2>/dev/null || pkill -9 -x Broforce 2>/dev/null || pkill -9 -f 'Broforce_beta.exe' 2>/dev/null || true"], {
-            stdio: "ignore",
-          });
-          await new Promise((resolve) => kill.on("close", resolve));
-          result = { success: true, message: "Game stopped" };
-        } catch {
-          result = { success: true, message: "Game may already be stopped" };
-        }
+        const killResult = await killGame();
+        result = {
+          success: killResult.killed,
+          message: killResult.detail,
+          ...(killResult.unknown ? { unknown: true } : {}),
+        };
         break;
       }
 
@@ -1615,7 +1204,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       isError: true,
     };
   }
-});
+}
+
+server.setRequestHandler(CallToolRequestSchema, handleToolCall);
 
 // MCP Resource: C# Script Library Catalog
 server.setRequestHandler(ListResourcesRequestSchema, async () => {
@@ -1672,7 +1263,14 @@ async function main() {
   console.error("Unity Inspector MCP server running on stdio");
 }
 
-main().catch((error) => {
-  console.error("Server error:", error);
-  process.exit(1);
-});
+// Only take over stdio when run as the server; importing this module for tests
+// must not start the MCP transport.
+const invokedDirectly =
+  process.argv[1] !== undefined && path.resolve(process.argv[1]) === __filename;
+
+if (invokedDirectly) {
+  main().catch((error) => {
+    console.error("Server error:", error);
+    process.exit(1);
+  });
+}
