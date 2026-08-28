@@ -8,9 +8,13 @@
 public static class WatchField
 {
     private static GameObject watcherGO;
+    // Captured during Main(): ScriptContext.Logger only carries this script's
+    // [Script:name] prefix while Main() or Unload() is running.
+    internal static System.Action<string> cachedLogger;
 
     public static void Main()
     {
+        cachedLogger = ScriptContext.Logger;
         var goName = ScriptContext.GetArg("gameObjectName");
         var compType = ScriptContext.GetArg("componentType");
         var fieldName = ScriptContext.GetArg("fieldName");
@@ -103,17 +107,9 @@ public class FieldWatcher : MonoBehaviour
 
             if (currentValue != lastValue)
             {
-                UnityModManager.ModEntry mod = null;
-                foreach (var m in UnityModManager.modEntries)
-                {
-                    if (m.Info.Id == "Unity Inspector Mod")
-                    {
-                        mod = m;
-                        break;
-                    }
-                }
-                if (mod != null)
-                    mod.Logger.Log("[Script:watch-field] " + targetName + ": " + lastValue + " -> " + currentValue);
+                var log = WatchField.cachedLogger;
+                if (log != null)
+                    log(targetName + ": " + lastValue + " -> " + currentValue);
 
                 lastValue = currentValue;
             }

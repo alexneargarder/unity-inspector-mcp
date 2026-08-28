@@ -11,9 +11,13 @@ public static class TraceMethodCalls
     private static int callCount;
     private static string tracedMethod;
     private static bool stopped;
+    // Captured during Main(): ScriptContext.Logger only carries this script's
+    // [Script:name] prefix while Main() or Unload() is running.
+    private static System.Action<string> cachedLogger;
 
     public static void Main()
     {
+        cachedLogger = ScriptContext.Logger;
         var typeName = ScriptContext.GetArg("typeName");
         var methodName = ScriptContext.GetArg("methodName");
         var maxCallsStr = ScriptContext.GetArg("maxCalls", "100");
@@ -78,17 +82,13 @@ public static class TraceMethodCalls
             argsStr = " args: [" + string.Join(", ", parts) + "]";
         }
 
-        if (ScriptContext.Logger != null)
-        {
-            ScriptContext.Logger("[#" + callCount + " f:" + Time.frameCount + "] " +
-                tracedMethod + " on " + instanceName + argsStr);
-        }
+        cachedLogger("[#" + callCount + " f:" + Time.frameCount + "] " +
+            tracedMethod + " on " + instanceName + argsStr);
 
         if (callCount >= maxCalls)
         {
             stopped = true;
-            if (ScriptContext.Logger != null)
-                ScriptContext.Logger("Max calls reached (" + maxCalls + "). Logging stopped. Use unload_script to clean up patches.");
+            cachedLogger("Max calls reached (" + maxCalls + "). Logging stopped. Use unload_script to clean up patches.");
         }
     }
 

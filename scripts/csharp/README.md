@@ -32,6 +32,11 @@ public static class MyScript
 - **`Main()`** — Called when the script is executed. Optional — scripts without Main() just register their types.
 - **`Unload()`** — Called when the script is unloaded via `unload_script`. Optional but recommended for scripts that apply patches or create GameObjects.
 
+Re-running `execute_script` **restarts** the script: `Unload()` runs, patches are removed and
+tracked GameObjects are destroyed, then `Main()` runs again. Unchanged source still skips
+recompilation. `Main()` is never entered twice on top of its own state, so it does not need
+to be idempotent — but `Unload()` must actually undo what `Main()` did, or the restart leaks.
+
 ## ScriptContext API
 
 Available as static fields/methods during `Main()` and `Unload()`:
@@ -41,6 +46,25 @@ Available as static fields/methods during `Main()` and `Unload()`:
 - `ScriptContext.GameObjects` — `List<GameObject>`. Add GameObjects here for auto-cleanup on unload.
 - `ScriptContext.Args` — `Dictionary<string, string>` of arguments passed from the MCP tool.
 - `ScriptContext.GetArg(string key, string defaultValue)` — Safe argument getter (.NET 3.5 compatible).
+
+`ScriptContext` describes the script whose `Main()` or `Unload()` is currently running, and
+is restored when that call returns — so running or unloading another script never disturbs
+yours. Code that runs later (Harmony patches, coroutines, MonoBehaviours) must capture what
+it needs into a static field during `Main()`:
+
+```csharp
+private static System.Action<string> cachedLogger;
+
+public static void Main()
+{
+    cachedLogger = ScriptContext.Logger;  // keeps the [Script:name] prefix
+    ...
+}
+```
+
+`ScriptContext.Logger` is never null; outside `Main()`/`Unload()` it falls back to the mod
+logger under a plain `[Script]` prefix. `Harmony`, `GameObjects` and `Args` are null outside
+`Main()`/`Unload()`.
 
 ## .NET 3.5 Constraints
 
