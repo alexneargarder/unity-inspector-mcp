@@ -1,69 +1,20 @@
-# Unity Inspector MCP Server
+# unity-inspector-mcp
 
-An [MCP](https://modelcontextprotocol.io) server that gives an AI agent a live connection to a
-running copy of [Broforce](https://store.steampowered.com/app/274190/Broforce/). It talks to the
-**Unity Inspector Mod** inside the game over TCP, so the agent can walk the scene graph, read and
-write component fields, move the player, simulate input, jump between levels, take screenshots, and
-compile and run arbitrary C# — including Harmony patches — inside the live game process.
-
-It is a modding and debugging tool: the loop of "change something, run it, look at what the game
-actually did" happens without leaving the conversation.
-
-```
-MCP client (Claude Code, Codex, Cursor, ...)
-        │  stdio (MCP)
-        ▼
-   wrapper.js          hot-reload proxy: injects restart_server,
-        │  stdio       respawns index.js if it dies
-        ▼
-    index.js           MCP server: 33 tools, script library, log readers
-        │  TCP 127.0.0.1:9999 (newline-delimited JSON)
-        ▼
- Unity Inspector Mod   C# mod loaded by Unity Mod Manager
-        │
-        ▼
-     Broforce
-```
-
-## Features
-
-- **Scene inspection** — list and query GameObjects, dump components, read private fields.
-- **State manipulation** — set component properties, teleport players, set health, change time scale.
-- **Input simulation** — press or hold any game action for any player, including repeated presses.
-- **Level control** — list campaigns, jump straight to a level, restart the current one.
-- **Bro control** — list bros, set the next spawn, or hot-swap the current bro mid-level.
-- **Runtime C#** — evaluate expressions, or compile whole classes, MonoBehaviours, and Harmony
-  patches into the running game and unload them again cleanly.
-- **A reusable script library** — source-controlled C# utilities with metadata the agent sees in
-  the tool description, so it can pick the right one without being told.
-- **Test scripts** — JSON command sequences for repeatable, scripted runs.
-- **Log access** — read the mod manager log, or poll only what is new since the last check.
-- **Process control** — launch, stop, and wait for the game; commands fail fast if it crashes.
+This lets an MCP client inspect and change things in Broforce while the game is running. It's mainly for modding and debugging. It works with the Unity Inspector Mod, a C# mod loaded by Unity Mod Manager, and the two talk over TCP on localhost, port 9999 by default. The server runs on Linux, Windows and macOS.
 
 ## Requirements
 
-- **Node.js 18 or newer** (tested on 22). No other runtime dependencies — the only npm dependency
-  is the MCP SDK.
-- **Broforce** with **Unity Mod Manager** and the **Unity Inspector Mod** installed.
-- An MCP client — Claude Code, Claude Desktop, Codex CLI, Cursor, VS Code, Windsurf, or any other
-  MCP client.
+- Node.js 18 or newer. I've tested on 22, and the MCP SDK is the only npm dependency.
+- Broforce with Unity Mod Manager and the Unity Inspector Mod.
+- An MCP client. There are configs below for Claude Code, Claude Desktop, Codex CLI, Cursor, VS Code and Windsurf.
 
-## Installation
+## Installing the mod
 
-### 1. Install the Unity Inspector Mod
+Install the mod first. There's no prebuilt download, so clone the [BroforceMods repo](https://github.com/alexneargarder/BroforceMods) and build the Unity Inspector Mod project yourself, then put the built folder in Broforce's `Mods` directory like any other Unity Mod Manager mod. On r2modman it goes in `UMM/Mods` inside the profile folder instead. Here's a [guide for installing Unity Mod Manager and mods](https://steamcommunity.com/sharedfiles/filedetails/?id=2434812447) if you haven't done that before.
 
-Nothing here works until the game side is in place. The mod lives in the
-[BroforceMods](https://github.com/alexneargarder/BroforceMods) repository as the subproject
-**Unity Inspector Mod**. Build or download it, install it with
-[Unity Mod Manager](https://www.nexusmods.com/site/mods/21), and start the game.
+Open the Unity Mod Manager overlay in game (Ctrl+F10 by default) and click on the mod. Its panel shows whether the TCP server is running, the port, the address it's bound to and how many clients are connected, and there's a Start Server button if it's stopped. If you change the port from 9999, set `UNITY_INSPECTOR_PORT` on the server side to match.
 
-Open the Unity Mod Manager overlay (`Ctrl+F10` by default) and find **Unity Inspector Mod**. It
-shows the TCP server status, the port, the address it is bound to, and the number of connected
-clients. The server auto-starts with the mod by default; if it is stopped, press **Start Server**.
-
-The default port is **9999**. If you change it in the mod's settings, set `UNITY_INSPECTOR_PORT` to the same value in this server's `env` block so the two agree.
-
-### 2. Install this server
+## Installing the server
 
 ```bash
 git clone https://github.com/alexneargarder/unity-inspector-mcp
@@ -71,17 +22,11 @@ cd unity-inspector-mcp
 ./setup.sh
 ```
 
-`setup.sh` checks for Node, installs dependencies, and prints client configuration with the correct
-absolute path already filled in. Running `npm install` yourself does the same thing minus the
-printout.
+`setup.sh` checks for Node, installs the dependencies and prints the client config with the absolute path already filled in. A plain `npm install` works too, you just don't get the printed config.
 
-### 3. Configure your MCP client
+## Client configuration
 
-Point the client at **`wrapper.js`**, not `index.js`. The wrapper is what provides
-`restart_server` and keeps the server alive across crashes.
-
-This is the standard configuration, and it works as-is in most MCP clients — Claude Desktop,
-Cursor, Windsurf, Cline, and others:
+The config has to point at `wrapper.js`, not `index.js`. The wrapper provides the `restart_server` tool and respawns the server if it crashes.
 
 ```json
 {
@@ -99,38 +44,21 @@ Cursor, Windsurf, Cline, and others:
 }
 ```
 
-The whole `env` block is optional — see [Environment variables](#environment-variables) below. On
-Windows, escape the backslashes in the path: `"C:\\path\\to\\unity-inspector-mcp\\wrapper.js"`.
+The `env` block is optional and so is each variable in it. On Windows the backslashes have to be escaped: `"C:\\path\\to\\unity-inspector-mcp\\wrapper.js"`. That config works as is in Claude Desktop, Cursor, Windsurf and Cline:
 
-Where each client keeps that config:
+- Claude Desktop: `claude_desktop_config.json`, at `~/.config/Claude/` on Linux, `~/Library/Application Support/Claude/` on macOS, `%APPDATA%\Claude\` on Windows.
+- Cursor: `~/.cursor/mcp.json` for every project, or `.cursor/mcp.json` for one.
+- Windsurf: `~/.codeium/windsurf/mcp_config.json`. It doesn't interpolate environment variables, so use literal values, no `${VAR}`. None of these settings are secrets so nothing is lost by inlining them.
 
-<details>
-<summary><b>Claude Code</b></summary>
+Claude Code takes a command instead:
 
 ```bash
 claude mcp add unity-inspector -- node /absolute/path/to/unity-inspector-mcp/wrapper.js
 ```
 
-Environment variables go in `--env KEY=value` arguments before the `--`. Or write `.mcp.json` in
-your project root using the standard config above, with `"type": "stdio"` alongside `"command"`.
+Environment variables go in as `--env KEY=value` arguments before the `--`. You can also put a `.mcp.json` in the project root with the standard config plus `"type": "stdio"` next to `"command"`.
 
-</details>
-
-<details>
-<summary><b>Claude Desktop</b></summary>
-
-`claude_desktop_config.json`, using the standard config above:
-
-- Linux: `~/.config/Claude/claude_desktop_config.json`
-- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
-
-</details>
-
-<details>
-<summary><b>Codex CLI</b></summary>
-
-`~/.codex/config.toml`:
+Codex CLI uses `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.unity-inspector]
@@ -141,55 +69,13 @@ args = ["/absolute/path/to/unity-inspector-mcp/wrapper.js"]
 BROFORCE_LAUNCH_CMD = "/home/you/bin/launch-broforce --modded"
 ```
 
-Or from the CLI:
+Or `codex mcp add unity-inspector -- node /absolute/path/to/unity-inspector-mcp/wrapper.js`.
 
-```bash
-codex mcp add unity-inspector -- node /absolute/path/to/unity-inspector-mcp/wrapper.js
-```
+VS Code uses `.vscode/mcp.json`, where the top level key is `servers`, not `mcpServers`, and each server also needs `"type": "stdio"`.
 
-</details>
+### WSL
 
-<details>
-<summary><b>Cursor</b></summary>
-
-The standard config above, in either:
-
-- `~/.cursor/mcp.json` (all projects)
-- `.cursor/mcp.json` (one project)
-
-</details>
-
-<details>
-<summary><b>VS Code</b></summary>
-
-`.vscode/mcp.json`. Note the top-level key is **`servers`**, not `mcpServers`:
-
-```json
-{
-  "servers": {
-    "unity-inspector": {
-      "type": "stdio",
-      "command": "node",
-      "args": ["/absolute/path/to/unity-inspector-mcp/wrapper.js"]
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><b>Windsurf</b></summary>
-
-The standard config above, in `~/.codeium/windsurf/mcp_config.json`.
-
-Windsurf does not interpolate environment variables in that file, so write literal values — no
-`${VAR}` syntax. None of this server's settings are secrets, so nothing is lost by inlining them.
-
-</details>
-
-**WSL** (game on Windows, client in WSL) — run the server inside WSL and let it reach out to the
-Windows host:
+If the game is on Windows and your MCP client is in WSL, the server runs in WSL and connects to the Windows host IP it gets from `ip route show default`:
 
 ```json
 {
@@ -202,14 +88,11 @@ Windows host:
 }
 ```
 
-This setup **requires** enabling *Allow remote connections (LAN)* in the mod's settings — read
-[Security](#security) first.
+Launching and stopping the game don't work from there, since `pgrep` can't see Windows processes. You'd start the game on Windows yourself. This setup also needs the mod's "Allow remote connections (LAN)" setting turned on. The mod compiles and runs whatever C# gets sent to its port and there's no authentication on it, so any process that can reach the port can run code as whoever is running the game. It binds to 127.0.0.1 by default, and remote connections rebind it to 0.0.0.0, so while that's on, anyone on your network can run code on the game machine.
 
-### Environment variables
+## Environment variables
 
-All three are optional, and all three work the same way in any client that supports an `env` block
-(in Codex's TOML, in an `[mcp_servers.unity-inspector.env]` table; in Windsurf, as literal values
-only).
+All three are optional and go in the `env` block (the `[mcp_servers.unity-inspector.env]` table in Codex, literal values only in Windsurf).
 
 | Variable | Effect |
 |---|---|
@@ -217,257 +100,82 @@ only).
 | `UNITY_INSPECTOR_PORT` | TCP port the mod listens on, if you changed it from 9999. |
 | `UNITY_INSPECTOR_LOG` | Path to the Unity Mod Manager log, if it is somewhere unusual. |
 
-`launch_game` uses Steam by default. If Broforce starts some other way on your machine — a wrapper
-script, a Proton or distrobox launcher, a modded shortcut — set `BROFORCE_LAUNCH_CMD` to the full
-command line. The value is tokenized like a shell command line, so quotes and escapes work as
-expected.
-
-## Platform notes
-
-The server runs anywhere Node does, and detects its platform at startup.
-
-| | Connection | `launch_game` | Process detection |
-|---|---|---|---|
-| **Linux** | `127.0.0.1:9999` | `steam steam://rungameid/274190`, falling back to `xdg-open` | `pgrep` / `pkill` |
-| **Windows** | `127.0.0.1:9999` | `cmd /c start "" steam://rungameid/274190` | `tasklist` / `taskkill` |
-| **macOS** | `127.0.0.1:9999` | `open steam://rungameid/274190` | `pgrep` / `pkill` |
-| **WSL** | Windows host IP from `ip route show default` | as Linux (usually not useful — start the game on Windows) | `pgrep` / `pkill`, which cannot see Windows processes |
-
-`BROFORCE_LAUNCH_CMD` overrides the launch column everywhere.
-
-On Linux with a Proton install, and under WSL, screenshot paths returned by the game are Windows
-paths; the server translates them into paths you can actually open (`Z:` and the Proton
-`dosdevices` prefix on Linux, `/mnt/c/...` under WSL).
-
-## Security
-
-**The mod executes arbitrary C# for any client that can reach its port.** There is no
-authentication, no allow-list, and no sandbox. Anything that can open a TCP connection to port 9999
-can run code as your user.
-
-By default the mod binds **127.0.0.1**, so only programs on the same machine can connect. That is
-the configuration to stay in.
-
-The mod's settings include **Allow remote connections (LAN)**, which rebinds the server to
-`0.0.0.0`. This exists for one case: the MCP server running in a VM — typically WSL — while the
-game runs on the host. Turning it on means **anyone on your network can run arbitrary code on the
-machine running the game**. Only enable it on a network you trust, and turn it off when you are
-done. The mod prints a warning to the log and to its settings panel while remote connections are
-enabled.
+`launch_game` goes through Steam by default. `BROFORCE_LAUNCH_CMD` replaces that with a full command line, for cases like a Proton launcher script. It gets parsed into a command plus arguments, with shell style quoting.
 
 ## Tools
 
-34 tools: 33 from the server plus `restart_server` from the wrapper.
-
-### Game state and inspection
+There are 34, 33 from the server and `restart_server` from the wrapper.
 
 | Tool | Description |
 |---|---|
-| `ping` | Test the connection to the Unity Inspector Mod. |
-| `game_state` | One-call orientation: scene, game mode, level, player status, bro type. |
-| `list_gameobjects` | List GameObjects in the scene, with limits for inactive objects and result count. |
+| `ping` | Test the connection to the mod. |
+| `game_state` | Scene, game mode, level, player status and bro type in one call. |
+| `list_gameobjects` | List GameObjects in the scene. |
 | `query_gameobjects` | Search GameObjects by name pattern and/or component type. |
-| `inspect_gameobject` | Inspect one GameObject by path, optionally with full component details. |
-| `inspect_component` | Inspect a single component on a GameObject. |
-| `take_screenshot` | Capture the game window and return a path you can open locally. |
-
-### Players and bros
-
-| Tool | Description |
-|---|---|
+| `inspect_gameobject` | Inspect one GameObject by path, with optional component details. |
+| `inspect_component` | Inspect a single component. |
+| `take_screenshot` | Capture the game window and return the path. |
 | `inspect_player` | Detailed state for the active player(s). |
 | `teleport_player` | Move a player (or all players) to a coordinate. |
 | `set_player_health` | Set a player's health. |
-| `list_bros` | List every usable bro and report which one each player has selected. |
-| `set_bro` | Choose the bro a player spawns as next — does not change the current one. |
+| `list_bros` | List usable bros and which one each player has. |
+| `set_bro` | Choose the bro a player spawns as next. Does not change the current one. |
 | `swap_bro` | Swap a player's bro immediately, in place, mid-level. |
-
-### Entities and world state
-
-| Tool | Description |
-|---|---|
 | `list_enemies` | List enemies currently in the scene. |
 | `spawn_entity` | Spawn an entity at a coordinate (limited entity coverage). |
-| `modify_component` | Write properties on a component of a GameObject. |
-| `set_game_speed` | Set the time scale (1.0 normal, 0.5 half, 2.0 double). |
-
-### Input
-
-| Tool | Description |
-|---|---|
-| `simulate_input` | Press or hold a game action for a player — `up`, `down`, `left`, `right`, `fire`, `jump`, `special`, `highFive`, `gesture`, `sprint`, `start`, `escape` — with optional hold duration or repeat count and interval. |
-
-### Levels
-
-| Tool | Description |
-|---|---|
+| `modify_component` | Write properties on a component. |
+| `set_game_speed` | Set the time scale (1.0 is normal). |
+| `simulate_input` | Press or hold a game action for a player, with an optional hold duration or repeat count. |
 | `list_campaigns` | List campaigns with their indices. |
-| `go_to_level` | Jump directly to a campaign/level pair. |
+| `go_to_level` | Go directly to a campaign/level pair. |
 | `restart_level` | Restart the current level, clearing checkpoints and trigger state. |
-
-### C# execution and the script library
-
-| Tool | Description |
-|---|---|
-| `execute_code` | Evaluate a C# expression in the Unity context (expressions only — no `return`). |
-| `execute_script` | Compile and run a full C# script file in the game: classes, MonoBehaviours, Harmony patches, private member access. |
+| `execute_code` | Evaluate a C# expression in the Unity context (expressions only, no `return`). |
+| `execute_script` | Compile and run a full C# script in the game, Harmony patches and private members included. |
 | `compile_script` | Compile a script without running it, to check for compiler errors. |
-| `list_scripts` | List the C# script library with each script's description, tags, and arguments. |
-| `unload_script` | Unload a running script — unpatches its Harmony patches, destroys its GameObjects, calls its `Unload()`. |
-
-### Test scripts
-
-| Tool | Description |
-|---|---|
-| `list_test_scripts` | List the JSON test scripts in `scripts/` and `scripts/examples/`. |
-| `run_test_script` | Run a JSON command sequence step by step and report per-step results and timings. |
-
-### Logs
-
-| Tool | Description |
-|---|---|
-| `read_log` | Read the mod manager log — last N lines, optionally filtered by substring. |
-| `watch_log` | Return only log lines written since the previous call. Built for iterative debug loops. |
-
-### Process management
-
-| Tool | Description |
-|---|---|
+| `list_scripts` | List the C# script library with descriptions, tags and arguments. |
+| `unload_script` | Unload a running script, unpatching it and destroying its GameObjects. |
+| `list_test_scripts` | List the JSON test scripts. |
+| `run_test_script` | Run a JSON command sequence and report each step. |
+| `read_log` | Read the last N lines of the mod manager log, with an optional filter. |
+| `watch_log` | Return only the log lines written since the previous call. |
 | `launch_game` | Launch Broforce and wait until it answers, with `restart` and `vanilla` options. |
 | `stop_game` | Kill the running Broforce process. |
-| `wait_for_game` | Poll until the game's TCP server responds, or time out. |
-
-### Server management
-
-| Tool | Description |
-|---|---|
+| `wait_for_game` | Poll until the game responds, or time out. |
 | `restart_server` | Restart `index.js` in place to pick up code changes. Provided by `wrapper.js`. |
 
-## C# script library
+Under Proton and WSL the game returns Windows paths for screenshots, and the server translates those into paths you can open locally.
 
-`scripts/csharp/` holds source-controlled C# utilities that compile and run inside the game.
-Each carries a metadata header (`// #name`, `// #description`, `// #tags`, `// #args`) that feeds
-both `list_scripts` and the `execute_script` tool description, so the agent can choose a script and
-supply its arguments unprompted. Scripts get an isolated Harmony instance, a logger, an argument
-dictionary, and automatic cleanup of patches and GameObjects on unload.
+## C# scripts
 
-Format, lifecycle, the `ScriptContext` API, and the .NET 3.5 constraints are documented in
-[`scripts/csharp/README.md`](scripts/csharp/README.md).
+`scripts/csharp/` has a library of scripts committed to the repo: `find-by-type`, `inspect-private-fields`, `watch-field`, `trace-method-calls` and `dump-harmony-patches`, which work on any modded install, plus `menu-tweaker` (needs the RocketLib mod) and `rogueforce-runner` (needs the Rogueforce mod). Each one has a header of `// #name`, `// #description`, `// #tags` and `// #args` comments. `list_scripts` and the `execute_script` tool description both report that metadata, so the agent can pick a script and fill in its arguments on its own.
 
-Included scripts:
-
-| Script | What it does |
-|---|---|
-| `find-by-type` | Find all live instances of a type with key state info. |
-| `inspect-private-fields` | Dump every field, private included, of a component on a named GameObject. |
-| `watch-field` | Log a field's value every time it changes, until unloaded. |
-| `trace-method-calls` | Harmony-patch a method and log every call with its arguments. |
-| `dump-harmony-patches` | List all Harmony patches on a method, with owner, type, and priority. |
-| `menu-tweaker` | Live-edit FlexMenu element properties without rebuilding. **Requires the RocketLib mod.** |
-| `rogueforce-runner` | Test harness for Rogueforce runs. **Requires the Rogueforce mod.** |
-
-The other five work on any modded Broforce install.
-
-Scripts outside the library can be run by absolute path; they simply do not appear in the catalog.
+A script gets its own Harmony instance, a logger and a dictionary of its arguments, and its patches and GameObjects are cleaned up when it unloads. The format, the lifecycle, the ScriptContext API and the .NET 3.5 constraints are in [scripts/csharp/README.md](scripts/csharp/README.md). You can run a script that isn't in the library by passing an absolute path to it, it just won't show up in the catalog.
 
 ## Test scripts
 
-JSON files describing a sequence of game commands with optional waits between them — useful for
-reproducing a scenario the same way every time. `scripts/examples/` has three complete examples;
-the format and tips are in [`scripts/README.md`](scripts/README.md).
-
-Test script steps are dispatched straight to the game, so they can only use game-side commands.
-Server-side tools (`read_log`, `watch_log`, `launch_game`, `wait_for_game`, ...) are rejected up
-front with a message naming the offending step rather than failing partway through a run.
+Test scripts are JSON files with a sequence of game commands and optional waits between the steps, for reproducing the same scenario identically every run. There are three examples in `scripts/examples/` and the format is covered in [scripts/README.md](scripts/README.md). Steps go straight to the game, so server side tools like `read_log` and `launch_game` get rejected before the run starts.
 
 ## Troubleshooting
 
-**"Game is not running. Use launch_game to start it."** — the server could not open a TCP
-connection. In order of likelihood:
+"Game is not running. Use launch_game to start it." means the server couldn't open the TCP connection. Most likely causes, in order:
 
-1. Broforce is not running, or the Unity Inspector Mod did not load. Open the Unity Mod Manager
-   overlay and check the mod is listed and enabled.
-2. The mod's TCP server is stopped. Its settings panel shows the status; press **Start Server**.
-3. The mod is on a non-default port. Set `UNITY_INSPECTOR_PORT` to match it (or set the mod back to 9999).
-4. You are in WSL and *Allow remote connections (LAN)* is off. The mod is bound to the Windows
-   machine's loopback, which WSL cannot reach. See [Security](#security) before enabling it.
+1. The game isn't running, or the mod didn't load. Check that the Unity Mod Manager overlay lists the mod and that it's enabled.
+2. The mod's TCP server is stopped. Its settings panel shows the status and has a Start Server button.
+3. The mod is on a port other than the default one. Set `UNITY_INSPECTOR_PORT` to match, or set the mod back to 9999.
+4. You're on WSL with "Allow remote connections (LAN)" turned off. The mod is bound to the Windows loopback and WSL can't reach it.
 
-If a Broforce process is running but not answering, `launch_game` says so explicitly instead of
-starting a second copy — that combination almost always means the mod failed to load, and the log
-will say why.
+If the game process is there but doesn't answer, `launch_game` reports that instead of starting a second copy. That's almost always the mod failing to load, and the log will have the reason.
 
-**Command timeouts.** Most commands allow 6 seconds. Scene-changing commands (`go_to_level`,
-`restart_level`, `swap_bro`, `set_bro`, `take_screenshot`) get 10, `execute_code` and
-`unload_script` get 10, and `execute_script` and `compile_script` get 30 because compilation is
-slow. `simulate_input` with a repeat count is given time proportional to the count. A timeout
-usually means the game is busy — a long level load, or a script doing too much work on the main
-thread. If the game process actually dies, the server notices within half a second and reports a
-likely crash instead of waiting out the timeout.
+Most commands get 6 seconds. The level and bro changing ones, plus `take_screenshot`, `execute_code` and `unload_script`, get 10, and `execute_script` and `compile_script` get 30 since compiling is slow. A timeout usually just means the game is busy with a long level load or a script that's overloading the main thread, and if the game dies partway through a command the server notices within half a second and reports a likely crash.
 
-**Where the log is.** `read_log` and `watch_log` look for the Unity Mod Manager log in:
+`read_log` and `watch_log` look for the Unity Mod Manager log at `~/.config/r2modmanPlus-local/Broforce/profiles/<profile>/UMM/Core/Log.txt` on Linux and `%APPDATA%\r2modmanPlus-local\Broforce\profiles\<profile>\UMM\Core\Log.txt` on Windows, checking every r2modman profile and taking the most recently written one. A direct Unity Mod Manager install gets checked too, at `<game>/Mods/UnityModManager/Log.txt`. `UNITY_INSPECTOR_LOG` overrides the search entirely, and if no log turns up the error lists every path that was tried.
 
-- Linux: `~/.config/r2modmanPlus-local/Broforce/profiles/<profile>/UMM/Core/Log.txt`
-- Windows: `%APPDATA%\r2modmanPlus-local\Broforce\profiles\<profile>\UMM\Core\Log.txt`
-
-Every r2modman/Thunderstore profile is checked and the most recently written log wins. A direct
-Unity Mod Manager install is also probed at `<game>/Mods/UnityModManager/Log.txt`. If the log
-lives somewhere else, set `UNITY_INSPECTOR_LOG` to its path — that override is authoritative, and
-when nothing matches, the tools list every path they tried.
-
-**The MCP server itself died.** The wrapper restarts `index.js` automatically, and answers any
-in-flight request with an explanatory error. If the child crashes three times within 30 seconds the
-wrapper stops respawning it and tells you where to look: `/tmp/mcp-wrapper-<pid>.log` holds both
-the wrapper's log and everything the server wrote to stderr. Fix the problem, then call
-`restart_server`.
+If the MCP server itself crashes, the wrapper restarts `index.js` and any in-flight requests get an error back, though it gives up after three crashes inside 30 seconds. `/tmp/mcp-wrapper-<pid>.log` has the wrapper's log plus everything the server wrote to stderr, and `restart_server` starts it back up once you've fixed the problem.
 
 ## Development
 
-**Hot reload.** After editing `index.js` or anything in `lib/`, call the `restart_server` tool.
-The wrapper kills the child, spawns a fresh one, and replays the MCP `initialize` handshake, so the
-client never notices the swap — no reconnect, no client restart. It is an ordinary MCP tool, so it
-works from any client. Editing `wrapper.js` itself is the exception: that still needs a client-side
-reconnect (in Claude Code, `/mcp`).
+After editing `index.js` or anything in `lib/`, the `restart_server` tool restarts the server in place and replays the MCP initialize handshake, so the client keeps its session. Editing `wrapper.js` itself needs a reconnect on the client side (`/mcp` in Claude Code).
 
-**Adding a tool** takes two edits in two repos:
+Adding a tool takes two edits. In `index.js` it needs a definition in the `ListToolsRequestSchema` handler and a case in the switch, where game tools call `unityClient.sendCommand("method_name", params)`. Then it needs a matching handler in `Unity Inspector Mod/MessageHandler.cs` over in the BroforceMods repo. If it takes longer than the 6 second budget, add a timeout for it in `commandTimeout()` in `lib/unity-client.js`.
 
-1. In this repo, `index.js` — add the tool definition to the `ListToolsRequestSchema` handler, and
-   a `case` in the `CallToolRequestSchema` switch. Tools that only need Node (file and process
-   work) are handled there directly; game-side tools call
-   `unityClient.sendCommand("method_name", params)`.
-2. In [BroforceMods](https://github.com/alexneargarder/BroforceMods), `Unity Inspector
-   Mod/MessageHandler.cs` — add the matching handler so the game knows the method.
-
-If the tool can take longer than the default budget, give it a timeout in `commandTimeout()` in
-`lib/unity-client.js`.
-
-**Tests** run on Node's built-in test runner, with no test dependencies:
-
-```bash
-npm test
-```
-
-They cover the TCP client's framing, timeout, and reconnect behavior against a stub server, plus
-the script library, launch-command resolution, and tool dispatch. Nothing in the suite needs the
-game.
-
-**Layout:**
-
-```
-wrapper.js              hot-reload proxy and restart_server
-index.js                MCP server: tool definitions and dispatch
-lib/unity-client.js     TCP client, framing, timeouts, crash detection
-lib/game-process.js     launch/kill/detect Broforce per platform
-lib/script-library.js   C# script catalog and JSON test-script runner
-scripts/csharp/         C# script library
-scripts/examples/       example JSON test scripts
-test/                   node --test suites
-test-support/           shared stubs for the test suite
-```
-
-One rule matters more than any other when working on this code: **stdout carries the MCP
-protocol**. Child processes must be spawned with stdio ignored or piped, never inherited, and
-diagnostics go to `console.error`. A single stray `console.log` corrupts the transport.
-
-## License
-
-GPL-3.0. See [LICENSE](LICENSE).
+The tests are `npm test` with Node's built in runner and no test dependencies, and none of them need the game running. Watch out for stdout, since it carries the MCP protocol and one stray `console.log` corrupts it.

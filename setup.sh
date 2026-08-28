@@ -1,34 +1,51 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+# Install dependencies and print ready-to-paste MCP client configuration.
+set -eu
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPOS_DIR="$(dirname "$SCRIPT_DIR")"
-MCP_CONFIG="$REPOS_DIR/.mcp.json"
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+WRAPPER="$DIR/wrapper.js"
 
-echo "Installing npm dependencies..."
-nix-shell -p nodejs_22 --run "cd '$SCRIPT_DIR' && npm install"
-
-echo "Configuring MCP server..."
-if [[ -f "$MCP_CONFIG" ]]; then
-    if grep -q "unity-inspector" "$MCP_CONFIG"; then
-        echo "Unity inspector already configured in $MCP_CONFIG"
-    else
-        echo "WARNING: $MCP_CONFIG exists but doesn't contain unity-inspector."
-        echo "You may need to manually add the unity-inspector entry."
+for cmd in node npm; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo "Error: '$cmd' was not found on PATH." >&2
+        echo "Install Node.js 18 or newer (https://nodejs.org) and run this script again." >&2
+        exit 1
     fi
-else
-    cat > "$MCP_CONFIG" << EOF
+done
+
+NODE_MAJOR=$(node -p 'process.versions.node.split(".")[0]')
+if [ "$NODE_MAJOR" -lt 18 ]; then
+    echo "Error: Node.js 18 or newer is required (found $(node -v))." >&2
+    exit 1
+fi
+
+echo "Installing dependencies with npm..."
+(cd "$DIR" && npm install)
+
+cat <<EOF
+
+Dependencies installed.
+
+--- Standard config: most MCP clients (Claude Desktop, Cursor, Windsurf, ...) ---
 {
   "mcpServers": {
     "unity-inspector": {
-      "command": "nix-shell",
-      "args": ["-p", "nodejs_22", "--run", "node $SCRIPT_DIR/index.js"],
-      "cwd": "$SCRIPT_DIR"
+      "command": "node",
+      "args": ["$WRAPPER"]
     }
   }
 }
-EOF
-    echo "Created $MCP_CONFIG"
-fi
 
-echo "Done. Restart Claude Code or run /mcp to connect."
+--- Claude Code ---
+claude mcp add unity-inspector -- node "$WRAPPER"
+
+--- Codex CLI: add to ~/.codex/config.toml ---
+[mcp_servers.unity-inspector]
+command = "node"
+args = ["$WRAPPER"]
+
+Other clients: see README.md, section "Installation".
+
+Then reconnect the client and make sure Broforce is running with the Unity
+Inspector Mod loaded.
+EOF

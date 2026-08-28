@@ -3,15 +3,30 @@
   "version": "1.0.0",
   "type": "module",
   "main": "index.js",
+  "description": "MCP server that lets AI agents inspect, modify, and drive a running Broforce instance through the Unity Inspector Mod — GameObject inspection, state manipulation, input simulation, and runtime C# execution.",
+  "author": "Alex Neargarder",
+  "license": "GPL-3.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alexneargarder/unity-inspector-mcp"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ai-agent",
+    "claude",
+    "unity",
+    "broforce",
+    "modding",
+    "game-debugging",
+    "game-automation",
+    "harmony"
+  ],
   "scripts": {
     "start": "node index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.17.5"
+    "@modelcontextprotocol/sdk": "^1.30.0"
   }
 }
