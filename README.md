@@ -138,7 +138,7 @@ There are 34, 33 from the server and `restart_server` from the wrapper.
 | `run_test_script` | Run a JSON command sequence and report each step. |
 | `read_log` | Read the last N lines of the mod manager log, with an optional filter. |
 | `watch_log` | Return only the log lines written since the previous call. |
-| `launch_game` | Launch Broforce and wait until it answers, with `restart` and `vanilla` options. |
+| `launch_game` | Launch Broforce and wait until it answers, with `restart`, `vanilla` and `launchArgs` options. |
 | `stop_game` | Kill the running Broforce process. |
 | `wait_for_game` | Poll until the game responds, or time out. |
 | `restart_server` | Restart `index.js` in place to pick up code changes. Provided by `wrapper.js`. |
@@ -168,7 +168,7 @@ If the game process is there but doesn't answer, `launch_game` reports that inst
 
 Most commands get 6 seconds. The level and bro changing ones, plus `take_screenshot`, `execute_code` and `unload_script`, get 10, and `execute_script` and `compile_script` get 30 since compiling is slow. A timeout usually just means the game is busy with a long level load or a script that's overloading the main thread, and if the game dies partway through a command the server notices within half a second and reports a likely crash.
 
-`read_log` and `watch_log` look for the Unity Mod Manager log at `~/.config/r2modmanPlus-local/Broforce/profiles/<profile>/UMM/Core/Log.txt` on Linux and `%APPDATA%\r2modmanPlus-local\Broforce\profiles\<profile>\UMM\Core\Log.txt` on Windows, checking every r2modman profile and taking the most recently written one. A direct Unity Mod Manager install gets checked too, at `<game>/Mods/UnityModManager/Log.txt`. `UNITY_INSPECTOR_LOG` overrides the search entirely, and if no log turns up the error lists every path that was tried.
+`read_log` and `watch_log` look for the Unity Mod Manager log at `~/.config/r2modmanPlus-local/Broforce/profiles/<profile>/UMM/Core/Log.txt` on Linux and `%APPDATA%\r2modmanPlus-local\Broforce\profiles\<profile>\UMM\Core\Log.txt` on Windows. While the game is running they prefer the profile it was launched from, when the launcher's command line reveals it; otherwise they check every r2modman profile and take the most recently written one. A direct Unity Mod Manager install gets checked too, at `<game>/Mods/UnityModManager/Log.txt`. `UNITY_INSPECTOR_LOG` overrides the search entirely, and if no log turns up the error lists every path that was tried.
 
 If the MCP server itself crashes, the wrapper restarts `index.js` and any in-flight requests get an error back, though it gives up after three crashes inside 30 seconds. `/tmp/mcp-wrapper-<pid>.log` has the wrapper's log plus everything the server wrote to stderr, and `restart_server` starts it back up once you've fixed the problem.
 

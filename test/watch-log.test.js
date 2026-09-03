@@ -11,7 +11,7 @@ await fs.writeFile(logPath, 'first line\nsecond line\n');
 // findLogPath() honours this, so watch_log/read_log run against the temp log
 process.env.UNITY_INSPECTOR_LOG = logPath;
 
-const { handleToolCall } = await import('../index.js');
+const { handleToolCall, findLogPath } = await import('../index.js');
 
 function payload(response) {
   const text = response.content.map((c) => c.text).join('\n');
@@ -102,10 +102,12 @@ test('the log search globs r2modman profiles and prefers the newest', async () =
     return file;
   };
 
-  // Real installs use arbitrary profile names, not just "Default"
-  await write('Default', 'stale default profile\n', new Date('2020-01-01T00:00:00Z'));
-  await write('UMM_Online_Install', 'older online profile\n', new Date('2021-01-01T00:00:00Z'));
-  const newest = await write('UMM_Local_Install', 'newest local profile\n', new Date('2024-01-01T00:00:00Z'));
+  // Arbitrary names that cannot collide with whatever profile a real game
+  // process on this machine was launched from — profile detection must miss
+  // and leave the mtime rule in charge
+  const stale = await write('Test-Stale-a41f', 'stale profile\n', new Date('2020-01-01T00:00:00Z'));
+  await write('Test-Older-a41f', 'older profile\n', new Date('2021-01-01T00:00:00Z'));
+  const newest = await write('Test-Newest-a41f', 'newest profile\n', new Date('2024-01-01T00:00:00Z'));
 
   const savedHome = process.env.HOME;
   const savedOverride = process.env.UNITY_INSPECTOR_LOG;
@@ -116,12 +118,39 @@ test('the log search globs r2modman profiles and prefers the newest', async () =
     const response = await handleToolCall({ params: { name: 'read_log', arguments: { lines: 5 } } });
     const result = payload(response);
     assert.equal(result.path, newest);
-    assert.match(result.content, /newest local profile/);
+    assert.match(result.content, /newest profile/);
+
+    // A detected active profile beats a newer mtime...
+    assert.equal(await findLogPath(async () => 'Test-Stale-a41f'), stale);
+    // ...but a detected profile with no log on disk falls back to the mtime rule
+    assert.equal(await findLogPath(async () => 'Test-Missing-a41f'), newest);
+    assert.equal(await findLogPath(async () => null), newest);
   } finally {
     if (savedHome === undefined) delete process.env.HOME;
     else process.env.HOME = savedHome;
     if (savedOverride !== undefined) process.env.UNITY_INSPECTOR_LOG = savedOverride;
     await fs.rm(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('watch_log restarts as a baseline when the resolved log path changes', async () => {
+  process.env.UNITY_INSPECTOR_LOG = logPath;
+  await watchLog({ reset: true });
+  await fs.appendFile(logPath, 'tail on first log\n');
+  assert.equal((await watchLog({})).newLines, 1);
+
+  // Same watcher state, different resolved file — a bigger one, so a stale
+  // offset would slice old bytes out of its middle as "new"
+  const otherLog = path.join(logDir, 'Other.txt');
+  await fs.writeFile(otherLog, 'aaaa\n'.repeat(2000) + 'last line of other\n');
+  process.env.UNITY_INSPECTOR_LOG = otherLog;
+  try {
+    const switched = await watchLog({});
+    assert.equal(switched.isBaseline, true);
+    assert.equal(switched.path, otherLog);
+    assert.match(switched.content, /last line of other/);
+  } finally {
+    process.env.UNITY_INSPECTOR_LOG = logPath;
   }
 });
 

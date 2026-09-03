@@ -4,6 +4,9 @@ import { spawn } from 'child_process';
 
 import {
   POSIX_GAME_CHECK_CMD,
+  POSIX_PROFILE_SCAN_CMD,
+  composeExtraLaunchArgs,
+  extractProfileName,
   isGameRunning,
   killGame,
   resolveLaunchCommand,
@@ -89,6 +92,40 @@ test('killGame says so when pkill is unavailable', { skip: !isPosix }, async (t)
   assert.doesNotMatch(result.detail ?? '', /No Broforce process was running/);
 });
 
+test('extractProfileName resolves the launched profile from process listings', () => {
+  const reaper =
+    '202905 /home/u/.local/share/Steam/ubuntu12_32/reaper SteamLaunch AppId=274190 -- ' +
+    '/home/u/.config/r2modmanPlus-local/Broforce/profiles/Default/run_umm.sh ' +
+    '/home/u/.local/share/broforce-linux/Broforce.x86_64 --doorstop-enabled true ' +
+    '--doorstop-target-assembly /home/u/.config/r2modmanPlus-local/Broforce/profiles/Default/UMM/Core/UnityModManager.dll';
+  assert.equal(extractProfileName(reaper), 'Default');
+
+  const windows =
+    'C:\\Broforce\\Broforce.exe --doorstop-target-assembly ' +
+    '"C:\\Users\\u\\AppData\\Roaming\\r2modmanPlus-local\\Broforce\\profiles\\UMM_Local_Install\\UMM\\Core\\UnityModManager.dll"';
+  assert.equal(extractProfileName(windows), 'UMM_Local_Install');
+
+  // Two distinct profiles across launcher lines means no confident answer
+  const secondLauncher =
+    '888 /home/u/.config/r2modmanPlus-local/Broforce/profiles/UMM_Local_Install/run_umm.sh';
+  assert.equal(extractProfileName(reaper + '\n' + secondLauncher), null);
+
+  // Non-launcher processes touching a profile path neither drive nor spoil the choice
+  const strayShell =
+    '999 tail -f /home/u/.config/r2modmanPlus-local/Broforce/profiles/UMM_Local_Install/UMM/Core/Log.txt';
+  assert.equal(extractProfileName(strayShell), null);
+  assert.equal(extractProfileName(reaper + '\n' + strayShell), 'Default');
+
+  // A profile name with a space must not truncate into a match on another profile
+  const spaced =
+    '777 /home/u/.config/r2modmanPlus-local/Broforce/profiles/Default Backup/run_umm.sh --doorstop-enabled true';
+  assert.equal(extractProfileName(spaced), null);
+
+  assert.equal(extractProfileName(''), null);
+  // The scan command's own bracketed pattern must never match itself
+  assert.equal(extractProfileName(POSIX_PROFILE_SCAN_CMD), null);
+});
+
 test('tokenizeCommand handles quoting', () => {
   assert.deepEqual(tokenizeCommand('bf --vanilla'), ['bf', '--vanilla']);
   assert.deepEqual(tokenizeCommand('  "/opt/my games/bf.sh"   -a  b '), ['/opt/my games/bf.sh', '-a', 'b']);
@@ -102,6 +139,21 @@ test('BROFORCE_LAUNCH_CMD wins and receives the extra tool args', () => {
   assert.equal(launch.command, 'bf');
   assert.deepEqual(launch.args, ['--mode', 'proton', '--vanilla']);
   assert.deepEqual(launch.ignoredArgs, []);
+});
+
+test('tool launchArgs tokenize and append after the built-in flags', () => {
+  assert.deepEqual(composeExtraLaunchArgs({}), []);
+  assert.deepEqual(composeExtraLaunchArgs({ vanilla: true }), ['--vanilla']);
+
+  const extra = composeExtraLaunchArgs({ vanilla: true, launchArgs: '-m "second arg"' });
+  const launch = resolveLaunchCommand(extra, { BROFORCE_LAUNCH_CMD: 'bf --mode proton' });
+  assert.deepEqual(launch.args, ['--mode', 'proton', '--vanilla', '-m', 'second arg']);
+  assert.equal(launch.display, 'bf --mode proton --vanilla -m second arg');
+
+  // Malformed input is an error, not silently dropped or mangled args
+  assert.throws(() => composeExtraLaunchArgs({ launchArgs: 5 }), /must be a string/);
+  assert.throws(() => composeExtraLaunchArgs({ launchArgs: '-m "second arg' }), /Unbalanced double quote/);
+  assert.throws(() => tokenizeCommand("bf 'oops"), /Unbalanced single quote/);
 });
 
 test('the default launch is a platform-appropriate Steam protocol launch', () => {

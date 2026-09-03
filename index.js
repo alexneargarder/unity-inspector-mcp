@@ -14,7 +14,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import { UnityInspectorClient } from './lib/unity-client.js';
-import { isGameRunning, killGame, resolveLaunchCommand, spawnDetached } from './lib/game-process.js';
+import { composeExtraLaunchArgs, detectActiveProfile, isGameRunning, killGame, resolveLaunchCommand, spawnDetached } from './lib/game-process.js';
 import {
   buildScriptCatalog,
   listCSharpScripts,
@@ -100,10 +100,33 @@ async function ummLogSearch() {
 }
 
 let watchLogOffset = 0;
+let watchLogPath = null;
 
-/** The most recently written log among the candidates, or null. */
-async function findLogPath() {
+/**
+ * The log of the profile the running game was launched from when that can be
+ * determined, otherwise the most recently written log among the candidates,
+ * or null. Mtime alone picks the wrong profile when the active profile's log
+ * is colder than a dead profile's (fresh launch before the first flush, or a
+ * launch mode that was writing elsewhere). `detectProfile` is injectable for
+ * tests only.
+ */
+export async function findLogPath(detectProfile = detectActiveProfile) {
   const { paths, override } = await ummLogSearch();
+
+  if (!override) {
+    const profile = await detectProfile();
+    if (profile) {
+      for (const root of r2ProfileRoots()) {
+        const candidate = path.join(root, profile, UMM_LOG_IN_PROFILE);
+        try {
+          const stat = await fs.stat(candidate);
+          if (stat.isFile()) return candidate;
+        } catch {
+          continue;
+        }
+      }
+    }
+  }
 
   let newest = null;
   for (const candidate of paths) {
@@ -559,6 +582,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             lines: {
               type: "number",
+              minimum: 1,
               description: "Number of lines to return from the end of the log (default: 50)",
             },
             filter: {
@@ -662,6 +686,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             restart: {
               type: "boolean",
               description: "If true, stop the running game first then relaunch (default: false)",
+            },
+            launchArgs: {
+              type: "string",
+              description: "Extra arguments appended to the launch command, e.g. \"-m\" to launch minimized. Tokenized with shell-style quoting. Requires BROFORCE_LAUNCH_CMD — the Steam protocol launch ignores them.",
             },
           },
         },
@@ -934,7 +962,8 @@ export async function handleToolCall(request) {
           lines = lines.filter(l => l.toLowerCase().includes(filterLower));
         }
 
-        const count = args.lines ?? 50;
+        const requested = Number(args.lines ?? 50);
+        const count = Number.isFinite(requested) ? Math.max(1, Math.floor(requested)) : 50;
         lines = lines.slice(-count);
 
         result = {
@@ -957,19 +986,25 @@ export async function handleToolCall(request) {
 
         if (args.reset) {
           watchLogOffset = fileSize;
+          watchLogPath = logPath;
           result = {
+            path: logPath,
             message: "Watch position reset to end of log",
             fileSize,
           };
           break;
         }
 
-        if (watchLogOffset === 0 || watchLogOffset > fileSize) {
-          // First call or log was truncated/rotated — return last 20 lines as baseline
+        // A carried-over offset is only meaningful against the file it was
+        // taken from — a resolved-path switch restarts the watch as a baseline
+        if (watchLogPath !== logPath || watchLogOffset > fileSize) {
+          // First call, path switch, or log was truncated/rotated — return last 20 lines as baseline
           const logContent = await fs.readFile(logPath, 'utf-8');
           const lines = logContent.split('\n').slice(-20);
           watchLogOffset = fileSize;
+          watchLogPath = logPath;
           result = {
+            path: logPath,
             isBaseline: true,
             newLines: lines.length,
             content: lines.join('\n'),
@@ -979,6 +1014,7 @@ export async function handleToolCall(request) {
 
         if (watchLogOffset === fileSize) {
           result = {
+            path: logPath,
             newLines: 0,
             content: "",
             message: "No new log entries",
@@ -1006,9 +1042,11 @@ export async function handleToolCall(request) {
           await fh.close();
         }
         watchLogOffset = fileSize;
+        watchLogPath = logPath;
 
         const newLines = newContent.split('\n').filter(l => l.length > 0);
         result = {
+          path: logPath,
           newLines: newLines.length,
           content: newContent.trimEnd(),
           ...(skippedBytes > 0
@@ -1109,7 +1147,13 @@ export async function handleToolCall(request) {
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
 
-        const extraArgs = args.vanilla ? ["--vanilla"] : [];
+        let extraArgs;
+        try {
+          extraArgs = composeExtraLaunchArgs(args);
+        } catch (err) {
+          throw new Error(`Invalid launchArgs: ${err.message}`);
+        }
+
         let launch;
         try {
           launch = resolveLaunchCommand(extraArgs);

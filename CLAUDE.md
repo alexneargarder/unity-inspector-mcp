@@ -55,7 +55,7 @@ Budgets live in `commandTimeout()` in `lib/unity-client.js`. Default is 6 second
 
 ### Log Files
 
-`read_log` / `watch_log` search for the UMM log and use the **most recently modified** match: every `r2modmanPlus-local/Broforce/profiles/*/UMM/Core/Log.txt` under `~/.config` and `%APPDATA%` (profile names are arbitrary — `Default`, `UMM_Local_Install`, … — so the profile directory is globbed, never hardcoded), plus `Mods/UnityModManager/Log.txt` and `Mods/Log.txt` under the detected game path. Game-path detection runs from the log search itself, so it works with the game closed. `UNITY_INSPECTOR_LOG` overrides the whole search and is authoritative — if it points at a missing file, that is the error, with no fallback to another log. A miss reports every path searched. `watch_log` returns at most 64KB per call and flags the remainder as truncated.
+`read_log` / `watch_log` resolve the log of the **profile the running game was launched from**: with the game process confirmed running, launcher-chain command lines (`run_umm.sh` / doorstop args) are scanned for the r2modman profile path, and the profile is used only when exactly one distinct name appears. A closed game, an ambiguous scan, or a launch that never went through r2modman falls back to searching for the UMM log and using the **most recently modified** match: every `r2modmanPlus-local/Broforce/profiles/*/UMM/Core/Log.txt` under `~/.config` and `%APPDATA%` (profile names are arbitrary — `Default`, `UMM_Local_Install`, … — so the profile directory is globbed, never hardcoded), plus `Mods/UnityModManager/Log.txt` and `Mods/Log.txt` under the detected game path. Game-path detection runs from the log search itself, so it works with the game closed. `UNITY_INSPECTOR_LOG` overrides the whole search and is authoritative — if it points at a missing file, that is the error, with no fallback to another log. A miss reports every path searched. `watch_log` returns at most 64KB per call and flags the remainder as truncated.
 
 ### C# Script System (Node.js side)
 
@@ -71,7 +71,7 @@ Budgets live in `commandTimeout()` in `lib/unity-client.js`. Default is 6 second
 ### Game Process Management
 
 - Everything lives in `lib/game-process.js`; nothing in the tool layer spawns processes directly
-- `launch_game`: uses `BROFORCE_LAUNCH_CMD` when set (parsed into command + args), otherwise a platform-appropriate Steam protocol launch of appid 274190. Spawn failures come back as a tool error naming `BROFORCE_LAUNCH_CMD`, never an uncaught exception
+- `launch_game`: uses `BROFORCE_LAUNCH_CMD` when set (parsed into command + args), otherwise a platform-appropriate Steam protocol launch of appid 274190. Spawn failures come back as a tool error naming `BROFORCE_LAUNCH_CMD`, never an uncaught exception. A `launchArgs` string (tokenized shell-style) is appended to the custom command; Steam launches can't take it and report it as ignored
 - `stop_game`: `pkill` on POSIX, `taskkill` on Windows. "Nothing matched" and "the tool is missing" are distinct results — the latter reports `unknown: true` rather than claiming a clean stop
 - **Bracket trick**: pgrep/pkill patterns bracket their first character *and* the extension (`[B]roforce.*[.]e[x]e`) so the wrapping `sh -c` command line can't match itself. Verify any new pattern by running it with the game closed and confirming a non-zero exit
 - Every spawn uses `stdio: "ignore"` (or piped stdout captured by `runChild`) and an `error` handler — NEVER `exec()` inheriting stdio, which corrupts the MCP transport

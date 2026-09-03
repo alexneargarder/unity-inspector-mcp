@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { handleToolCall } from '../index.js';
+// A port nothing listens on: game-side calls must fail fast and deterministically.
+// Without this, a running game leaves the module-level client's socket open and
+// the test process never exits.
+process.env.UNITY_INSPECTOR_PORT = '1';
+
+const { handleToolCall } = await import('../index.js');
 
 function textOf(response) {
   return response.content.map((c) => c.text).join('\n');
