@@ -20,14 +20,12 @@ public class RogueforceRunner : MonoBehaviour
     private const int StateWaitForGameOver = 6;
     private const int StateDone = 7;
 
-    // Give-up caps so a wait state that never resolves stops polling instead of
-    // ticking forever on a DontDestroyOnLoad object.
+    // A wait state that never resolves would tick forever on a DontDestroyOnLoad object
     private const float AdvantageTimeoutSeconds = 60f;
     private const float LevelTimeoutSeconds = 120f;
     private const float GameOverTimeoutSeconds = 60f;
 
-    // Captured during Main(): ScriptContext.Logger only carries this script's
-    // [Script:name] prefix while Main() or Unload() is running.
+    // ScriptContext.Logger only carries the [Script:name] prefix while Main()/Unload() is running
     private static System.Action<string> cachedLogger;
 
     private int state;
@@ -152,7 +150,6 @@ public class RogueforceRunner : MonoBehaviour
             return;
         }
 
-        // Access the stored layout chain via reflection (stored by LayoutStitcherPatch)
         var asm = System.Reflection.Assembly.Load("Rogueforce");
         var patchType = asm.GetType("Rogueforce.LayoutStitcherPatch");
         var chainField = patchType.GetField("LastChain", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
@@ -164,7 +161,6 @@ public class RogueforceRunner : MonoBehaviour
             return;
         }
 
-        // Get player x position
         float playerX = 0f;
         var players = HeroController.players;
         if (players != null)
@@ -179,7 +175,6 @@ public class RogueforceRunner : MonoBehaviour
             }
         }
 
-        // tileWidth = 3, blockSize = 16 world units per block
         int tileWidth = 3;
         float blockSize = 16f;
         float playerBlock = playerX / blockSize;
@@ -214,7 +209,6 @@ public class RogueforceRunner : MonoBehaviour
         string seedArg = ScriptContext.GetArg("seed", "");
         if (string.IsNullOrEmpty(seedArg))
         {
-            // Just log current seed
             if (ProcGenGameMode.isEnabled)
             {
                 Log("Current seed: " + ProcGenGameMode.GetSeed());
@@ -227,7 +221,6 @@ public class RogueforceRunner : MonoBehaviour
             return;
         }
 
-        // Set forced seed for next run via Rogueforce mod
         int seed;
         if (!int.TryParse(seedArg, out seed))
         {
@@ -293,8 +286,7 @@ public class RogueforceRunner : MonoBehaviour
         if (timer > 0f)
             return;
 
-        // Any throw in here would otherwise repeat every frame forever, since
-        // the state and timer assignments that follow it are skipped.
+        // A throw here would repeat every frame, since the state and timer assignments after it are skipped
         try
         {
             Tick();

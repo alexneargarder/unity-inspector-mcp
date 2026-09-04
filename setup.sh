@@ -1,5 +1,4 @@
 #!/bin/sh
-# Install dependencies and print ready-to-paste MCP client configuration.
 set -eu
 
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)

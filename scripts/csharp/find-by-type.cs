@@ -21,7 +21,6 @@ public static class FindByType
         if (!int.TryParse(maxStr, out maxResults))
             maxResults = 50;
 
-        // Find the type across all loaded assemblies
         Type targetType = null;
         var candidates = new List<Type>();
 
@@ -95,7 +94,6 @@ public static class FindByType
                 info += " pos:(" + pos.x.ToString("F1") + ", " + pos.y.ToString("F1") + ")";
                 info += go.activeSelf ? " [active]" : " [inactive]";
 
-                // Try to get health for Unit subclasses
                 if (obj is Unit)
                 {
                     var unit = (Unit)obj;

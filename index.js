@@ -14,7 +14,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import { UnityInspectorClient } from './lib/unity-client.js';
-import { composeExtraLaunchArgs, detectActiveProfile, isGameRunning, killGame, resolveLaunchCommand, spawnDetached } from './lib/game-process.js';
+import { composeExtraLaunchArgs, detectActiveProfile, gameStartTime, isGameRunning, killGame, resolveLaunchCommand, spawnDetached } from './lib/game-process.js';
 import {
   buildScriptCatalog,
   listCSharpScripts,
@@ -26,15 +26,16 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Cap on how much new log text watch_log will hand back in one call
 const WATCH_LOG_MAX_BYTES = 64 * 1024;
 
-// Unity Mod Manager writes Log.txt under UMM/Core inside an r2modman profile
-// (profile names are arbitrary, not just "Default"), or under Mods for a direct
-// install. UNITY_INSPECTOR_LOG overrides the search entirely.
 const R2_PROFILES_SUFFIX = 'r2modmanPlus-local/Broforce/profiles';
 const UMM_LOG_IN_PROFILE = 'UMM/Core/Log.txt';
 const DIRECT_INSTALL_LOGS = ['Mods/UnityModManager/Log.txt', 'Mods/Log.txt'];
+const UNITY_PRODUCT_DIR = 'Free Lives/Broforce';
+// Unity only settled on Player.log in 2018.3; this game is 2017.4 and writes output_log.txt on Windows
+const WINDOWS_PLAYER_LOGS = ['Player.log', 'output_log.txt'];
+// etimes reports whole seconds, so a log written in the game's start second can read as older than it
+const STALE_TOLERANCE_MS = 3000;
 
 function r2ProfileRoots() {
   const roots = [path.join(os.homedir(), '.config', R2_PROFILES_SUFFIX)];
@@ -43,14 +44,40 @@ function r2ProfileRoots() {
   return [...new Set(roots)];
 }
 
+function playerLogPaths() {
+  const home = os.homedir();
+  const paths = [path.join(home, '.config/unity3d', UNITY_PRODUCT_DIR, 'Player.log')];
+
+  const windowsBases = [];
+  if (process.env.USERPROFILE) {
+    windowsBases.push(path.join(process.env.USERPROFILE, 'AppData/LocalLow', UNITY_PRODUCT_DIR));
+  }
+  windowsBases.push(path.join(home, 'AppData/LocalLow', UNITY_PRODUCT_DIR));
+  if (unityClient.protonPrefix) {
+    windowsBases.push(path.join(unityClient.protonPrefix, 'drive_c/users/steamuser/AppData/LocalLow', UNITY_PRODUCT_DIR));
+  }
+  for (const base of windowsBases) {
+    for (const name of WINDOWS_PLAYER_LOGS) paths.push(path.join(base, name));
+  }
+
+  paths.push(path.join(home, 'Library/Logs/Unity/Player.log'));
+  paths.push(path.join(home, 'Library/Logs', UNITY_PRODUCT_DIR, 'Player.log'));
+
+  if (unityClient.gamePath) {
+    paths.push(path.join(unityClient.gamePath, 'Broforce_Data/output_log.txt'));
+  }
+
+  return [...new Set(paths)];
+}
+
+function profileLogPaths(profile) {
+  return r2ProfileRoots().map(root => path.join(root, profile, UMM_LOG_IN_PROFILE));
+}
+
 function logOverride() {
   return (process.env.UNITY_INSPECTOR_LOG || '').trim();
 }
 
-/**
- * Every place a UMM log could be, plus display strings for the error message
- * (an unreadable profile root shows as a glob rather than vanishing).
- */
 async function ummLogSearch() {
   const override = logOverride();
   if (override) return { paths: [override], displays: [override], override: true };
@@ -80,9 +107,6 @@ async function ummLogSearch() {
     }
   }
 
-  // Direct (non-r2modman) UMM installs keep their log next to the game. The
-  // game path comes from platform detection, which must not require a live
-  // connection — read_log is useful precisely when the game is not running.
   try {
     await unityClient.detectPlatform();
   } catch (err) {
@@ -96,54 +120,116 @@ async function ummLogSearch() {
     }
   }
 
+  for (const candidate of playerLogPaths()) {
+    paths.push(candidate);
+    displays.push(candidate);
+  }
+
   return { paths: [...new Set(paths)], displays: [...new Set(displays)], override: false };
 }
 
 let watchLogOffset = 0;
 let watchLogPath = null;
+// Unity rotates Player.log at launch, so the path alone cannot tell one run's log from the next
+let watchLogFileId = null;
 
-/**
- * The log of the profile the running game was launched from when that can be
- * determined, otherwise the most recently written log among the candidates,
- * or null. Mtime alone picks the wrong profile when the active profile's log
- * is colder than a dead profile's (fresh launch before the first flush, or a
- * launch mode that was writing elsewhere). `detectProfile` is injectable for
- * tests only.
- */
-export async function findLogPath(detectProfile = detectActiveProfile) {
+const fileIdOf = (stat) => `${stat.dev}:${stat.ino}`;
+
+async function statLogFile(candidate) {
+  try {
+    const stat = await fs.stat(candidate);
+    return stat.isFile() ? stat : null;
+  } catch {
+    return null;
+  }
+}
+
+async function newestExisting(candidates, minMtimeMs = null) {
+  let best = null;
+  for (const candidate of candidates) {
+    const stat = await statLogFile(candidate);
+    if (!stat) continue;
+    if (minMtimeMs !== null && stat.mtimeMs < minMtimeMs) continue;
+    if (!best || stat.mtimeMs > best.mtimeMs) best = { path: candidate, mtimeMs: stat.mtimeMs };
+  }
+  return best;
+}
+
+export async function resolveLogFile(detectProfile = detectActiveProfile, startTime = gameStartTime) {
   const { paths, override } = await ummLogSearch();
+
+  const started = await startTime();
+  const liveSince = Number.isFinite(started) ? started - STALE_TOLERANCE_MS : null;
+
+  let chosen = override ? await newestExisting(paths) : null;
 
   if (!override) {
     const profile = await detectProfile();
     if (profile) {
-      for (const root of r2ProfileRoots()) {
-        const candidate = path.join(root, profile, UMM_LOG_IN_PROFILE);
-        try {
-          const stat = await fs.stat(candidate);
-          if (stat.isFile()) return candidate;
-        } catch {
-          continue;
-        }
-      }
+      chosen = liveSince === null
+        ? await newestExisting([...profileLogPaths(profile), ...playerLogPaths()])
+        : (await newestExisting(profileLogPaths(profile), liveSince))
+          ?? (await newestExisting(playerLogPaths(), liveSince));
     }
+
+    if (!chosen) chosen = await newestExisting(paths);
   }
 
-  let newest = null;
-  for (const candidate of paths) {
-    try {
-      const stat = await fs.stat(candidate);
-      if (!stat.isFile()) continue;
-      // An explicit override is authoritative — never fall back past it
-      if (override) return candidate;
-      if (!newest || stat.mtimeMs > newest.mtimeMs) {
-        newest = { path: candidate, mtimeMs: stat.mtimeMs };
-      }
-    } catch {
-      continue;
-    }
+  if (!chosen) return null;
+
+  const modifiedAt = new Date(chosen.mtimeMs).toISOString();
+  if (liveSince !== null && chosen.mtimeMs < liveSince) {
+    return {
+      ...chosen,
+      modifiedAt,
+      stale: true,
+      warning:
+        `${chosen.path} was last written ${modifiedAt}, before the running game started ` +
+        `(${new Date(started).toISOString()}) — the running game is not writing to it. ` +
+        (override
+          ? `UNITY_INSPECTOR_LOG selected this file; unset it to search for the live log, ` +
+            `or repoint it at the log the game is writing.`
+          : `On a doorstop launch UMM's own log may be absent or appear late, while Unity's ` +
+            `player log carries the same lines; set UNITY_INSPECTOR_LOG if the live log is ` +
+            `somewhere else.`),
+    };
   }
 
-  return newest ? newest.path : null;
+  return { ...chosen, modifiedAt, stale: false };
+}
+
+// Unity rotates Player.log at launch, so a stat or read can land on a path that just vanished
+async function withResolvedLog(use) {
+  let resolved = await resolveLogFile();
+  if (!resolved) throw await logNotFoundError();
+
+  try {
+    return await use(resolved);
+  } catch (err) {
+    if (err?.code !== 'ENOENT') throw err;
+    resolved = await resolveLogFile();
+    if (!resolved) throw await logNotFoundError();
+    return await use(resolved);
+  }
+}
+
+export function resetPlatformDetection() {
+  unityClient.platform = null;
+  unityClient.gamePath = null;
+  unityClient.protonPrefix = null;
+}
+
+export function logFileInfo(resolved) {
+  return {
+    path: resolved.path,
+    modifiedAt: resolved.modifiedAt,
+    ...(resolved.stale ? { stale: true, warning: resolved.warning } : {}),
+  };
+}
+
+export async function findLogPath(detectProfile = detectActiveProfile, startTime = gameStartTime) {
+  const resolved = await resolveLogFile(detectProfile, startTime);
+  return resolved ? resolved.path : null;
 }
 
 async function logNotFoundError() {
@@ -173,8 +259,7 @@ const server = new Server(
 );
 
 // Define available tools
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  // Build dynamic script catalog for execute_script description
+export async function buildToolList() {
   let scriptCatalog = "";
   try {
     const scripts = await listCSharpScripts();
@@ -189,8 +274,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     }
   } catch {}
 
-  return {
-    tools: [
+  return [
       {
         name: "ping",
         description: "Test connection to Unity Inspector",
@@ -257,17 +341,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "query_gameobjects",
-        description: "Search for GameObjects by name or component",
+        description: "Search for GameObjects by name pattern, component type, or both. A component-only query with no name pattern works. componentType matches base types and interfaces, so a query for 'Projectile' finds instances of its subclasses. The response reports resolvedType, scanned and scanTruncated alongside count, totalFound and results.",
         inputSchema: {
           type: "object",
           properties: {
             namePattern: {
               type: "string",
-              description: "Name pattern to search for",
+              description: "Name pattern to search for. Optional — omit it to match on componentType alone",
             },
             componentType: {
               type: "string",
-              description: "Component type to filter by",
+              description: "Component type to filter by. Matches base types and interfaces, so subclass instances are included",
             },
             includeInactive: {
               type: "boolean",
@@ -308,13 +392,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "execute_code",
-        description: "Execute C# expressions in the Unity context. Uses Mono.CSharp.Evaluator - expects expressions, not statements",
+        description: "Run C# in the Unity context. Accepts statements, local declarations, and a trailing 'return expr;' (a return before the final statement does not compile); input ending in an expression returns that expression's value. No lambda or Select wrapping trick is needed. Locals are call-scoped and do not persist to the next call — use static members or game objects for cross-call state. Check the inner result's 'success' field (nested inside the TCP envelope's own success:true), which has three states: a value was produced (resultSet:true), the code ran but returned nothing (success:true, resultSet:false, no error), or it failed (success:false with 'error'; 'stackTrace' is set for compile failures and null for exceptions thrown by the submitted code). Never read Exception.StackTrace (or ToString()) on an exception inside submitted code: walking frames of dynamically compiled code crashes the game process.",
         inputSchema: {
           type: "object",
           properties: {
             code: {
               type: "string",
-              description: "C# expression to evaluate. Cannot use 'return' statements",
+              description: "C# to run: statements, local declarations, a trailing 'return expr;', or a bare expression whose value is returned",
             },
           },
           required: ["code"],
@@ -388,13 +472,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "spawn_entity",
-        description: "Spawn an entity at a specific position (limited implementation)",
+        description: "Spawn an enemy at a world position in the currently loaded level (a level must be loaded). `type` is matched case-insensitively against the enemy prefabs of the level's active theme: the theme field name (`mookBigGuy`), the name without the `mook` prefix (`bigGuy`), or the prefab's own name; `facehugger` and `baneling` alias `alienFaceHugger` and `alienBaneling`. Which types exist depends on the loaded level's theme — an unknown type fails with `availableTypes` listing everything spawnable right now, so a bogus type discovers the roster. Enemies spawn alert, on the ground, and registered with the networking layer like level-placed enemies, except the two alien aliases, which use the game's local-only spawn helpers. Success returns `type` (resolved field name), `prefab`, `name`, `instanceId`, `networked`, `x`, `y`; failure returns `error` plus `availableTypes` or `stackTrace`. If another mod suppresses enemy spawning (Utility Mod's `disableEnemySpawn`, for one), the spawn fails and the error names the Harmony patch owners responsible.",
         inputSchema: {
           type: "object",
           properties: {
             type: {
               type: "string",
-              description: "Entity type to spawn",
+              description: "Enemy type to spawn, matched case-insensitively against the current theme's enemy prefabs",
             },
             x: {
               type: "number",
@@ -403,6 +487,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             y: {
               type: "number",
               description: "Y coordinate",
+            },
+            xI: {
+              type: "number",
+              description: "Initial horizontal velocity (default: 0)",
+              default: 0,
+            },
+            yI: {
+              type: "number",
+              description: "Initial vertical velocity, positive is up (default: 0)",
+              default: 0,
             },
           },
           required: ["type", "x", "y"],
@@ -551,7 +645,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "wait_for_game",
-        description: "Wait for the game to start up and the Unity Inspector TCP server to become responsive. Polls the connection until a ping succeeds or timeout is reached.",
+        description: "Wait for the game to start up and the Unity Inspector TCP server to become responsive. Polls the connection until a ping succeeds or timeout is reached. On timeout the result carries a 'state' saying how it failed: 'no-process' (no game process is running), 'connection-refused' (the process is there but nothing is listening on the port), 'connected-unresponsive' (the port accepts connections but ping got no reply), 'connection-dropped' (the port accepted a connection that was then closed), or 'unknown' (process detection is unavailable). The wait can overrun the timeout by up to one connect timeout (5s), since an attempt already in flight is allowed to finish.",
         inputSchema: {
           type: "object",
           properties: {
@@ -576,7 +670,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "read_log",
-        description: "Read the UMM mod manager log file. Returns the last N lines by default, or filter by pattern.",
+        description: "Read the mod log file — UMM's own log, or Unity's player log, which always exists and carries the same UMM and mod lines. Returns the last N lines by default, or filter by pattern. The response names the file it read and when it was last written, and flags `stale: true` with a warning when that file predates the running game.",
         inputSchema: {
           type: "object",
           properties: {
@@ -594,7 +688,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "watch_log",
-        description: "Return log entries that appeared since the last call to watch_log. First call returns the last 20 lines as a baseline. Use this for iterative debug loops.",
+        description: "Return log entries that appeared since the last call to watch_log. First call returns the last 20 lines as a baseline (`isBaseline: true`); later calls report `isBaseline: false` alongside the new lines. Use this for iterative debug loops. Like read_log it names the file and its last-written time, and flags `stale: true` when the running game is not the thing writing to it. The watch restarts as a baseline whenever the file underneath it changes — a rotation, or the resolved `path` switching once mid-run because UMM's own log appeared after startup.",
         inputSchema: {
           type: "object",
           properties: {
@@ -702,14 +796,103 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {},
         },
       },
-    ],
+  ];
+}
+
+server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: await buildToolList() }));
+
+const POLL_DEFAULT_TIMEOUT_MS = 60000;
+const POLL_DEFAULT_INTERVAL_MS = 3000;
+const POLL_MIN_INTERVAL_MS = 250;
+const POLL_PING_TIMEOUT_MS = 6000;
+
+function pollBudgetMs(value, fallback) {
+  return Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+// A NaN budget makes every deadline comparison false and the poll run forever
+export function resolvePollBudget(timeoutMs, intervalMs) {
+  return {
+    budgetMs: pollBudgetMs(timeoutMs, POLL_DEFAULT_TIMEOUT_MS),
+    intervalMs: Math.max(POLL_MIN_INTERVAL_MS, pollBudgetMs(intervalMs, POLL_DEFAULT_INTERVAL_MS)),
   };
-});
+}
+
+async function pollUntilResponsive(timeoutMs, intervalMs) {
+  const { budgetMs: budget, intervalMs: interval } = resolvePollBudget(timeoutMs, intervalMs);
+
+  const startTime = Date.now();
+  const deadline = startTime + budget;
+  const secondsSoFar = () => Number(((Date.now() - startTime) / 1000).toFixed(1));
+
+  let attempts = 0;
+  let lastError = null;
+  let lastStage = null;
+
+  for (;;) {
+    attempts++;
+    try {
+      unityClient.disconnect();
+      lastStage = "connect";
+      await unityClient.connect();
+      lastStage = "ping";
+      const pingTimeout = Math.max(1000, Math.min(deadline - Date.now(), POLL_PING_TIMEOUT_MS));
+      await unityClient.sendCommand("ping", {}, pingTimeout);
+      const elapsed = secondsSoFar();
+      return {
+        success: true,
+        state: "ready",
+        message: `Game is ready (${attempts} attempts, ${elapsed}s)`,
+        lastError: null,
+        attempts,
+        elapsed,
+      };
+    } catch (err) {
+      lastError = err.message;
+      console.error(`Attempt ${attempts}: ${err.message}`);
+    }
+
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    await new Promise(resolve => setTimeout(resolve, Math.min(interval, remaining)));
+    if (Date.now() >= deadline) break;
+  }
+
+  const running = await isGameRunning();
+  const elapsed = secondsSoFar();
+  const tail = `after ${elapsed}s (${attempts} attempts)`;
+  const pingTimedOut = /^Command timeout after \d+ms$/.test(lastError || "");
+  let state;
+  let message;
+
+  if (lastStage === "ping" && pingTimedOut) {
+    state = "connected-unresponsive";
+    message = `Port ${unityClient.port} accepts connections but ping got no reply ${tail} — the mod may be starting or the main thread stalled`;
+    if (running === false) {
+      message += ` (no Broforce process is detected, so whatever holds that port may not be the game)`;
+    }
+  } else if (running === false) {
+    state = "no-process";
+    message = lastStage === "ping"
+      ? `The connection dropped and no Broforce process is running ${tail} — the game likely died: ${lastError}`
+      : `No Broforce process is running ${tail} — use launch_game to start it`;
+  } else if (lastStage === "ping") {
+    state = "connection-dropped";
+    message = `Port ${unityClient.port} accepted a connection that was then closed ${tail}: ${lastError}`;
+  } else if (running === null) {
+    state = "unknown";
+    message = `Could not connect to port ${unityClient.port} ${tail}, and process detection is unavailable, so it is unknown whether the game is running`;
+  } else {
+    state = "connection-refused";
+    message = `The game process is running but nothing accepted a connection on port ${unityClient.port} ${tail} — the mod's TCP server may be stopped or on another port`;
+  }
+
+  return { success: false, state, message, lastError, attempts, elapsed };
+}
 
 // Handle tool calls
 export async function handleToolCall(request) {
   const name = request.params.name;
-  // `arguments` is optional in the MCP schema, so it may be absent entirely
   const args = request.params.arguments ?? {};
 
   try {
@@ -826,6 +1009,8 @@ export async function handleToolCall(request) {
           type: args.type,
           x: args.x,
           y: args.y,
+          xI: args.xI,
+          yI: args.yI,
         });
         break;
 
@@ -851,7 +1036,6 @@ export async function handleToolCall(request) {
           levelIndex: args.levelIndex,
         });
 
-        // Health check after level loading
         setTimeout(async () => {
           const isHealthy = await unityClient.checkHealth();
           if (!isHealthy) {
@@ -908,39 +1092,10 @@ export async function handleToolCall(request) {
         break;
 
       case "wait_for_game": {
-        const timeout = (args.timeout ?? 60) * 1000;
-        const interval = (args.interval ?? 3) * 1000;
-        const startTime = Date.now();
-        let attempts = 0;
-        let lastError = null;
-
-        while (Date.now() - startTime < timeout) {
-          attempts++;
-          try {
-            // Force a fresh connection each attempt
-            unityClient.disconnect();
-            await unityClient.connect();
-            await unityClient.sendCommand("ping", {});
-            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-            result = {
-              success: true,
-              message: `Game is ready (${attempts} attempts, ${elapsed}s)`,
-            };
-            break;
-          } catch (err) {
-            lastError = err.message;
-            console.error(`Attempt ${attempts}: ${err.message}`);
-            await new Promise(resolve => setTimeout(resolve, interval));
-          }
-        }
-
-        if (!result) {
-          result = {
-            success: false,
-            message: `Game not ready after ${timeout / 1000}s (${attempts} attempts)`,
-            lastError,
-          };
-        }
+        const poll = await pollUntilResponsive((args.timeout ?? 60) * 1000, (args.interval ?? 3) * 1000);
+        result = poll.success
+          ? { success: true, message: poll.message }
+          : { success: false, state: poll.state, message: poll.message, lastError: poll.lastError, attempts: poll.attempts };
         break;
       }
 
@@ -949,114 +1104,109 @@ export async function handleToolCall(request) {
         break;
 
       case "read_log": {
-        const logPath = await findLogPath();
-        if (!logPath) {
-          throw await logNotFoundError();
-        }
-        const logContent = await fs.readFile(logPath, 'utf-8');
-        const allLines = logContent.split('\n');
-        let lines = allLines;
+        result = await withResolvedLog(async (resolved) => {
+          const logContent = await fs.readFile(resolved.path, 'utf-8');
+          const allLines = logContent.split('\n');
+          let lines = allLines;
 
-        if (args.filter) {
-          const filterLower = args.filter.toLowerCase();
-          lines = lines.filter(l => l.toLowerCase().includes(filterLower));
-        }
+          if (args.filter) {
+            const filterLower = args.filter.toLowerCase();
+            lines = lines.filter(l => l.toLowerCase().includes(filterLower));
+          }
 
-        const requested = Number(args.lines ?? 50);
-        const count = Number.isFinite(requested) ? Math.max(1, Math.floor(requested)) : 50;
-        lines = lines.slice(-count);
+          const requested = Number(args.lines ?? 50);
+          const count = Number.isFinite(requested) ? Math.max(1, Math.floor(requested)) : 50;
+          lines = lines.slice(-count);
 
-        result = {
-          path: logPath,
-          totalLines: allLines.length,
-          returnedLines: lines.length,
-          content: lines.join('\n'),
-        };
+          return {
+            ...logFileInfo(resolved),
+            totalLines: allLines.length,
+            returnedLines: lines.length,
+            content: lines.join('\n'),
+          };
+        });
         break;
       }
 
       case "watch_log": {
-        const logPath = await findLogPath();
-        if (!logPath) {
-          throw await logNotFoundError();
-        }
+        result = await withResolvedLog(async (resolved) => {
+          const logPath = resolved.path;
+          const stat = await fs.stat(logPath);
+          const fileSize = stat.size;
+          const fileId = fileIdOf(stat);
 
-        const stat = await fs.stat(logPath);
-        const fileSize = stat.size;
+          if (args.reset) {
+            watchLogOffset = fileSize;
+            watchLogPath = logPath;
+            watchLogFileId = fileId;
+            return {
+              ...logFileInfo(resolved),
+              isBaseline: true,
+              message: "Watch position reset to end of log",
+              fileSize,
+            };
+          }
 
-        if (args.reset) {
+          if (watchLogPath !== logPath || watchLogFileId !== fileId || watchLogOffset > fileSize) {
+            const logContent = await fs.readFile(logPath, 'utf-8');
+            const lines = logContent.split('\n').slice(-20);
+            watchLogOffset = fileSize;
+            watchLogPath = logPath;
+            watchLogFileId = fileId;
+            return {
+              ...logFileInfo(resolved),
+              isBaseline: true,
+              newLines: lines.length,
+              content: lines.join('\n'),
+            };
+          }
+
+          if (watchLogOffset === fileSize) {
+            return {
+              ...logFileInfo(resolved),
+              isBaseline: false,
+              newLines: 0,
+              content: "",
+              message: "No new log entries",
+            };
+          }
+
+          let readFrom = watchLogOffset;
+          let skippedBytes = 0;
+          if (fileSize - readFrom > WATCH_LOG_MAX_BYTES) {
+            skippedBytes = fileSize - readFrom - WATCH_LOG_MAX_BYTES;
+            readFrom = fileSize - WATCH_LOG_MAX_BYTES;
+          }
+          const bytesToRead = fileSize - readFrom;
+
+          let newContent;
+          const fh = await fs.open(logPath, 'r');
+          try {
+            const buffer = Buffer.alloc(bytesToRead);
+            const { bytesRead } = await fh.read(buffer, 0, bytesToRead, readFrom);
+            newContent = buffer.subarray(0, bytesRead).toString('utf-8');
+          } finally {
+            await fh.close();
+          }
           watchLogOffset = fileSize;
           watchLogPath = logPath;
-          result = {
-            path: logPath,
-            message: "Watch position reset to end of log",
-            fileSize,
+          watchLogFileId = fileId;
+
+          const newLines = newContent.split('\n').filter(l => l.length > 0);
+          return {
+            ...logFileInfo(resolved),
+            isBaseline: false,
+            newLines: newLines.length,
+            content: newContent.trimEnd(),
+            ...(skippedBytes > 0
+              ? {
+                  truncated: true,
+                  skippedBytes,
+                  message: `Output truncated: skipped ${skippedBytes} earlier bytes, showing the last ${WATCH_LOG_MAX_BYTES} bytes. Use read_log for the full log.`,
+                }
+              : {}),
           };
-          break;
-        }
-
-        // A carried-over offset is only meaningful against the file it was
-        // taken from — a resolved-path switch restarts the watch as a baseline
-        if (watchLogPath !== logPath || watchLogOffset > fileSize) {
-          // First call, path switch, or log was truncated/rotated — return last 20 lines as baseline
-          const logContent = await fs.readFile(logPath, 'utf-8');
-          const lines = logContent.split('\n').slice(-20);
-          watchLogOffset = fileSize;
-          watchLogPath = logPath;
-          result = {
-            path: logPath,
-            isBaseline: true,
-            newLines: lines.length,
-            content: lines.join('\n'),
-          };
-          break;
-        }
-
-        if (watchLogOffset === fileSize) {
-          result = {
-            path: logPath,
-            newLines: 0,
-            content: "",
-            message: "No new log entries",
-          };
-          break;
-        }
-
-        // Read only the new bytes, capped so a burst of logging can't return
-        // megabytes of text in one response
-        let readFrom = watchLogOffset;
-        let skippedBytes = 0;
-        if (fileSize - readFrom > WATCH_LOG_MAX_BYTES) {
-          skippedBytes = fileSize - readFrom - WATCH_LOG_MAX_BYTES;
-          readFrom = fileSize - WATCH_LOG_MAX_BYTES;
-        }
-        const bytesToRead = fileSize - readFrom;
-
-        let newContent;
-        const fh = await fs.open(logPath, 'r');
-        try {
-          const buffer = Buffer.alloc(bytesToRead);
-          const { bytesRead } = await fh.read(buffer, 0, bytesToRead, readFrom);
-          newContent = buffer.subarray(0, bytesRead).toString('utf-8');
-        } finally {
-          await fh.close();
-        }
-        watchLogOffset = fileSize;
-        watchLogPath = logPath;
-
-        const newLines = newContent.split('\n').filter(l => l.length > 0);
-        result = {
-          path: logPath,
-          newLines: newLines.length,
-          content: newContent.trimEnd(),
-          ...(skippedBytes > 0
-            ? {
-                truncated: true,
-                skippedBytes,
-                message: `Output truncated: skipped ${skippedBytes} earlier bytes, showing the last ${WATCH_LOG_MAX_BYTES} bytes. Use read_log for the full log.`,
-              }
-            : {}),
-        };
+        });
         break;
       }
 
@@ -1106,7 +1256,6 @@ export async function handleToolCall(request) {
         break;
 
       case "launch_game": {
-        // Check if game is already running
         let gameRunning = false;
         try {
           unityClient.disconnect();
@@ -1126,8 +1275,6 @@ export async function handleToolCall(request) {
           break;
         }
 
-        // A live process that doesn't answer on TCP usually means the mod
-        // failed to load; say so rather than silently starting a second copy.
         if (!gameRunning && !args.restart && (await isGameRunning()) === true) {
           result = {
             success: false,
@@ -1139,11 +1286,10 @@ export async function handleToolCall(request) {
           break;
         }
 
-        if (gameRunning && args.restart) {
+        if (args.restart && (gameRunning || (await isGameRunning()) === true)) {
           unityClient.disconnect();
           const killResult = await killGame();
           console.error(`launch_game: ${killResult.detail}`);
-          // Brief wait for process to fully exit
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
 
@@ -1176,44 +1322,29 @@ export async function handleToolCall(request) {
           ? `Ignored launch arguments ${launch.ignoredArgs.join(' ')} — the Steam protocol launch does not accept them. Set BROFORCE_LAUNCH_CMD to use a launcher that does.`
           : null;
 
-        // Wait for the game to become responsive
-        const launchTimeout = 60000;
-        const launchInterval = 3000;
-        const launchStart = Date.now();
-        let launchAttempts = 0;
-
-        while (Date.now() - launchStart < launchTimeout) {
-          launchAttempts++;
-          await new Promise(resolve => setTimeout(resolve, launchInterval));
-          try {
-            unityClient.disconnect();
-            await unityClient.connect();
-            await unityClient.sendCommand("ping", {});
-            result = {
+        const poll = await pollUntilResponsive(60000, 3000);
+        result = poll.success
+          ? {
               success: true,
               launchCommand: launch.display,
-              message: `Game ${args.restart ? 'restarted' : 'launched'} and ready (${launchAttempts} attempts, ${((Date.now() - launchStart) / 1000).toFixed(1)}s)`,
+              message: `Game ${args.restart ? 'restarted' : 'launched'} and ready (${poll.attempts} attempts, ${poll.elapsed}s)`,
+              ...(ignoredArgsNote ? { note: ignoredArgsNote } : {}),
+            }
+          : {
+              success: false,
+              launchCommand: launch.display,
+              state: poll.state,
+              message: poll.state === "no-process"
+                ? `Ran \`${launch.display}\` but no Broforce process is running after ${poll.elapsed}s (${poll.attempts} attempts) — the launch command exited without leaving a game running. Check that BROFORCE_LAUNCH_CMD starts the game on this machine.`
+                : `Game launched with \`${launch.display}\` but never answered — ${poll.message}`,
+              lastError: poll.lastError,
+              attempts: poll.attempts,
               ...(ignoredArgsNote ? { note: ignoredArgsNote } : {}),
             };
-            break;
-          } catch {
-            console.error(`Launch attempt ${launchAttempts}: waiting...`);
-          }
-        }
-
-        if (!result) {
-          result = {
-            success: false,
-            launchCommand: launch.display,
-            message: `Game launched with \`${launch.display}\` but not responsive after ${launchTimeout / 1000}s`,
-            ...(ignoredArgsNote ? { note: ignoredArgsNote } : {}),
-          };
-        }
         break;
       }
 
       case "stop_game": {
-        // Disconnect TCP first
         unityClient.disconnect();
         const killResult = await killGame();
         result = {
@@ -1282,8 +1413,6 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   throw new Error(`Unknown resource: ${request.params.uri}`);
 });
 
-// Prevent unhandled rejections from crashing the MCP server
-// (e.g., TCP socket errors when the game closes)
 process.on('unhandledRejection', (reason) => {
   console.error('Unhandled rejection:', reason);
 });
@@ -1307,8 +1436,6 @@ async function main() {
   console.error("Unity Inspector MCP server running on stdio");
 }
 
-// Only take over stdio when run as the server; importing this module for tests
-// must not start the MCP transport.
 const invokedDirectly =
   process.argv[1] !== undefined && path.resolve(process.argv[1]) === __filename;
 

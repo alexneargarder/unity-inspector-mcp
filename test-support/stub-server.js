@@ -1,9 +1,5 @@
 import net from 'net';
 
-/**
- * Minimal stand-in for the Unity Inspector Mod's TCP server.
- * `onRequest(request, socket)` decides what (and when) to reply.
- */
 export function startStubServer(onRequest) {
   return new Promise((resolve) => {
     const sockets = new Set();

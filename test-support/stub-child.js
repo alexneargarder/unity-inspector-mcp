@@ -1,17 +1,5 @@
 #!/usr/bin/env node
 
-// Stand-in for index.js when testing wrapper.js.
-// Speaks just enough MCP to exercise the wrapper's respawn machinery.
-//
-//   initialize        -> handshake result
-//   tools/list        -> a one-tool list (so the wrapper can inject restart_server)
-//   test/echo         -> immediate result
-//   test/hang         -> never answered, modelling a request in flight
-//   test/die          -> exits immediately without answering
-//
-// STUB_CHILD_DIE_ON_START=1 makes it exit before answering anything, which
-// drives the crash-loop guard.
-
 if (process.env.STUB_CHILD_DIE_ON_START === '1') {
   process.exit(7);
 }

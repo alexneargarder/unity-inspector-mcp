@@ -4,11 +4,16 @@ import { spawn } from 'child_process';
 
 import {
   POSIX_GAME_CHECK_CMD,
+  POSIX_GAME_CMDLINE_PID_CMD,
+  POSIX_GAME_PID_CMD,
   POSIX_PROFILE_SCAN_CMD,
+  startFromEtimes,
+  startFromLstart,
   composeExtraLaunchArgs,
   extractProfileName,
   isGameRunning,
   killGame,
+  parseWmicCreationDate,
   resolveLaunchCommand,
   runChild,
   spawnDetached,
@@ -18,7 +23,6 @@ import {
 
 const isPosix = process.platform !== 'win32';
 
-/** Is a real Broforce process running right now? Checked without pgrep. */
 async function broforceIsActuallyRunning() {
   const { stdout } = await runChild('ps', ['-A', '-o', 'args=']);
   return stdout
@@ -35,6 +39,52 @@ test('the process check does not match its own shell', { skip: !isPosix }, async
   const { code, error } = await runChild('sh', ['-c', POSIX_GAME_CHECK_CMD], { capture: false });
   assert.equal(error, null);
   assert.notEqual(code, 0, 'the check must exit non-zero when no game process exists');
+});
+
+test('the pid lookups do not match their own shell', { skip: !isPosix }, async (t) => {
+  if (await broforceIsActuallyRunning()) {
+    t.skip('a real Broforce process is running');
+    return;
+  }
+
+  for (const [name, command] of [
+    ['POSIX_GAME_PID_CMD', POSIX_GAME_PID_CMD],
+    ['POSIX_GAME_CMDLINE_PID_CMD', POSIX_GAME_CMDLINE_PID_CMD],
+  ]) {
+    const { code, stdout, error } = await runChild('sh', ['-c', command]);
+    assert.equal(error, null, `${name} could not run`);
+    assert.notEqual(code, 0, `${name} must exit non-zero when no game process exists`);
+    assert.equal(stdout.trim(), '', `${name} matched something: ${stdout}`);
+  }
+});
+
+test('startFromEtimes survives the shapes ps actually emits', () => {
+  const now = Date.parse('2026-01-01T00:00:00Z');
+
+  assert.equal(startFromEtimes('  10\n  90\n', now), now - 90000);
+  assert.equal(startFromEtimes('  10\n  90\n', now, 'latest'), now - 10000);
+  assert.equal(startFromEtimes('   42   ', now), now - 42000);
+  assert.equal(startFromEtimes('\n\n120\n\n', now), now - 120000);
+
+  // Number('') is 0: a blank answer must not read as "started this instant"
+  assert.equal(startFromEtimes('', now), null);
+  assert.equal(startFromEtimes('\n \n\n', now), null);
+  assert.equal(startFromEtimes('ELAPSED', now), null);
+  assert.equal(startFromEtimes(undefined, now), null);
+});
+
+test('startFromLstart survives the shapes ps actually emits', () => {
+  const early = Date.parse('Thu Sep  3 20:02:00 2026');
+  const late = Date.parse('Thu Sep  3 21:30:00 2026');
+
+  assert.equal(startFromLstart('Thu Sep  3 20:02:00 2026\nThu Sep  3 21:30:00 2026\n'), early);
+  assert.equal(startFromLstart('Thu Sep  3 20:02:00 2026\nThu Sep  3 21:30:00 2026\n', 'latest'), late);
+  assert.equal(startFromLstart('  Thu Sep  3 20:02:00 2026  '), early);
+
+  assert.equal(startFromLstart(''), null);
+  assert.equal(startFromLstart('\n \n'), null);
+  assert.equal(startFromLstart('STARTED'), null);
+  assert.equal(startFromLstart(null), null);
 });
 
 test('isGameRunning reports false (never throws) with no game running', async (t) => {
@@ -65,8 +115,6 @@ test('killGame says so when pkill is unavailable', { skip: !isPosix }, async (t)
   const { join, dirname } = await import('path');
   const { fileURLToPath } = await import('url');
 
-  // A PATH containing sh but no pkill: the kill command's own 2>/dev/null used
-  // to turn "pkill missing" into a confident "nothing was running"
   const binDir = await mkdtemp(join(tmpdir(), 'no-pkill-'));
   t.after(() => rm(binDir, { recursive: true, force: true }));
   await symlink('/bin/sh', join(binDir, 'sh'));
@@ -92,6 +140,31 @@ test('killGame says so when pkill is unavailable', { skip: !isPosix }, async (t)
   assert.doesNotMatch(result.detail ?? '', /No Broforce process was running/);
 });
 
+test('parseWmicCreationDate reads wmic timestamps and rejects anything else', () => {
+  // The offset is minutes from UTC, so the same wall clock in two zones is two different instants
+  assert.equal(
+    parseWmicCreationDate('20250903181601.123456+060'),
+    Date.parse('2025-09-03T17:16:01.123Z'),
+  );
+  assert.equal(
+    parseWmicCreationDate('20250903181601.123456-300'),
+    Date.parse('2025-09-03T23:16:01.123Z'),
+  );
+  assert.equal(
+    parseWmicCreationDate('20250903181601.000000+000'),
+    Date.parse('2025-09-03T18:16:01.000Z'),
+  );
+  // wmic output arrives with the column header and padding around the values
+  assert.equal(
+    parseWmicCreationDate('  20250903181601.123456+060  '),
+    Date.parse('2025-09-03T17:16:01.123Z'),
+  );
+
+  for (const notATimestamp of ['CreationDate', '', '   ', '2025-09-03T18:16:01Z', '20250903181601']) {
+    assert.equal(parseWmicCreationDate(notATimestamp), null, `parsed ${JSON.stringify(notATimestamp)}`);
+  }
+});
+
 test('extractProfileName resolves the launched profile from process listings', () => {
   const reaper =
     '202905 /home/u/.local/share/Steam/ubuntu12_32/reaper SteamLaunch AppId=274190 -- ' +
@@ -105,18 +178,15 @@ test('extractProfileName resolves the launched profile from process listings', (
     '"C:\\Users\\u\\AppData\\Roaming\\r2modmanPlus-local\\Broforce\\profiles\\UMM_Local_Install\\UMM\\Core\\UnityModManager.dll"';
   assert.equal(extractProfileName(windows), 'UMM_Local_Install');
 
-  // Two distinct profiles across launcher lines means no confident answer
   const secondLauncher =
     '888 /home/u/.config/r2modmanPlus-local/Broforce/profiles/UMM_Local_Install/run_umm.sh';
   assert.equal(extractProfileName(reaper + '\n' + secondLauncher), null);
 
-  // Non-launcher processes touching a profile path neither drive nor spoil the choice
   const strayShell =
     '999 tail -f /home/u/.config/r2modmanPlus-local/Broforce/profiles/UMM_Local_Install/UMM/Core/Log.txt';
   assert.equal(extractProfileName(strayShell), null);
   assert.equal(extractProfileName(reaper + '\n' + strayShell), 'Default');
 
-  // A profile name with a space must not truncate into a match on another profile
   const spaced =
     '777 /home/u/.config/r2modmanPlus-local/Broforce/profiles/Default Backup/run_umm.sh --doorstop-enabled true';
   assert.equal(extractProfileName(spaced), null);
@@ -150,7 +220,6 @@ test('tool launchArgs tokenize and append after the built-in flags', () => {
   assert.deepEqual(launch.args, ['--mode', 'proton', '--vanilla', '-m', 'second arg']);
   assert.equal(launch.display, 'bf --mode proton --vanilla -m second arg');
 
-  // Malformed input is an error, not silently dropped or mangled args
   assert.throws(() => composeExtraLaunchArgs({ launchArgs: 5 }), /must be a string/);
   assert.throws(() => composeExtraLaunchArgs({ launchArgs: '-m "second arg' }), /Unbalanced double quote/);
   assert.throws(() => tokenizeCommand("bf 'oops"), /Unbalanced single quote/);
@@ -171,7 +240,6 @@ test('the default launch is a platform-appropriate Steam protocol launch', () =>
   assert.equal(mac.command, 'open');
   assert.deepEqual(mac.args, [STEAM_LAUNCH_URL]);
 
-  // Steam launches cannot take the game's own flags; they are reported, not silently dropped
   assert.deepEqual(resolveLaunchCommand(['--vanilla'], {}, 'linux').ignoredArgs, ['--vanilla']);
 });
 

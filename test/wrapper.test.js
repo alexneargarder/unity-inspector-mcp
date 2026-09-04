@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 
 import { startWrapper } from '../test-support/wrapper-harness.js';
 
-// pgrep is used to kill the wrapper's child out from under it
 const posix = process.platform !== 'win32';
 
 test('the wrapper replays initialize after the child dies unexpectedly', { timeout: 20000, skip: !posix }, async (t) => {
@@ -37,7 +36,6 @@ test('restart_server fails requests that were still in flight', { timeout: 20000
   t.after(() => w.stop());
   await w.initialize(0);
 
-  // This one is never answered by the child; the restart must not strand it
   w.send({ jsonrpc: '2.0', id: 4, method: 'test/hang', params: {} });
   await w.sleep(200);
 
@@ -51,7 +49,6 @@ test('restart_server fails requests that were still in flight', { timeout: 20000
   const restarted = await w.waitFor((m) => m.id === 5, 10000);
   assert.ok(restarted?.result, 'restart_server did not answer');
 
-  // The replacement child is live
   w.send({ jsonrpc: '2.0', id: 6, method: 'tools/list', params: {} });
   const afterRestart = await w.waitFor((m) => m.id === 6);
   assert.equal(afterRestart.result.tools.length, 2);
@@ -76,7 +73,6 @@ test('the crash-loop guard stops respawning, and restart_server recovers', { tim
   t.after(() => w.stop());
   await w.initialize(0);
 
-  // Three deaths inside the window: two respawns, then the lockout
   for (let i = 0; i < 3; i++) {
     w.send({ jsonrpc: '2.0', id: 100 + i, method: 'test/die', params: {} });
     await w.sleep(600);

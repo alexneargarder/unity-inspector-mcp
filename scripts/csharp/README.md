@@ -86,6 +86,47 @@ Add additional `using` statements as needed for other namespaces.
 
 Scripts can directly access private fields and methods on game types — no reflection needed.
 
+## Capturing Spawn Calls
+
+`spawn-capture.cs` patches a method with a prefix that logs the call arguments and a postfix that
+dumps the returned object's initial state (type, name, GameObject and position for a Component,
+plus its simple public fields). Arguments are `typeName`, `methodName` and `captureCount`.
+
+Every overload of the name is patched with the same pair of patch methods, and each capture line
+carries the overload's parameter-type list, so entries stay attributable; `Main()` logs the
+signatures it patched. `captureCount` is the total across all of them. An overload that returns
+void gets the prefix only, since there is no `__result` to read. Everything lands in the UMM
+log — read it back with `read_log` / `watch_log`.
+
+Reaching `captureCount` only stops the logging. The patches stay applied, so every call of every
+patched overload still pays for Harmony's argument array and the boxing of its value arguments —
+run `unload_script` to remove them once you have the captures you wanted.
+
+Reading an exception's `StackTrace` crashes the game when the code comes in as `execute_code`
+input, and it is not known to be safe from a compiled script either. Keep `.StackTrace` out of
+both and log `ex.GetType().Name` and `ex.Message` instead.
+
+### Holding a Spawn Still Long Enough to Inspect It
+
+Projectile lifetime is driven by `Time.timeScale`, so `set_game_speed` decides whether a fresh
+spawn is still around by the time the next MCP call reaches the game. At speed 1 a projectile is
+gone before the first round-trip completes. At 0.02 it survives roughly two round-trips. At 0.002
+it is still present and has barely moved after three seconds of wall-clock time, which makes
+0.002 the setting for inspecting transient objects — set the speed back to 1 when finished.
+
+### BroMakerLib Spawn Prefixes
+
+BroMakerLib patches `ProjectileController.SpawnGrenadeLocally`, `SpawnProjectileLocally` (all
+three overloads), `SpawnGrenadeOverNetwork` and `SpawnProjectileOverNetwork` with prefixes at
+default priority. When the prefab is a BroMaker custom projectile — or, for the `*OverNetwork`
+methods, the firing unit is a custom bro — those prefixes perform the spawn themselves, assign
+`__result` and return `false`; otherwise they return `true` and the game's own method runs.
+
+A prefix that only wants to observe the call therefore needs priority `int.MaxValue`, or
+BroMakerLib's prefix consumes the invocation first and the observer never runs. A postfix always
+runs and still receives the spawned object in `__result` even when the original was skipped;
+`__runOriginal` (Harmony 2.2+) distinguishes the two cases.
+
 ## Temporary Scripts
 
 Scripts outside this directory can be executed via absolute path. They won't appear in `list_scripts` or the catalog resource.

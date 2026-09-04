@@ -15,7 +15,6 @@ function connectedClient(port) {
 
 test('a response that arrives after its command timed out does not resolve the next command', { timeout: 10000 }, async (t) => {
   const stub = await startStubServer((request, socket) => {
-    // "slow" answers after its caller has already given up; "ping" answers later still
     const delay = request.method === 'slow' ? 150 : 400;
     setTimeout(() => reply(socket, request.id, { from: request.method }), delay);
   });
@@ -38,7 +37,6 @@ test('two responses delivered in a single chunk are both dispatched', { timeout:
   const stub = await startStubServer((request, socket) => {
     collected.push(request);
     if (collected.length < 2) return;
-    // Both frames in one write, exercising the shared line buffer
     const frames = collected
       .map((r) => JSON.stringify({ id: r.id, success: true, result: { from: r.method } }) + '\n')
       .join('');
@@ -79,7 +77,6 @@ test('two concurrent connect() calls both settle', { timeout: 10000 }, async (t)
   const settled = await Promise.allSettled([client.connect(), client.connect(), client.connect()]);
   assert.deepEqual(settled.map((s) => s.status), ['fulfilled', 'fulfilled', 'fulfilled']);
 
-  // The surviving socket is still usable
   assert.deepEqual(await client.sendCommand('ping', {}, 3000), { from: 'ping' });
 });
 

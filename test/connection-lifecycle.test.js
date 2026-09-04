@@ -21,7 +21,6 @@ test('a null-id response is dropped when several commands are in flight', { time
   let seen = 0;
   const stub = await startStubServer((request, socket) => {
     seen++;
-    // Only answer once both are pending, so the reply is ambiguous
     if (seen === 2) {
       socket.write(JSON.stringify({ id: null, success: true, result: { whose: 'unknowable' } }) + '\n');
     }
@@ -55,7 +54,6 @@ test('disconnect() during connect() abandons the attempt and leaves no zombie', 
 
 test('disconnect() during host detection abandons the attempt', { timeout: 10000 }, async (t) => {
   const stub = await startStubServer(echoStub);
-  // No host given, so #openSocket awaits platform/host detection first
   const client = new UnityInspectorClient({ port: stub.port, connectTimeoutMs: 2000 });
   t.after(async () => { client.disconnect(); await stub.close(); });
 

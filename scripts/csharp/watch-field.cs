@@ -8,8 +8,7 @@
 public static class WatchField
 {
     private static GameObject watcherGO;
-    // Captured during Main(): ScriptContext.Logger only carries this script's
-    // [Script:name] prefix while Main() or Unload() is running.
+    // ScriptContext.Logger only carries the [Script:name] prefix while Main()/Unload() is running
     internal static System.Action<string> cachedLogger;
 
     public static void Main()

@@ -111,7 +111,7 @@ There are 34, 33 from the server and `restart_server` from the wrapper.
 | `ping` | Test the connection to the mod. |
 | `game_state` | Scene, game mode, level, player status and bro type in one call. |
 | `list_gameobjects` | List GameObjects in the scene. |
-| `query_gameobjects` | Search GameObjects by name pattern and/or component type. |
+| `query_gameobjects` | Search GameObjects by name pattern and/or component type. A component type on its own works, and it matches base types and interfaces, so asking for `Projectile` finds subclasses too. |
 | `inspect_gameobject` | Inspect one GameObject by path, with optional component details. |
 | `inspect_component` | Inspect a single component. |
 | `take_screenshot` | Capture the game window and return the path. |
@@ -122,14 +122,14 @@ There are 34, 33 from the server and `restart_server` from the wrapper.
 | `set_bro` | Choose the bro a player spawns as next. Does not change the current one. |
 | `swap_bro` | Swap a player's bro immediately, in place, mid-level. |
 | `list_enemies` | List enemies currently in the scene. |
-| `spawn_entity` | Spawn an entity at a coordinate (limited entity coverage). |
+| `spawn_entity` | Spawn an enemy at a coordinate in the loaded level, with optional initial velocity. Which types work depends on the level's theme, and an unknown type comes back with the list of the ones that do. |
 | `modify_component` | Write properties on a component. |
 | `set_game_speed` | Set the time scale (1.0 is normal). |
 | `simulate_input` | Press or hold a game action for a player, with an optional hold duration or repeat count. |
 | `list_campaigns` | List campaigns with their indices. |
 | `go_to_level` | Go directly to a campaign/level pair. |
 | `restart_level` | Restart the current level, clearing checkpoints and trigger state. |
-| `execute_code` | Evaluate a C# expression in the Unity context (expressions only, no `return`). |
+| `execute_code` | Run C# in the Unity context: statements, local declarations and a trailing `return` all work, and a trailing expression comes back as the value. Locals last for the one call. Never read an exception's `StackTrace` in submitted code, since that crashes the game. |
 | `execute_script` | Compile and run a full C# script in the game, Harmony patches and private members included. |
 | `compile_script` | Compile a script without running it, to check for compiler errors. |
 | `list_scripts` | List the C# script library with descriptions, tags and arguments. |
@@ -138,16 +138,16 @@ There are 34, 33 from the server and `restart_server` from the wrapper.
 | `run_test_script` | Run a JSON command sequence and report each step. |
 | `read_log` | Read the last N lines of the mod manager log, with an optional filter. |
 | `watch_log` | Return only the log lines written since the previous call. |
-| `launch_game` | Launch Broforce and wait until it answers, with `restart`, `vanilla` and `launchArgs` options. |
+| `launch_game` | Launch Broforce and wait until it answers, with `restart`, `vanilla` and `launchArgs` options. If it never answers, it reports which failure mode it hit, same as `wait_for_game`. |
 | `stop_game` | Kill the running Broforce process. |
-| `wait_for_game` | Poll until the game responds, or time out. |
+| `wait_for_game` | Poll until the game responds, or time out. A timeout says which case it was: no process, nothing listening on the port, connected but no reply, or a connection that got closed. |
 | `restart_server` | Restart `index.js` in place to pick up code changes. Provided by `wrapper.js`. |
 
 Under Proton and WSL the game returns Windows paths for screenshots, and the server translates those into paths you can open locally.
 
 ## C# scripts
 
-`scripts/csharp/` has a library of scripts committed to the repo: `find-by-type`, `inspect-private-fields`, `watch-field`, `trace-method-calls` and `dump-harmony-patches`, which work on any modded install, plus `menu-tweaker` (needs the RocketLib mod) and `rogueforce-runner` (needs the Rogueforce mod). Each one has a header of `// #name`, `// #description`, `// #tags` and `// #args` comments. `list_scripts` and the `execute_script` tool description both report that metadata, so the agent can pick a script and fill in its arguments on its own.
+`scripts/csharp/` has a library of scripts committed to the repo: `find-by-type`, `inspect-private-fields`, `watch-field`, `trace-method-calls`, `spawn-capture` and `dump-harmony-patches`, which work on any modded install, plus `menu-tweaker` (needs the RocketLib mod) and `rogueforce-runner` (needs the Rogueforce mod). Each one has a header of `// #name`, `// #description`, `// #tags` and `// #args` comments. `list_scripts` and the `execute_script` tool description both report that metadata, so the agent can pick a script and fill in its arguments on its own.
 
 A script gets its own Harmony instance, a logger and a dictionary of its arguments, and its patches and GameObjects are cleaned up when it unloads. The format, the lifecycle, the ScriptContext API and the .NET 3.5 constraints are in [scripts/csharp/README.md](scripts/csharp/README.md). You can run a script that isn't in the library by passing an absolute path to it, it just won't show up in the catalog.
 
@@ -166,9 +166,11 @@ Test scripts are JSON files with a sequence of game commands and optional waits 
 
 If the game process is there but doesn't answer, `launch_game` reports that instead of starting a second copy. That's almost always the mod failing to load, and the log will have the reason.
 
-Most commands get 6 seconds. The level and bro changing ones, plus `take_screenshot`, `execute_code` and `unload_script`, get 10, and `execute_script` and `compile_script` get 30 since compiling is slow. A timeout usually just means the game is busy with a long level load or a script that's overloading the main thread, and if the game dies partway through a command the server notices within half a second and reports a likely crash.
+Most commands get 6 seconds. The level and bro changing ones, plus `take_screenshot`, `execute_code` and `unload_script`, get 10, and `execute_script` and `compile_script` get 30 since compiling is slow. The mod gives `execute_code` 9 seconds of its own, just under the server's 10, so code that runs too long comes back as the mod's diagnostic rather than a bare client side timeout. A timeout usually just means the game is busy with a long level load or a script that's overloading the main thread, and if the game dies partway through a command the server notices within half a second and reports a likely crash.
 
-`read_log` and `watch_log` look for the Unity Mod Manager log at `~/.config/r2modmanPlus-local/Broforce/profiles/<profile>/UMM/Core/Log.txt` on Linux and `%APPDATA%\r2modmanPlus-local\Broforce\profiles\<profile>\UMM\Core\Log.txt` on Windows. While the game is running they prefer the profile it was launched from, when the launcher's command line reveals it; otherwise they check every r2modman profile and take the most recently written one. A direct Unity Mod Manager install gets checked too, at `<game>/Mods/UnityModManager/Log.txt`. `UNITY_INSPECTOR_LOG` overrides the search entirely, and if no log turns up the error lists every path that was tried.
+`read_log` and `watch_log` look for the Unity Mod Manager log at `~/.config/r2modmanPlus-local/Broforce/profiles/<profile>/UMM/Core/Log.txt` on Linux and `%APPDATA%\r2modmanPlus-local\Broforce\profiles\<profile>\UMM\Core\Log.txt` on Windows. They also check the Unity player log (`Player.log` or `output_log.txt`, depending on the Unity version), under `~/.config/unity3d/Free Lives/Broforce/` on Linux, `%USERPROFILE%\AppData\LocalLow\Free Lives\Broforce\` on Windows, the same folder inside the Proton prefix, `~/Library/Logs/` on macOS, and `Broforce_Data/output_log.txt` next to the game. The player log is always there and gets the same Unity Mod Manager and mod lines, while on a doorstop launch the Unity Mod Manager log sometimes never turns up, and sometimes appears a few seconds after startup and is written to alongside the player log. While the game is running they prefer the profile it was launched from, when the launcher's command line reveals it, and fall back to the player log when that profile has no log the running game has written to; otherwise they check every candidate and take the most recently written one. A direct Unity Mod Manager install gets checked too, at `<game>/Mods/UnityModManager/Log.txt`. `UNITY_INSPECTOR_LOG` overrides the search entirely, and if no log turns up the error lists every path that was tried.
+
+Both tools report which file they read and when it was last written, and if the game is running and that file is older than the game process, they say so instead of quietly handing back a log nothing is writing to. Since a fresh Unity Mod Manager log wins as soon as it exists, the file being read can switch from the player log to it once during a run, at the point it appears; `watch_log` starts a new baseline when that happens, so you get the new file's tail rather than a slice cut at the old file's offset.
 
 If the MCP server itself crashes, the wrapper restarts `index.js` and any in-flight requests get an error back, though it gives up after three crashes inside 30 seconds. `/tmp/mcp-wrapper-<pid>.log` has the wrapper's log plus everything the server wrote to stderr, and `restart_server` starts it back up once you've fixed the problem.
 

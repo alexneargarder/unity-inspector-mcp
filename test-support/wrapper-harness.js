@@ -8,7 +8,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WRAPPER_PATH = path.join(__dirname, '..', 'wrapper.js');
 const STUB_CHILD_PATH = path.join(__dirname, 'stub-child.js');
 
-/** Drive wrapper.js over stdio with the stub child standing in for index.js. */
 export function startWrapper(env = {}) {
   const logDir = mkdtempSync(path.join(os.tmpdir(), 'mcp-wrapper-test-'));
   const logFile = path.join(logDir, 'wrapper.log');
@@ -49,7 +48,6 @@ export function startWrapper(env = {}) {
     return null;
   };
 
-  /** PIDs of the wrapper's current child processes. */
   const childPids = () =>
     execSync(`pgrep -P ${proc.pid} || true`).toString().trim().split('\n').filter(Boolean);
 

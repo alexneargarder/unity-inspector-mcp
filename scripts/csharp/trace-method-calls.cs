@@ -11,8 +11,7 @@ public static class TraceMethodCalls
     private static int callCount;
     private static string tracedMethod;
     private static bool stopped;
-    // Captured during Main(): ScriptContext.Logger only carries this script's
-    // [Script:name] prefix while Main() or Unload() is running.
+    // ScriptContext.Logger only carries the [Script:name] prefix while Main()/Unload() is running
     private static System.Action<string> cachedLogger;
 
     public static void Main()

@@ -1,9 +1,5 @@
 #!/usr/bin/env node
 
-// MCP hot-reload wrapper
-// Spawns index.js as a child, proxies stdio, handles restart_server tool calls,
-// and respawns the child if it dies unexpectedly.
-
 import { spawn } from 'child_process';
 import { appendFileSync, openSync, closeSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -11,14 +7,10 @@ import path from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-// UNITY_INSPECTOR_MCP_CHILD lets the test suite drive the wrapper against a
-// stub child; production always runs index.js.
 const SERVER_PATH = process.env.UNITY_INSPECTOR_MCP_CHILD || path.join(__dirname, 'index.js');
 const NODE_PATH = process.execPath;
 const LOG_FILE = process.env.UNITY_INSPECTOR_MCP_WRAPPER_LOG || `/tmp/mcp-wrapper-${process.pid}.log`;
 
-// Crash-loop guard: this many child deaths inside the window means the child
-// cannot stay up, so stop restarting and answer requests with an error.
 const MAX_RAPID_DEATHS = 3;
 const DEATH_WINDOW_MS = 30000;
 
@@ -31,11 +23,11 @@ const RESTART_TOOL = {
 let child = null;
 let initMessage = null;
 let childBuffer = '';
-let pendingRequests = new Map(); // id -> callback for intercepted responses
-let outstandingRequests = new Set(); // ids forwarded to the child, awaiting a reply
-let restarting = false;    // a deliberate restart is in progress
+let pendingRequests = new Map();
+let outstandingRequests = new Set();
+let restarting = false;
 let shuttingDown = false;
-let serverDown = false;    // child is gone and will not be respawned
+let serverDown = false;
 const deathTimestamps = [];
 
 function log(msg) {
@@ -56,7 +48,6 @@ function spawnChild() {
   proc.stdout.on('data', (data) => {
     childBuffer += data.toString();
     let lines = childBuffer.split('\n');
-    // Keep incomplete last line in buffer
     childBuffer = lines.pop();
 
     for (const line of lines) {
@@ -82,13 +73,10 @@ function spawnChild() {
   return proc;
 }
 
-/** Kill the current child and wait for it to exit. */
 async function stopChild() {
   const proc = child;
   if (!proc) return;
 
-  // Whatever the child was working on dies with it, including during a
-  // deliberate restart — answer those requests instead of stranding them.
   failOutstanding('The Unity Inspector MCP server was restarted before answering this request. Retry the call.');
 
   try { proc.stdin.end(); } catch {}
@@ -108,7 +96,6 @@ async function stopChild() {
   if (child === proc) child = null;
 }
 
-/** Spawn a fresh child and replay the MCP handshake so the client never notices. */
 async function startChild() {
   childBuffer = '';
   pendingRequests.clear();
@@ -186,9 +173,8 @@ function serverDownMessage() {
     `See ${LOG_FILE} for the child's output, fix the problem, then call restart_server.`;
 }
 
-/** Answer a request the child can no longer handle with a JSON-RPC error. */
 function respondServerDown(parsed) {
-  if (parsed.id === undefined || parsed.id === null) return; // notification, nothing to answer
+  if (parsed.id === undefined || parsed.id === null) return;
   outstandingRequests.delete(parsed.id);
   sendToParent(JSON.stringify({
     jsonrpc: "2.0",
@@ -214,7 +200,6 @@ function handleChildMessage(line) {
   try {
     parsed = JSON.parse(line);
   } catch {
-    // Not JSON, forward as-is
     sendToParent(line);
     return;
   }
@@ -223,7 +208,6 @@ function handleChildMessage(line) {
     outstandingRequests.delete(parsed.id);
   }
 
-  // Check if this is a response to an intercepted request
   if (parsed.id !== undefined && parsed.id !== null && pendingRequests.has(parsed.id)) {
     const callback = pendingRequests.get(parsed.id);
     pendingRequests.delete(parsed.id);
@@ -231,7 +215,6 @@ function handleChildMessage(line) {
     return;
   }
 
-  // Intercept tools/list response to inject restart_server tool
   if (parsed.result && parsed.result.tools && Array.isArray(parsed.result.tools)) {
     parsed.result.tools.push(RESTART_TOOL);
     sendToParent(JSON.stringify(parsed));
@@ -250,12 +233,10 @@ function handleParentMessage(line) {
     return;
   }
 
-  // Save initialize request for replay after restart
   if (parsed.method === 'initialize') {
     initMessage = line;
   }
 
-  // Intercept restart_server tool call
   if (parsed.method === 'tools/call' && parsed.params?.name === 'restart_server') {
     handleRestart(parsed);
     return;
@@ -278,7 +259,6 @@ async function handleRestart(request) {
   try {
     await stopChild();
 
-    // An explicit restart clears the crash-loop lockout
     deathTimestamps.length = 0;
     serverDown = false;
 
@@ -297,7 +277,6 @@ async function handleRestart(request) {
       },
     }));
 
-    // Notify client that tools may have changed so it re-fetches the tool list
     sendToParent(JSON.stringify({
       jsonrpc: "2.0",
       method: "notifications/tools/list_changed",
@@ -321,7 +300,6 @@ async function handleRestart(request) {
   }
 }
 
-// Read from parent (MCP client) stdin
 let parentBuffer = '';
 process.stdin.on('data', (data) => {
   parentBuffer += data.toString();

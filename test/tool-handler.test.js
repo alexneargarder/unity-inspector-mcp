@@ -1,9 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-// A port nothing listens on: game-side calls must fail fast and deterministically.
-// Without this, a running game leaves the module-level client's socket open and
-// the test process never exits.
+// Port 1 has no listener: a live game would leave the module-level client's socket open and hang the run
 process.env.UNITY_INSPECTOR_PORT = '1';
 
 const { handleToolCall } = await import('../index.js');
@@ -13,7 +11,6 @@ function textOf(response) {
 }
 
 test('tool calls with no "arguments" member do not throw', { timeout: 20000 }, async () => {
-  // `arguments` is optional in the MCP schema; these handlers all read args
   for (const name of ['list_test_scripts', 'list_scripts', 'watch_log', 'list_gameobjects', 'query_gameobjects']) {
     const response = await handleToolCall({ params: { name } });
     const text = textOf(response);
