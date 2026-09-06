@@ -66,6 +66,10 @@ public static void Main()
 logger under a plain `[Script]` prefix. `Harmony`, `GameObjects` and `Args` are null outside
 `Main()`/`Unload()`.
 
+`ex.StackTrace` and `ex.ToString()` on a caught exception both return a normal managed trace
+naming your script's own methods. No file names or line numbers in it, since the script
+assembly is compiled in memory.
+
 ## .NET 3.5 Constraints
 
 The game runs on .NET 3.5. Key limitations:
@@ -101,10 +105,6 @@ log — read it back with `read_log` / `watch_log`.
 Reaching `captureCount` only stops the logging. The patches stay applied, so every call of every
 patched overload still pays for Harmony's argument array and the boxing of its value arguments —
 run `unload_script` to remove them once you have the captures you wanted.
-
-Reading an exception's `StackTrace` crashes the game when the code comes in as `execute_code`
-input, and it is not known to be safe from a compiled script either. Keep `.StackTrace` out of
-both and log `ex.GetType().Name` and `ex.Message` instead.
 
 ### Holding a Spawn Still Long Enough to Inspect It
 

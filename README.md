@@ -129,7 +129,7 @@ There are 34, 33 from the server and `restart_server` from the wrapper.
 | `list_campaigns` | List campaigns with their indices. |
 | `go_to_level` | Go directly to a campaign/level pair. |
 | `restart_level` | Restart the current level, clearing checkpoints and trigger state. |
-| `execute_code` | Run C# in the Unity context: statements, local declarations and a trailing `return` all work, and a trailing expression comes back as the value. Locals last for the one call. Never read an exception's `StackTrace` in submitted code, since that crashes the game. |
+| `execute_code` | Run C# in the Unity context: statements, local declarations and a trailing `return` all work, and a trailing expression comes back as the value. Locals last for the one call. Exceptions thrown by submitted code come back with their stack trace. |
 | `execute_script` | Compile and run a full C# script in the game, Harmony patches and private members included. |
 | `compile_script` | Compile a script without running it, to check for compiler errors. |
 | `list_scripts` | List the C# script library with descriptions, tags and arguments. |
@@ -150,6 +150,8 @@ Under Proton and WSL the game returns Windows paths for screenshots, and the ser
 `scripts/csharp/` has a library of scripts committed to the repo: `find-by-type`, `inspect-private-fields`, `watch-field`, `trace-method-calls`, `spawn-capture` and `dump-harmony-patches`, which work on any modded install, plus `menu-tweaker` (needs the RocketLib mod) and `rogueforce-runner` (needs the Rogueforce mod). Each one has a header of `// #name`, `// #description`, `// #tags` and `// #args` comments. `list_scripts` and the `execute_script` tool description both report that metadata, so the agent can pick a script and fill in its arguments on its own.
 
 A script gets its own Harmony instance, a logger and a dictionary of its arguments, and its patches and GameObjects are cleaned up when it unloads. The format, the lifecycle, the ScriptContext API and the .NET 3.5 constraints are in [scripts/csharp/README.md](scripts/csharp/README.md). You can run a script that isn't in the library by passing an absolute path to it, it just won't show up in the catalog.
+
+Once a script is loaded, the types it defines are in scope for `execute_code`, by name or through reflection. `GetMethodBody()` on one of its methods takes the game process down though.
 
 ## Test scripts
 

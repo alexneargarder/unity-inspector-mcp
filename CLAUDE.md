@@ -48,8 +48,9 @@ Claude Code --stdio/MCP--> wrapper.js --stdio--> index.js --TCP:9999--> Unity In
 
 - Input compiles as its own block: statements, local declarations, a trailing `return expr;`, or a trailing expression as the value. Locals do not persist between calls; no lambda wrapping needed
 - Read the **inner** result's `success` — the TCP envelope's own `success:true` only means the request was handled. Three shapes: `resultSet:true` with `result`; `success:true, resultSet:false` for ran-but-void; `success:false` with `error`
-- `stackTrace` is set only when the failure happened before user code started running
-- **Submitted code must never read an exception's `StackTrace`, nor `Exception.ToString()`, which reads it** — walking dynamically compiled frames crashes the game process
+- `stackTrace` is null for plain compiler diagnostics and for timeouts
+- **Exceptions thrown by submitted code report `stackTrace`**, and reading `StackTrace` or `ToString()` is safe in `execute_code` input and inside a compiled script alike — a script's own `catch` gets a full managed trace naming its methods
+- Types defined by a script loaded through `execute_script` are in scope for `execute_code`, by direct name and by reflection over the script assembly (field reads, member enumeration). `MethodBase.GetMethodBody()` on a script-compiled method kills the game process
 
 ### Crash Detection
 
