@@ -11,6 +11,8 @@ const STUB_CHILD_PATH = path.join(__dirname, 'stub-child.js');
 export function startWrapper(env = {}) {
   const logDir = mkdtempSync(path.join(os.tmpdir(), 'mcp-wrapper-test-'));
   const logFile = path.join(logDir, 'wrapper.log');
+  // Where the server records the owner.pid it wrote, and the only place the wrapper looks for it
+  const claimFile = path.join(logDir, 'wrapper.claim');
 
   const proc = spawn(process.execPath, [WRAPPER_PATH], {
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -18,6 +20,7 @@ export function startWrapper(env = {}) {
       ...process.env,
       UNITY_INSPECTOR_MCP_CHILD: STUB_CHILD_PATH,
       UNITY_INSPECTOR_MCP_WRAPPER_LOG: logFile,
+      UNITY_INSPECTOR_MCP_CLAIM_FILE: claimFile,
       ...env,
     },
   });
@@ -58,6 +61,7 @@ export function startWrapper(env = {}) {
     sleep,
     waitFor,
     logFile,
+    claimFile,
     childPids,
     async initialize(id = 0) {
       send({

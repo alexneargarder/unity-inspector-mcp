@@ -92,15 +92,54 @@ Launching and stopping the game don't work from there, since `pgrep` can't see W
 
 ## Environment variables
 
-All three are optional and go in the `env` block (the `[mcp_servers.unity-inspector.env]` table in Codex, literal values only in Windsurf).
+All of these are optional and go in the `env` block (the `[mcp_servers.unity-inspector.env]` table in Codex, literal values only in Windsurf).
 
-| Variable | Effect |
-|---|---|
-| `BROFORCE_LAUNCH_CMD` | Command line `launch_game` runs instead of the Steam URL. |
-| `UNITY_INSPECTOR_PORT` | TCP port the mod listens on, if you changed it from 9999. |
-| `UNITY_INSPECTOR_LOG` | Path to the Unity Mod Manager log, if it is somewhere unusual. |
+| Variable | Default | Effect |
+|---|---|---|
+| `UNITY_INSPECTOR_PORT` | `9999` | TCP port the mod listens on. |
+| `BROFORCE_LAUNCH_CMD` | the Steam protocol launch of app 274190 | Command line `launch_game` runs to start your own game. |
+| `BROFORCE_INSTANCE_CMD` | unset, and there are no instances | The launcher that creates and runs this session's own game instance. |
+| `BROFORCE_STOP_CMD` | unset, and the game is stopped by signalling its own process | Command line `stop_game` runs to stop your own game. |
+| `UNITY_INSPECTOR_LOG` | unset, and the server searches for the log itself | Path to the Unity Mod Manager log. |
 
-`launch_game` goes through Steam by default. `BROFORCE_LAUNCH_CMD` replaces that with a full command line, for cases like a Proton launcher script. It gets parsed into a command plus arguments, with shell style quoting.
+The other four are about your own game, never about a session's instance, which takes its port and its logs from `BROFORCE_INSTANCE_CMD`'s launcher instead.
+
+`launch_game` goes through Steam by default. `BROFORCE_LAUNCH_CMD` replaces that with a full command line, like a Proton launcher script, parsed into a command plus arguments with shell-style quoting. It runs exactly as you configured it, with `--vanilla` added for a vanilla launch and whatever `launchArgs` holds appended.
+
+If your launch command's `--help` lists `--args-help`, the server runs the command again with that flag and quotes what it prints in `launch_game`'s description, capped at 1 KB. A command whose `--help` doesn't list the flag is never handed it, and the description says instead that no argument help is published and `launchArgs` pass through as given.
+
+`stop_game` and `launch_game { restart: true }` run `BROFORCE_STOP_CMD` to stop your own game. If it doesn't stop the game, the server signals the game's own process and the reply says so. Leave it unset and the signal is all there is. It is never run for a session's instance, which stops through its own launcher.
+
+## Separate game instances
+
+On Linux, each Claude Code session can get its own game instance. An instance is a second copy of the game with its own profile, settings, saves, logs, TCP port and virtual display, so an agent can play with its own game while you play yours. `BROFORCE_INSTANCE_CMD` turns this on and names the launcher that creates and runs the instance. Leave it unset and there are no instances, and the server serves your own game.
+
+`launch_game` with no arguments starts this session's instance and points the server at it, and `launch_game { steam: true }` launches your own game and points the server there instead. The two games never touch each other. `stop_game` stops whichever one the server is pointed at, and `stop_game { remove: true }` deletes the instance directory afterwards, so the next launch builds it fresh. `game_state` names the target on every reply, along with the instances currently running. `read_log` and `watch_log` read the instance's own `profile/UMM/Core/Log.txt` and `home/unity3d/Free Lives/Broforce/Player.log`.
+
+Your session's instance is stopped when the session ends. Reconnecting the client on the same session id keeps it running, and the new server picks it up.
+
+A launcher that can't be asked where it keeps its instances is no help in telling your game from another session's, so `stop_game` and `launch_game` answer `root-unknown` and leave your game alone until it answers. Your game is still served meanwhile, and `BROFORCE_STOP_CMD` still runs first if you set one. A launcher that caps how many instances run at once can refuse a launch, and the launch then waits for a slot and reports which instances are holding them if none opens.
+
+None of this applies off Linux, where the server serves the one game it finds.
+
+### What the instance launcher has to do
+
+`BROFORCE_INSTANCE_CMD` holds a command plus optional leading arguments, parsed with shell-style quoting, and the server appends a verb to it, so the program name doesn't matter.
+
+- **`--help`**: exits 0 within 5 seconds and prints usage naming `instance <id>`. Help that doesn't name it means the launcher has no instance mode.
+- **`instance <id> launch`**: creates the instance if it isn't there yet and starts its game. Exit 0 once the game is started, and any non-zero exit means it refused or failed. Exit 75 is the one exception, and only from a launcher that caps how many instances run at once. It means the launcher is at that cap, and the server waits for a slot and launches again. `<id>` is the session id and matches `^[A-Za-z0-9_-]{1,64}$`.
+- **`instance <id> stop`**: stops that instance's game and takes down the display it created. **`instance <id> remove`**: deletes the instance directory.
+- **`instance list --json`**: JSON Lines, within 4 seconds. A header object first, then one object per instance with `id`, `running`, `pid`, `port`, `display`, `last_launch` and `stale`. The header is printed even when there are no instances yet. Header fields:
+  - **`instancesRoot`**: absolute path of the directory holding one directory per instance. Required, and every instance path comes from it. A header without it means no instances.
+  - **`cap`**: how many instances this launcher runs at once. A launcher that caps nothing leaves it out or reports it null, which reads as a slot always being free.
+  - **`stageRoot`**: optional, an absolute path. The server records it and no tool reads it.
+  - No other header field is read, `root` included.
+- **Instance directory**: `<instancesRoot>/<id>/` holds `profile/` (the mod profile, log at `profile/UMM/Core/Log.txt`), `home/` (the game's config home, log at `home/unity3d/Free Lives/Broforce/Player.log`), `work/`, `port`, `game.pid`, `owner.pid` and `launch.log`.
+- **`port`**: the inspector port the launcher allocated, the lowest free port in 9900-9998. The port your own game listens on (9999, or whatever `UNITY_INSPECTOR_PORT` names) is never handed to an instance. It gets rewritten on every launch, before `game.pid` is written, and the server never picks one itself.
+- **Working directory**: the game process runs in the instance's `work/`. The server uses that to tell one instance's game from another's and from your own.
+- **`owner.pid`**: written by the server, never by the launcher, though a launcher may read it to tell an owned instance from an abandoned one. One line, `<pid> <starttime>`: the pid of the MCP wrapper that owns the id, and field 22 of that pid's `/proc/<pid>/stat` (clock ticks since boot), both decimal. The wrapper runs `instance <id> stop` at the end of its session when the file still names it. Writing it never creates the instance directory, so a launcher creating a brand-new instance finds nothing there ahead of it.
+- **`--vanilla`**: launch without mods, appended to `instance <id> launch` and to `BROFORCE_LAUNCH_CMD` alike. It is the one flag the server ever adds on its own.
+- **`--args-help`** (optional): prints the launch arguments the program accepts, within 10 seconds. The server runs it only when `--help` lists it.
 
 ## Tools
 
@@ -139,7 +178,7 @@ There are 34, 33 from the server and `restart_server` from the wrapper.
 | `read_log` | Read the last N lines of the mod manager log, with an optional filter. |
 | `watch_log` | Return only the log lines written since the previous call. |
 | `launch_game` | Launch Broforce and wait until it answers, with `restart`, `vanilla` and `launchArgs` options. If it never answers, it reports which failure mode it hit, same as `wait_for_game`. |
-| `stop_game` | Kill the running Broforce process. |
+| `stop_game` | Stop the Broforce process this server is responsible for. |
 | `wait_for_game` | Poll until the game responds, or time out. A timeout says which case it was: no process, nothing listening on the port, connected but no reply, or a connection that got closed. |
 | `restart_server` | Restart `index.js` in place to pick up code changes. Provided by `wrapper.js`. |
 
@@ -170,9 +209,9 @@ If the game process is there but doesn't answer, `launch_game` reports that inst
 
 Most commands get 6 seconds. The level and bro changing ones, plus `take_screenshot`, `execute_code` and `unload_script`, get 10, and `execute_script` and `compile_script` get 30 since compiling is slow. The mod gives `execute_code` 9 seconds of its own, just under the server's 10, so code that runs too long comes back as the mod's diagnostic rather than a bare client side timeout. A timeout usually just means the game is busy with a long level load or a script that's overloading the main thread, and if the game dies partway through a command the server notices within half a second and reports a likely crash.
 
-`read_log` and `watch_log` look for the Unity Mod Manager log at `~/.config/r2modmanPlus-local/Broforce/profiles/<profile>/UMM/Core/Log.txt` on Linux and `%APPDATA%\r2modmanPlus-local\Broforce\profiles\<profile>\UMM\Core\Log.txt` on Windows. They also check the Unity player log (`Player.log` or `output_log.txt`, depending on the Unity version), under `~/.config/unity3d/Free Lives/Broforce/` on Linux, `%USERPROFILE%\AppData\LocalLow\Free Lives\Broforce\` on Windows, the same folder inside the Proton prefix, `~/Library/Logs/` on macOS, and `Broforce_Data/output_log.txt` next to the game. The player log is always there and gets the same Unity Mod Manager and mod lines, while on a doorstop launch the Unity Mod Manager log sometimes never turns up, and sometimes appears a few seconds after startup and is written to alongside the player log. While the game is running they prefer the profile it was launched from, when the launcher's command line reveals it, and fall back to the player log when that profile has no log the running game has written to; otherwise they check every candidate and take the most recently written one. A direct Unity Mod Manager install gets checked too, at `<game>/Mods/UnityModManager/Log.txt`. `UNITY_INSPECTOR_LOG` overrides the search entirely, and if no log turns up the error lists every path that was tried.
+`read_log` and `watch_log` look for the Unity Mod Manager log at `~/.config/r2modmanPlus-local/Broforce/profiles/<profile>/UMM/Core/Log.txt` on Linux and `%APPDATA%\r2modmanPlus-local\Broforce\profiles\<profile>\UMM\Core\Log.txt` on Windows. They also check the Unity player log (`Player.log` or `output_log.txt`, depending on the Unity version), under `~/.config/unity3d/Free Lives/Broforce/` on Linux, `%USERPROFILE%\AppData\LocalLow\Free Lives\Broforce\` on Windows, the same folder inside the Proton prefix, `~/Library/Logs/` on macOS, and `Broforce_Data/output_log.txt` next to the game. The player log is always there and gets the same Unity Mod Manager and mod lines, while on a doorstop launch the Unity Mod Manager log sometimes never turns up, and sometimes appears a few seconds after startup and is written to alongside the player log. While the game is running they prefer the profile it was launched from, when the launcher's command line reveals it, and fall back to the player log when that profile has no log the running game has written to. Otherwise they check every candidate and take the most recently written one. A direct Unity Mod Manager install gets checked too, at `<game>/Mods/UnityModManager/Log.txt`. `UNITY_INSPECTOR_LOG` overrides the search entirely, and if no log turns up the error lists every path that was tried.
 
-Both tools report which file they read and when it was last written, and if the game is running and that file is older than the game process, they say so instead of quietly handing back a log nothing is writing to. Since a fresh Unity Mod Manager log wins as soon as it exists, the file being read can switch from the player log to it once during a run, at the point it appears; `watch_log` starts a new baseline when that happens, so you get the new file's tail rather than a slice cut at the old file's offset.
+Both tools report which file they read and when it was last written, and if the game is running and that file is older than the game process, they say so instead of quietly handing back a log nothing is writing to. Since a fresh Unity Mod Manager log wins as soon as it exists, the file being read can switch from the player log to it once during a run, at the point it appears, and `watch_log` starts a new baseline when that happens, so you get the new file's tail rather than a slice cut at the old file's offset.
 
 If the MCP server itself crashes, the wrapper restarts `index.js` and any in-flight requests get an error back, though it gives up after three crashes inside 30 seconds. `/tmp/mcp-wrapper-<pid>.log` has the wrapper's log plus everything the server wrote to stderr, and `restart_server` starts it back up once you've fixed the problem.
 
