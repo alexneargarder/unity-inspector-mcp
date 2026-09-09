@@ -17,6 +17,7 @@ import { UnityInspectorClient, defaultPort } from './lib/unity-client.js';
 import { captureCommandHelp, composeExtraLaunchArgs, detectActiveProfile, gameStartTime, instanceModeChecked, invalidateGameProcessScan, isGameRunning, killGame, listInstances, ownedGameProcesses, probeInstanceMode, readValidatedPidfile, removeInstance, resolveLaunchCommand, runCommandCapture, spawnDetached } from './lib/game-process.js';
 import { NO_INSTANCE_REASONS, instanceConfig, launcherConfig, steamConfig, withRoot } from './lib/instance.js';
 import { tokenizeCommand } from './lib/command-line.js';
+import { CAPTURE_FILE, CAPTURE_STATES_DIR, DEFAULT_SETTLE_MS, DEFAULT_STATES_PATH, DEFAULT_SWAP_SETTLE_MS, DEFAULT_SWAP_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, REPORT_FILE, STATES_COPY_NAME, formatLogTail, parseLevel, runCapture, teardownGame } from './lib/animation-capture.js';
 import {
   buildScriptCatalog,
   listCSharpScripts,
@@ -1399,6 +1400,109 @@ export async function buildToolList() {
         },
       },
       {
+        name: "capture_animations",
+        description:
+          "Sweep a bro's animation states into frame strips. Loads a level, swaps the bro, then runs the animation-capture C# script " +
+          "in the game with the clock held at zero: it writes one PNG strip per state (frames left to right), a `capture.json` " +
+          "recording the sprite-sheet cell every frame addressed, the merged `states.json` it swept, and a `report.md` comparing " +
+          "what was addressed against what the state list expected. The report text comes back in the reply as well as being written.\n\n" +
+          "- `out` — absolute directory the output lands in. The sweep deletes every `.png` in it first, so a directory that already " +
+          "holds files is only accepted when it holds a `states.json` from an earlier sweep; an empty or non-existent one is always fine.\n" +
+          "- `gameOut` — the same directory as the game's filesystem sees it (default: `out`). Only a Proton or WSL install needs it; " +
+          "a wrong value surfaces as the script's `state file not found` error.\n" +
+          "- `level` — \"CAMPAIGN:LEVEL\" to load first, then wait (up to `timeout`) for that player to spawn alive. A game sitting in " +
+          "the intro scene has no player and the bro swap fails against it; the campaign index must be one the game has (list_campaigns prints them).\n" +
+          "- `settle` — seconds to wait after the level reports its player (default 3, only used with `level`). The player goes live about " +
+          "a second before the world renders, and a sweep started in that gap captures nothing.\n" +
+          "- `bro` — bro to swap to first (vanilla or BroMaker display names; needs Swap Bros Mod). The swap is confirmed by the slot's " +
+          "character changing, never by matching the requested name, so a landed swap means the slot changed and not that it changed to " +
+          "the bro asked for. The reply's `swap` says which, and reports `alreadyHeld` when the slot already held it.\n" +
+          "- `swapTimeout` — seconds to wait for the slot to report the change (default 15). Past it the run fails without sweeping, " +
+          "rather than stripping whatever the slot holds.\n" +
+          "- `swapSettle` — seconds to wait after the swap lands (default 2, only used with `bro`). swap_bro answers while the old " +
+          "character is still the one being drawn.\n" +
+          "- `states` — state lists to sweep, in layer order (default: `base-states.json`); a single string is taken as one layer. A " +
+          "relative name resolves under `lib/animation-capture/states/` and must stay inside it; absolute paths are used as given. A later " +
+          "layer's entry replaces an earlier one of the same name and keeps its position.\n" +
+          "- `timeout` — seconds for the sweep, and for `level`'s player to spawn (default 60; a full sweep takes about 2).\n" +
+          "- `player` — player index to capture, 0-3 (default 0). `box` — world-unit half-size of the crop box; each strip cell is " +
+          "2*box px (the script's own default is 24).\n" +
+          "- `includeLethal` — also sweep the states that kill the player; without it they are left out and listed as excluded.\n" +
+          "- `allowSideEffects` — let the swept animations fire their real specials and attacks. Needed to see a sprite-sheet swap " +
+          "performed inside UseSpecial; costs ammo and damages the level.\n\n" +
+          "With the defaults the worst case is about 80s without level (swap timeout, swap settle and the sentinel timeout in a row) and about 140s with it, since the level's player gets the same timeout to spawn. " +
+          "`report.md` and `capture.json` land in `out` whether or not the caller is still waiting, so a client that gives up first can " +
+          "read them off disk. While a sweep runs, launch_game, wait_for_game and a second capture_animations are refused; stop_game is " +
+          "not, and ends the sweep within one poll. A server stopped mid-sweep (a signal, restart_server) unloads the script and restores " +
+          "the game speed on its way out, unless that teardown overruns the wrapper's grace period.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            out: {
+              type: "string",
+              description: "Absolute path to the directory the strips, capture.json, states.json and report.md are written to",
+            },
+            gameOut: {
+              type: "string",
+              description: "The same directory as the game's filesystem sees it (default: out)",
+            },
+            bro: {
+              type: "string",
+              description: "Bro to swap to before the sweep (Swap Bros Mod display name)",
+            },
+            level: {
+              type: "string",
+              description: "Campaign and level to load first, as \"CAMPAIGN:LEVEL\" (e.g. \"1:0\")",
+            },
+            states: {
+              type: ["array", "string"],
+              items: { type: "string" },
+              description: "State lists to sweep, in layer order. Relative names resolve under lib/animation-capture/states/ (default: base-states.json)",
+            },
+            settle: {
+              type: "number",
+              minimum: 0,
+              description: "Seconds to wait after the level reports its player (default: 3, only used with level)",
+            },
+            swapSettle: {
+              type: "number",
+              minimum: 0,
+              description: "Seconds to wait after the bro swap lands (default: 2, only used with bro)",
+            },
+            swapTimeout: {
+              type: "number",
+              minimum: 1,
+              description: "Seconds to wait for the slot to report the swapped-in character (default: 15)",
+            },
+            timeout: {
+              type: "number",
+              minimum: 1,
+              description: "Seconds to wait for the sweep, and for level's player to spawn (default: 60)",
+            },
+            player: {
+              type: "integer",
+              minimum: 0,
+              maximum: 3,
+              description: "Player index to capture (default: 0)",
+            },
+            box: {
+              type: "number",
+              minimum: 1,
+              description: "World-unit half-size of the crop box; each strip cell is 2*box px (script default: 24)",
+            },
+            includeLethal: {
+              type: "boolean",
+              description: "Also sweep the states that kill the player (default: false)",
+            },
+            allowSideEffects: {
+              type: "boolean",
+              description: "Let the swept animations fire their real specials and attacks (default: false)",
+            },
+          },
+          required: ["out"],
+        },
+      },
+      {
         name: "launch_game",
         description: "Launch Broforce and wait for it to become responsive. By default it launches this session's own game instance through the configured instance launcher — a separate copy of the game with its own profile, saves, logs and port — and points this server at it. With steam: true it launches the user's own game instead (BROFORCE_LAUNCH_CMD when that is set, otherwise Steam app 274190) and points the server there; a configured launch command is run exactly as configured, with launchArgs appended. Sessions without an instance (no session id, no configured instance launcher, or a launcher without instance mode) always launch the user's game. Switching targets leaves the other game running and says so. Acts only on the target it launches: an instance counts as already running only when a game of its own is running, never because something answered on its port, and a second one is refused when the instance's pidfile names a live game, waits for a free slot when the launcher caps instances and is at that cap and then reports which instances hold them, and shows the tail of the instance's launch.log when a launch fails. Returns a warning if the game is already running unless restart is true, which stops only the target's game first." + (await launchArgumentHelp()),
         inputSchema: {
@@ -1710,14 +1814,190 @@ const TARGET_FREE_TOOLS = new Set(['list_scripts', 'list_test_scripts']);
 
 const asSentence = (text) => (/[.!?]$/.test(String(text).trim()) ? String(text).trim() : `${String(text).trim()}.`);
 
+// A capture sweep holds the game for its whole length, the sentinel wait included, during which
+// nothing is on the socket at all. The record is what makes it visible: it is set before the sweep
+// starts and cleared in a finally, so a sweep that throws releases it on the way out.
+let activeSweep = null;
+
 // Dropping the socket under a command in flight would answer it from whatever answers next
 function refuseWhileInFlight(action) {
+  if (activeSweep) {
+    const left = Math.max(0, Math.round((activeSweep.deadline - Date.now()) / 1000));
+    throw new Error(
+      `Cannot ${action} while a capture_animations sweep into ${activeSweep.out} is running on the ` +
+      `${activeTarget()} target — it holds the game clock at zero and reports through files rather than the ` +
+      `socket (about ${left}s of its budget left). Wait for it to finish, or use stop_game to end it early.`
+    );
+  }
+
   const inFlight = unityClient.inFlightCommands();
   if (inFlight.length === 0) return;
   throw new Error(
     `Cannot ${action} while ${inFlight.join(', ')} is still in flight on the ${activeTarget()} target — ` +
     `it disconnects the client. Wait for it to finish and try again.`
   );
+}
+
+// Each of the sweep's two teardown commands, and the whole teardown, on the way out of the process.
+// The wrapper's restart_server sends SIGKILL 3s after its SIGTERM, and a signalling client kills the
+// process sooner, so the exit happens either way and the teardown only gets a slice of that.
+export const SHUTDOWN_TEARDOWN_COMMAND_MS = 800;
+export const SHUTDOWN_TEARDOWN_BUDGET_MS = 2000;
+
+// A sweep holds the clock at zero with the capture script's patches installed, so a server that just
+// exits under one leaves the game frozen.
+export async function shutdownServer(signal, { exit = (code) => process.exit(code) } = {}) {
+  console.error(`Shutting down Unity Inspector MCP server (${signal})...`);
+
+  const sweep = activeSweep;
+  if (sweep) {
+    let timer = null;
+    const expired = new Promise((resolve) => { timer = setTimeout(() => resolve(true), SHUTDOWN_TEARDOWN_BUDGET_MS); });
+    const teardown = teardownGame(sweep.client, { timeoutMs: SHUTDOWN_TEARDOWN_COMMAND_MS }).then(() => false, () => false);
+
+    const overran = await Promise.race([teardown, expired]);
+    clearTimeout(timer);
+    if (overran) {
+      console.error(
+        'The capture teardown did not finish in time — the game may still be frozen. Unload the ' +
+        'animation-capture script and set the game speed back to 1 by hand.'
+      );
+    }
+  }
+
+  unityClient.disconnect();
+  exit(0);
+}
+
+// Every wait the tool takes is in seconds, as wait_for_game takes them; the library works in ms
+function captureMs(name, raw, fallbackMs, { min = 0 } = {}) {
+  if (raw === undefined || raw === null) return fallbackMs;
+  return captureNumber(name, raw, { min }) * 1000;
+}
+
+function captureNumber(name, raw, { min = 0, integer = false } = {}) {
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < min || (integer && !Number.isInteger(value))) {
+    throw new Error(
+      `${name} must be ${integer ? 'an integer' : 'a number'} >= ${min}, got ${JSON.stringify(raw)}`
+    );
+  }
+  return value;
+}
+
+// Relative names resolve under the state-list directory the way script names resolve under
+// scripts/csharp/; an absolute path is used as given, for a list kept outside the repository
+function captureStatesPath(raw) {
+  if (typeof raw !== 'string' || raw.trim() === '') {
+    throw new Error('Every states entry must be a path to a state list');
+  }
+  const name = raw.trim();
+  if (path.isAbsolute(name)) return name;
+
+  const resolved = path.resolve(CAPTURE_STATES_DIR, name.endsWith('.json') ? name : `${name}.json`);
+  const relative = path.relative(CAPTURE_STATES_DIR, resolved);
+  if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error(
+      `A relative states path must stay inside ${CAPTURE_STATES_DIR}: "${raw}". ` +
+      'Pass an absolute path for a state list kept somewhere else.'
+    );
+  }
+  return resolved;
+}
+
+// The prep step deletes every .png in the output directory, so it is only ever cleared when this
+// tool wrote it before: states.json is the mark it leaves
+async function captureOutDir(raw) {
+  if (typeof raw !== 'string' || raw.trim() === '') {
+    throw new Error('out is required: the absolute path of the directory the capture is written to');
+  }
+  const out = raw.trim();
+  if (!path.isAbsolute(out)) {
+    throw new Error(`out must be an absolute path, since a caller cannot know this server's working directory: "${raw}"`);
+  }
+
+  let stat = null;
+  try {
+    stat = await fs.stat(out);
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
+  if (stat && !stat.isDirectory()) throw new Error(`out is not a directory: ${out}`);
+
+  if (stat) {
+    const entries = await fs.readdir(out);
+    if (entries.length > 0 && !entries.includes(STATES_COPY_NAME)) {
+      throw new Error(
+        `${out} already holds files and no ${STATES_COPY_NAME} from an earlier sweep, and the sweep deletes every ` +
+        '.png in its output directory. Pass a new or empty directory, or one this tool wrote before.'
+      );
+    }
+  }
+  return out;
+}
+
+async function captureOptions(args) {
+  const out = await captureOutDir(args.out);
+  const level = args.level === undefined || args.level === null ? null : parseLevel(args.level);
+  const bro = args.bro === undefined || args.bro === null || String(args.bro).trim() === '' ? null : String(args.bro);
+  const gameOut = args.gameOut === undefined || args.gameOut === null || String(args.gameOut).trim() === ''
+    ? out
+    : String(args.gameOut);
+
+  const layers = args.states === undefined || args.states === null
+    ? []
+    : (Array.isArray(args.states) ? args.states : [args.states]);
+  const statesPaths = layers.map(captureStatesPath);
+  if (statesPaths.length === 0) statesPaths.push(DEFAULT_STATES_PATH);
+
+  const player = args.player === undefined || args.player === null
+    ? 0
+    : captureNumber('player', args.player, { min: 0, integer: true });
+  if (player > 3) throw new Error(`player must be an integer >= 0 and <= 3, got ${JSON.stringify(args.player)}`);
+
+  // Both are checked whether or not the wait they follow was asked for: an argument silently thrown
+  // away is worse than one reported back
+  const settleMs = captureMs('settle', args.settle, DEFAULT_SETTLE_MS);
+  const swapSettleMs = captureMs('swapSettle', args.swapSettle, DEFAULT_SWAP_SETTLE_MS);
+
+  return {
+    out,
+    gameOut,
+    level,
+    bro,
+    statesPaths,
+    // Only meaningful after the wait each one follows, so an unasked-for one costs nothing
+    settleMs: level ? settleMs : 0,
+    swapSettleMs: bro ? swapSettleMs : 0,
+    swapTimeoutMs: captureMs('swapTimeout', args.swapTimeout, DEFAULT_SWAP_TIMEOUT_MS, { min: 1 }),
+    timeoutMs: captureMs('timeout', args.timeout, DEFAULT_TIMEOUT_MS, { min: 1 }),
+    player,
+    box: args.box === undefined || args.box === null ? null : captureNumber('box', args.box, { min: 1 }),
+    includeLethal: args.includeLethal === true,
+    allowSideEffects: args.allowSideEffects === true,
+  };
+}
+
+function captureReply(run, options) {
+  const { outcome } = run;
+  return {
+    // A cell mismatch is a finding, not a failed run: only a sentinel short of done, or a state that
+    // errored inside the sweep, makes it one
+    success: outcome.status === 'done' && run.stateErrors.length === 0,
+    status: outcome.status,
+    message: outcome.status === 'done' ? null : outcome.message,
+    report: run.report,
+    paths: {
+      out: options.out,
+      report: path.join(options.out, REPORT_FILE),
+      capture: run.capture === null ? null : path.join(options.out, CAPTURE_FILE),
+      states: path.join(options.out, STATES_COPY_NAME),
+    },
+    summary: run.summary,
+    stateErrors: run.stateErrors,
+    swap: run.swap,
+    logTail: outcome.logTail ? formatLogTail(outcome.logTail) : null,
+  };
 }
 
 export async function handleToolCall(request) {
@@ -2100,6 +2380,27 @@ export async function handleToolCall(request) {
           name: args.name,
         });
         break;
+
+      case "capture_animations": {
+        // The sweep sends its own commands and freezes the game for its length, so nothing else may
+        // be on the socket and no second sweep may start under this one
+        refuseWhileInFlight('start an animation capture sweep');
+        const captureOpts = await captureOptions(args);
+
+        // Every wait spent in a row: what the refusal reports to whoever asks while it runs
+        const budgetMs = (captureOpts.level ? captureOpts.timeoutMs : 0) + captureOpts.settleMs
+          + (captureOpts.bro ? captureOpts.swapTimeoutMs + captureOpts.swapSettleMs : 0)
+          + captureOpts.timeoutMs;
+        activeSweep = { out: captureOpts.out, client: unityClient, deadline: Date.now() + budgetMs };
+
+        try {
+          const run = await runCapture(captureOpts, unityClient, { resolveLog: resolveLogFile });
+          result = captureReply(run, captureOpts);
+        } finally {
+          activeSweep = null;
+        }
+        break;
+      }
 
       case "launch_game": {
         // The probe and the root settle what this session has before the target moves anywhere
@@ -2600,17 +2901,15 @@ process.on('unhandledRejection', (reason) => {
   console.error('Unhandled rejection:', reason);
 });
 
-// Cleanup on exit
-process.on('SIGINT', () => {
-  console.error('Shutting down Unity Inspector MCP server...');
-  unityClient.disconnect();
-  process.exit(0);
-});
-
-process.on('SIGTERM', () => {
-  unityClient.disconnect();
-  process.exit(0);
-});
+// Cleanup on exit. A capture sweep in flight is torn down first, so the game is not left frozen.
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => {
+    shutdownServer(signal).catch((err) => {
+      console.error(`Shutdown failed: ${err.message}`);
+      process.exit(0);
+    });
+  });
+}
 
 // Start the server
 async function main() {

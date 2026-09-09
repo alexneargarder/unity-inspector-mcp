@@ -77,6 +77,7 @@ The game runs on .NET 3.5. Key limitations:
 - No `string.IsNullOrWhiteSpace()` — use `string.IsNullOrEmpty(s) || s.Trim().Length == 0`
 - No `async/await`
 - No `nameof()`
+- No iterator methods (`yield return`), the whole file fails to compile
 - LINQ is available (`System.Linq`)
 
 ## Auto-Imported Namespaces

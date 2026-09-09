@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 
 const { buildToolList, handleToolCall, resolvePollBudget } = await import('../index.js');
 const { isGameRunning } = await import('../lib/game-process.js');
+const { NODE_ONLY_TOOLS, validateTestScriptSteps } = await import('../lib/script-library.js');
 
 function textOf(response) {
   return response.content.map((c) => c.text).join('\n');
@@ -80,6 +81,20 @@ test('spawn_entity advertises the type roster and the velocity arguments', async
   assert.equal(tool.inputSchema.properties.xI?.type, 'number');
   assert.equal(tool.inputSchema.properties.yI?.type, 'number');
   assert.deepEqual(tool.inputSchema.required, ['type', 'x', 'y'], 'velocities stay optional');
+});
+
+test('capture_animations is listed, and is server-side orchestration rather than a game command', async () => {
+  const tool = await toolNamed('capture_animations');
+  assert.deepEqual(tool.inputSchema.required, ['out']);
+  assert.match(tool.description, /animation/i);
+  assert.match(tool.description, /report\.md/);
+
+  assert.ok(NODE_ONLY_TOOLS.has('capture_animations'));
+  assert.deepEqual(
+    validateTestScriptSteps([{ command: 'capture_animations', params: { out: '/tmp/x' } }]),
+    ['step 1: "capture_animations" is implemented by the MCP server, not the game'],
+    'a test script cannot dispatch it at the game',
+  );
 });
 
 test('wait_for_game reports which failure mode a timeout hit', { timeout: 30000 }, async () => {

@@ -1,0 +1,3238 @@
+{
+  "schema": 1,
+  "name": "TestVanDammeAnim + BroBase base states",
+  "source": "Broforce-Source/TestVanDammeAnim.cs, Broforce-Source/BroBase.cs",
+  "note": "Every entry names the fields that steer ChangeFrame (TestVanDammeAnim.cs:4023-4210) to one Animate* method, the field the frames are stepped with, and the cells the base sprite sheet holds for it. Bare :NNNN line references are TestVanDammeAnim.cs; BroBase.cs is named explicitly. Expected cells were cross-checked against the sprite validator's base range table. The harness re-applies setup before every step, so animations that clear their own flag mid-sequence still run to the end of their column span. An entry with knownMismatch addresses fewer cells than its expect says for a reason the source explains, and the driver reports it separately from a real mismatch. An entry marked lethal kills or respawns the live player, so the driver leaves it out unless --include-lethal is passed. The harness patches UseSpecial, UsePockettedSpecial, PerformKnifeMeleeAttack and PerformPunchAttack out for the duration of a sweep, so the states that walk those frames fire nothing at the level.",
+  "states": [
+    {
+      "name": "idle",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "None",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 1,
+        "cols": [
+          0,
+          0
+        ]
+      },
+      "note": "ChangeFrame :4071-4074 -> AnimateIdle :3399; the !ducking arm falls through :3407-3452 to AnimateActualIdleFrames :3494-3505 (frame % 1 is always 0). BroBase.AnimateActualIdleFrames (BroBase.cs:1937-1951) forwards to the base method only while gettingUpFromElbowSlam and isAirFlexing are false."
+    },
+    {
+      "name": "idle_ducking",
+      "requires": {
+        "useDuckingFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": true,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "None",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 1,
+        "cols": [
+          6,
+          6
+        ]
+      },
+      "note": "AnimateIdle :3455 takes the ducking arm when ducking && useDuckingFrames, then :3486-3489 -> AnimateActualIdleDuckingFrames :3508-3519 (6 + frame % 1). BroBase override BroBase.cs:1954-1964 forwards while gettingUpFromElbowSlam is false."
+    },
+    {
+      "name": "running",
+      "requires": {
+        "useNewFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Running",
+        "releasingHighFive": false,
+        "pushingTime": 0.0,
+        "rollingTime": 0.0,
+        "rollingFrames": 0,
+        "ledgeGrapple": false,
+        "isInQuicksand": false,
+        "fire": false,
+        "ducking": false,
+        "dashing": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 2,
+        "cols": [
+          0,
+          7
+        ]
+      },
+      "note": "ChangeFrame :4075-4078 -> AnimateRunning :3522; the else arm :3570-3596 needs !throwingHeldObject, !doingMelee, !releasingHighFive, no usingSpecial*, pushingTime <= 0, rollingTime <= 0 and rollingFrames <= 0. useNewFrames then routes to AnimateActualNewRunningFrames :3719-3740 (frame % 8, row 2 while !dashing). Footstep sound and poof effect fire at frame % 4 == 0."
+    },
+    {
+      "name": "running_dashing",
+      "requires": {
+        "useNewFrames": true,
+        "useDashFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Running",
+        "releasingHighFive": false,
+        "pushingTime": 0.0,
+        "rollingTime": 0.0,
+        "rollingFrames": 0,
+        "ledgeGrapple": false,
+        "isInQuicksand": false,
+        "fire": false,
+        "ducking": false,
+        "dashing": true
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 4,
+        "cols": [
+          0,
+          7
+        ]
+      },
+      "note": "Same path as running; :3735 selects spritePixelHeight * 4 instead of * 2 when dashing && useDashFrames."
+    },
+    {
+      "name": "running_legacy",
+      "requires": {
+        "useNewFrames": false
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Running",
+        "releasingHighFive": false,
+        "pushingTime": 0.0,
+        "rollingTime": 0.0,
+        "rollingFrames": 0,
+        "ledgeGrapple": false,
+        "isInQuicksand": false,
+        "fire": false,
+        "ducking": false,
+        "dashing": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 1,
+        "cols": [
+          0,
+          3
+        ]
+      },
+      "note": "AnimateRunning :3583-3595, the !useNewFrames arm: frame % 4 on row 1."
+    },
+    {
+      "name": "running_ducking",
+      "requires": {
+        "useDuckingFrames": true,
+        "useNewDuckingFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Running",
+        "releasingHighFive": false,
+        "pushingTime": 0.0,
+        "rollingTime": 0.0,
+        "rollingFrames": 0,
+        "ledgeGrapple": false,
+        "isInQuicksand": false,
+        "fire": false,
+        "ducking": true
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 2,
+        "cols": [
+          8,
+          15
+        ]
+      },
+      "note": "AnimateRunning :3596-3599 takes the ducking arm when ducking && useDuckingFrames -> AnimateActualDuckingRunning :3605; the useNewDuckingFrames arm :3608-3625 is 8 + frame % 8 on row 2."
+    },
+    {
+      "name": "running_ducking_legacy",
+      "requires": {
+        "useDuckingFrames": true,
+        "useNewDuckingFrames": false
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Running",
+        "releasingHighFive": false,
+        "pushingTime": 0.0,
+        "rollingTime": 0.0,
+        "rollingFrames": 0,
+        "ledgeGrapple": false,
+        "isInQuicksand": false,
+        "fire": false,
+        "ducking": true
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 1,
+        "cols": [
+          6,
+          9
+        ]
+      },
+      "note": "AnimateActualDuckingRunning :3626-3637, the !useNewDuckingFrames arm: 6 + frame % 4 on row 1."
+    },
+    {
+      "name": "pushing",
+      "requires": {
+        "useNewPushingFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Running",
+        "releasingHighFive": false,
+        "pushingTime": 1.0,
+        "rollingTime": 0.0,
+        "rollingFrames": 0,
+        "ledgeGrapple": false,
+        "isInQuicksand": false,
+        "fire": false,
+        "ducking": false,
+        "dashing": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 5,
+        "cols": [
+          0,
+          7
+        ]
+      },
+      "note": "AnimateRunning :3556-3559 needs pushingTime > 0 && useNewPushingFrames && !fire -> AnimatePushing :3743-3757 (frame % 8 on row 5). The gun overlay is mirrored at :3756."
+    },
+    {
+      "name": "panicking",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Panicking"
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 1,
+        "cols": [
+          15,
+          18
+        ]
+      },
+      "note": "ChangeFrame :4079-4084 sets the cell inline: 15 + frame % 4 at y = spritePixelHeight. No Animate* method and no layout flag is involved."
+    },
+    {
+      "name": "jumping_rising_momentum",
+      "requires": {
+        "useNewFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": false,
+        "wallDrag": false,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 0.0,
+        "fire": false,
+        "ducking": false,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false,
+        "yI": 100.0,
+        "xI": 100.0
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 3,
+        "cols": [
+          0,
+          2
+        ]
+      },
+      "note": "ChangeFrame :4199 -> AnimateJumping :3133 -> AnimateActualJumpingFrames :3281. :3293-3300 needs yI > 20 and |xI| > 50 -> frame % 3 on row 3. Reaching :4199 needs every earlier Jumping arm false (:4130-4196): throwingHeldObject, usingSpecial*, ledgeGrapple, chimneyFlip, wallClimbing, WallDrag, isInQuicksand, the wall-anticipation arm (:4183, blocked by left/right false), rollingTime and airdashTime."
+    },
+    {
+      "name": "jumping_rising_slow",
+      "requires": {
+        "useNewFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": false,
+        "wallDrag": false,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 0.0,
+        "fire": false,
+        "ducking": false,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false,
+        "yI": 100.0,
+        "xI": 0.0
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 3,
+        "cols": [
+          6,
+          8
+        ]
+      },
+      "note": "AnimateActualJumpingFrames :3301-3305: yI > 20 and |xI| <= 50 -> 6 + frame % 3 on row 3."
+    },
+    {
+      "name": "jumping_falling_momentum",
+      "requires": {
+        "useNewFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": false,
+        "wallDrag": false,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 0.0,
+        "fire": false,
+        "ducking": false,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false,
+        "yI": -100.0,
+        "xI": 100.0
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 3,
+        "cols": [
+          3,
+          5
+        ]
+      },
+      "note": "AnimateActualJumpingFrames :3313-3323: yI < -55 and |xI| > 50 -> 3 + frame % 3 on row 3."
+    },
+    {
+      "name": "jumping_falling_slow",
+      "requires": {
+        "useNewFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": false,
+        "wallDrag": false,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 0.0,
+        "fire": false,
+        "ducking": false,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false,
+        "yI": -100.0,
+        "xI": 0.0
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 3,
+        "cols": [
+          9,
+          11
+        ]
+      },
+      "note": "AnimateActualJumpingFrames :3313-3323: yI < -55 and |xI| <= 50 -> 9 + frame % 3 on row 3. The middle arm :3333-3345 (-55 <= yI <= 20) addresses the same two column groups."
+    },
+    {
+      "name": "jumping_legacy_rising",
+      "requires": {
+        "useNewFrames": false
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": false,
+        "wallDrag": false,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 0.0,
+        "fire": false,
+        "ducking": false,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false,
+        "yI": 100.0,
+        "xI": 0.0
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 1,
+        "cols": [
+          1,
+          1
+        ]
+      },
+      "note": "AnimateActualJumpingFrames :3306-3310, the !useNewFrames arm of the yI > 20 branch: fixed column 1 on row 1."
+    },
+    {
+      "name": "jumping_legacy_falling",
+      "requires": {
+        "useNewFrames": false
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": false,
+        "wallDrag": false,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 0.0,
+        "fire": false,
+        "ducking": false,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false,
+        "yI": -100.0,
+        "xI": 0.0
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 1,
+        "cols": [
+          2,
+          2
+        ]
+      },
+      "note": "AnimateActualJumpingFrames :3324-3330, the !useNewFrames arm of the yI < -55 branch: fixed column 2 on row 1."
+    },
+    {
+      "name": "jumping_ducking_rising",
+      "requires": {
+        "useDuckingFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": false,
+        "wallDrag": false,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 0.0,
+        "fire": false,
+        "ducking": true,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false,
+        "yI": 100.0
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 1,
+        "cols": [
+          8,
+          8
+        ]
+      },
+      "note": "AnimateJumping :3175-3178 takes the ducking arm when ducking && useDuckingFrames -> AnimateActualJumpingDuckingFrames :3181; :3184-3188 is the yI > 20 case, fixed column 8 on row 1."
+    },
+    {
+      "name": "jumping_ducking_falling",
+      "requires": {
+        "useDuckingFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": false,
+        "wallDrag": false,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 0.0,
+        "fire": false,
+        "ducking": true,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false,
+        "yI": -100.0
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 1,
+        "cols": [
+          9,
+          9
+        ]
+      },
+      "note": "AnimateActualJumpingDuckingFrames :3189-3198: both the yI < -10 arm and the else arm use column 9 on row 1."
+    },
+    {
+      "name": "front_somersault",
+      "requires": {
+        "hasNewAirFlexFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": false,
+        "wallDrag": false,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 0.0,
+        "fire": false,
+        "ducking": false,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": true
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 11,
+        "cols": [
+          10,
+          21
+        ]
+      },
+      "note": "AnimateJumping -> BroBase.AnimateActualJumpingFrames (BroBase.cs:1967) :1990-2004: needs frontSomersaulting && hasNewAirFlexFrames and both WallClimbing and WallDrag false, else it clears the flag and re-enters ChangeFrame. 10 + frame % 12 on row 11."
+    },
+    {
+      "name": "elbow_slam",
+      "requires": {
+        "hasNewAirFlexFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": false,
+        "wallDrag": false,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 0.0,
+        "fire": false,
+        "ducking": false,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": true,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false,
+        "yI": 0.0
+      },
+      "step": {
+        "field": "flexSpecialFrame",
+        "values": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 14,
+        "cols": [
+          18,
+          21
+        ]
+      },
+      "note": "BroBase.AnimateActualJumpingFrames :1972-1986: isElbowSlamming && hasNewAirFlexFrames. 18 + flexSpecialFrame on row 14, clamped to 3 at :1980. yI must be <= 50 or :1976 resets flexSpecialFrame to 0 before the cell is written."
+    },
+    {
+      "name": "air_flex",
+      "requires": {
+        "hasNewAirFlexFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "None",
+        "stunTime": 0.0,
+        "isAirFlexing": true,
+        "gettingUpFromElbowSlam": false,
+        "yI": 0.0,
+        "frontSomersaulting": false
+      },
+      "step": {
+        "field": "flexSpecialFrame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 13,
+        "cols": [
+          18,
+          22
+        ]
+      },
+      "note": "AnimateIdle -> BroBase.AnimateActualIdleFrames :1937-1951 -> AnimateAirFlexing :2012-2050 (isAirFlexing && hasNewAirFlexFrames, and gettingUpFromElbowSlam false so :1939 does not win). 18 + flexSpecialFrame on row 13. Side effects: :2036 calls AirFlexJump at frame 3, which adds jump force, and :2038-2049 clears isAirFlexing and sets frontSomersaulting at frame 4; yI and frontSomersaulting are named in the setup so both are snapshotted and put back."
+    },
+    {
+      "name": "getting_up_from_elbow_slam",
+      "requires": {
+        "hasNewAirFlexFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "None",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": true
+      },
+      "step": {
+        "field": "flexSpecialFrame",
+        "values": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 15,
+        "cols": [
+          18,
+          21
+        ]
+      },
+      "note": "AnimateIdle -> BroBase.AnimateActualIdleFrames :1939-1942 -> AnimateGettingUpFromElbowSlam :2051-2065. 18 + flexSpecialFrame on row 15; flexSpecialFrame >= 4 exits the state at :2054 instead of drawing."
+    },
+    {
+      "name": "airdash_side",
+      "requires": {
+        "canAirdash": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": false,
+        "wallDrag": false,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 1.0,
+        "fire": false,
+        "ducking": false,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false,
+        "canAirdash": true,
+        "airDashDelay": 0.0,
+        "airdashDirection": "Right"
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 8,
+        "cols": [
+          0,
+          2
+        ]
+      },
+      "note": "ChangeFrame :4193-4196 needs canAirdash && airdashTime > 0 -> AnimateAirdash :3090; the Left/Right case with airDashDelay <= 0 is :3107-3111, frame % 3 on row 8."
+    },
+    {
+      "name": "airdash_side_delayed",
+      "requires": {
+        "canAirdash": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": false,
+        "wallDrag": false,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 1.0,
+        "fire": false,
+        "ducking": false,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false,
+        "canAirdash": true,
+        "airDashDelay": 1.0,
+        "airdashDirection": "Right"
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 8,
+        "cols": [
+          13,
+          15
+        ]
+      },
+      "note": "AnimateAirdash :3102-3106, the Left/Right case while airDashDelay > 0: 13 + frame % 3 on row 8."
+    },
+    {
+      "name": "airdash_up",
+      "requires": {
+        "canAirdash": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": false,
+        "wallDrag": false,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 1.0,
+        "fire": false,
+        "ducking": false,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false,
+        "canAirdash": true,
+        "airDashDelay": 0.0,
+        "airdashDirection": "Up"
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 8,
+        "cols": [
+          10,
+          12
+        ]
+      },
+      "note": "AnimateAirdash :3093-3097, the Up case: 10 + frame % 3 on row 8. The gun is deactivated at :3094."
+    },
+    {
+      "name": "airdash_down",
+      "requires": {
+        "canAirdash": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": false,
+        "wallDrag": false,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 1.0,
+        "fire": false,
+        "ducking": false,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false,
+        "canAirdash": true,
+        "airDashDelay": 0.0,
+        "airdashDirection": "Down",
+        "yI": -100.0
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 8,
+        "cols": [
+          3,
+          5
+        ]
+      },
+      "note": "AnimateAirdash :3098-3100 -> AnimateAirdashDown :3119-3130, which needs yI <= -50 or it falls through to AnimateJumping at :3123. 3 + frame % 3 on row 8."
+    },
+    {
+      "name": "chimney_flip",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": true,
+        "wallClimbing": false,
+        "wallDrag": false,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 0.0,
+        "fire": false,
+        "ducking": false,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false
+      },
+      "step": {
+        "field": "chimneyFlipFrames",
+        "values": [
+          12,
+          11,
+          10,
+          9,
+          8,
+          7,
+          6,
+          5,
+          4,
+          3,
+          2,
+          1
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 7,
+        "cols": [
+          11,
+          22
+        ]
+      },
+      "note": "ChangeFrame :4158-4161 (Jumping && chimneyFlip) -> AnimateChimneyFlip :3255-3266, which addresses 22 - chimneyFlipFrames on row 7. ChangeFrame :4045-4048 decrements chimneyFlipFrames before dispatch, so the stepped values run 12..1 to address columns 11..22. The last step also clears chimneyFlip at :3260."
+    },
+    {
+      "name": "rolling",
+      "requires": {
+        "doRollOnLand": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "None",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false
+      },
+      "step": {
+        "field": "rollingFrames",
+        "values": [
+          13,
+          12,
+          11,
+          10,
+          9,
+          8,
+          7,
+          6,
+          5,
+          4,
+          3,
+          2
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 2,
+        "cols": [
+          20,
+          31
+        ]
+      },
+      "note": "AnimateIdle :3439-3442 (rollingFrames > 0) -> AnimateRolling :3363-3372, which addresses 19 + (13 - rollingFrames) on row 2. ChangeFrame :4049-4052 decrements rollingFrames before dispatch, so the stepped values run 13..2 to address columns 20..31. AnimateRunning :3566-3569 reaches the same method from actionState Running. The animation is only authored for bros that roll on landing, hence the requires; the dispatch itself does not read doRollOnLand."
+    },
+    {
+      "name": "insemination",
+      "lethal": true,
+      "lethalReason": "reached through AnimateDeath, so it needs actionState Dead and health 0 and kills the player the same way death_grounded does",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 0,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Dead"
+      },
+      "step": {
+        "field": "inseminatedCounter",
+        "values": [
+          0.4275,
+          0.3825,
+          0.3375,
+          0.2925,
+          0.2475,
+          0.2025,
+          0.1575,
+          0.1125
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 8,
+        "cols": [
+          11,
+          18
+        ]
+      },
+      "note": "ChangeFrame :4202-4205 -> AnimateDeath :4637; :4640-4643 needs IsInseminated() (inseminatedCounter > 0, :1741-1744) and CalculateInseminationFrame() >= 0 (:1747-1750, Clamp((int)((0.45 - inseminatedCounter) * 22.222223), -1, 7)) -> AnimateInseminationFrames :4670-4674, 11 + that frame on row 8. The stepped counter values land mid-bucket for frames 0..7. No inseminatorUnit reference is needed: ChangeFrame :4034-4043 only touches it when it is non-null."
+    },
+    {
+      "name": "ladder_transition_out",
+      "requires": {
+        "useLadderClimbingTransition": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "ClimbingLadder",
+        "up": false,
+        "down": false,
+        "left": false,
+        "right": false
+      },
+      "step": {
+        "field": "ladderClimbingTransitionFrames",
+        "values": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 7,
+        "cols": [
+          1,
+          5
+        ]
+      },
+      "note": "ChangeFrame :4085-4119 (ClimbingLadder, with throwingHeldObject/doingMelee/usingSpecial* false) -> AnimateClimbingLadder :4240. Both the no-ladder arm :4243-4246 and the no-input arm :4262-4265 reach AnimateClimbingLadderTransition(false) :4213-4236 when useLadderClimbingTransition && ladderClimbingTransitionFrames > 0, so it is the one ladder cell group reachable away from a ladder. Clamp(ladderClimbingTransitionFrames, 0, 5) on row 7; column 0 is unreachable because the gate is > 0."
+    },
+    {
+      "name": "hanging_moving",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Hanging",
+        "chimneyFlip": false,
+        "right": true,
+        "left": false,
+        "wasHangingMoving": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 4,
+        "cols": [
+          11,
+          22
+        ]
+      },
+      "note": "ChangeFrame :4120-4123 -> AnimateHanging :3055; the left/right arm :3063-3072 is 11 + frame % 12 on row 4. The gun is deactivated at :3065 and the sprite offset is (0, -2) from :3062."
+    },
+    {
+      "name": "hanging_one_armed",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Hanging",
+        "chimneyFlip": false,
+        "right": false,
+        "left": false,
+        "wasHangingMoving": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 4,
+        "cols": [
+          23,
+          28
+        ]
+      },
+      "note": "AnimateHanging :3073-3084, the no-input arm: 23 + Clamp(frame, 0, 5) on row 4, hangingOneArmed set at :3075 (ChangeFrame clears it at :4054). wasHangingMoving must be false or :3076-3080 zeroes frame after the harness has set it."
+    },
+    {
+      "name": "highfive_hold",
+      "requires": {
+        "useNewHighFivingFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": true,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "None",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false,
+        "highfiveHoldTime": -1000.0,
+        "highFiveBoost": false,
+        "highFiveNoBoost": true,
+        "successfulHighFive": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 1,
+        "cols": [
+          17,
+          19
+        ]
+      },
+      "note": "AnimateIdle :3413-3416 -> AnimateHighFiveHold :2894-2915: 16 + 1 + Clamp(frame, 0, 2) on row 1. highfiveHoldTime is pinned far negative so :2903-2907 cannot call high5Bubble.RestartBubble, and highFiveNoBoost suppresses the CheckHighFive at :2911-2913."
+    },
+    {
+      "name": "highfive_hold_legacy",
+      "requires": {
+        "useNewHighFivingFrames": false
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": true,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "None",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false,
+        "highfiveHoldTime": -1000.0,
+        "highFiveBoost": false,
+        "highFiveNoBoost": true,
+        "successfulHighFive": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 1,
+        "cols": [
+          16,
+          18
+        ]
+      },
+      "note": "AnimateHighFiveHold :2900, the !useNewHighFivingFrames arm: 16 + Clamp(frame, 0, 2) on row 1."
+    },
+    {
+      "name": "highfive_release",
+      "requires": {
+        "useNewHighFivingFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": false,
+        "releasingHighFive": true,
+        "rollingFrames": 0,
+        "currentGesture": "None",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false,
+        "highfiveHoldTime": -1000.0,
+        "highFiveBoost": false,
+        "highFiveNoBoost": true,
+        "successfulHighFive": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          2,
+          3,
+          4,
+          5
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 1,
+        "cols": [
+          19,
+          22
+        ]
+      },
+      "note": "AnimateIdle :3417-3420 -> AnimateHighFiveRelease :2918-2949: 16 + 1 + Clamp(frame, 2, 5) on row 1. successfulHighFive false keeps :2933-2936 from spawning effects and highFiveNoBoost blocks :2937-2940. The terminating branch :2941 is frame >= 6 here, so no step self-cancels."
+    },
+    {
+      "name": "highfive_release_legacy",
+      "requires": {
+        "useNewHighFivingFrames": false
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": false,
+        "releasingHighFive": true,
+        "rollingFrames": 0,
+        "currentGesture": "None",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false,
+        "highfiveHoldTime": -1000.0,
+        "highFiveBoost": false,
+        "highFiveNoBoost": true,
+        "successfulHighFive": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          2,
+          3,
+          4
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 1,
+        "cols": [
+          18,
+          20
+        ]
+      },
+      "knownMismatch": "frame 4 writes column 20 and then clears releasingHighFive and re-enters ChangeFrame (:2946), so the captured cell for the last step is the post-cancel idle pose rather than column 20",
+      "note": "AnimateHighFiveRelease :2918-2949, the legacy arm: 16 + Clamp(frame, 2, 4) on row 1. Known limitation: the terminating branch :2941 is frame >= 4 for legacy, so the last step writes column 20 and then clears releasingHighFive and re-enters ChangeFrame at :2946, which overwrites the sprite with the idle pose before the harness reads it."
+    },
+    {
+      "name": "throwing_new",
+      "requires": {
+        "useNewThrowingFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": true,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "None",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 5,
+        "cols": [
+          17,
+          24
+        ]
+      },
+      "knownMismatch": "frame 7 writes column 24 and then clears throwingHeldObject and re-enters ChangeFrame (:2700-2701), so the captured cell for the last step is the post-cancel pose rather than column 24",
+      "note": "AnimateIdle :3402-3405 -> AnimateThrowingHeldObject :2651; the useNewThrowingFrames arm :2678-2704 is 17 + Clamp(frame, 0, 7) at y = spritePixelHeight * 5. SetHeldObjectPos and ReleaseHeldObject are null-safe (:2760-2774, :2707). Known limitation: frame 7 clears throwingHeldObject and re-enters ChangeFrame at :2700-2701, so that step's captured cell is the post-cancel pose."
+    },
+    {
+      "name": "throwing_legacy",
+      "requires": {
+        "useNewThrowingFrames": false
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": true,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "None",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 1,
+        "cols": [
+          17,
+          22
+        ]
+      },
+      "note": "AnimateThrowingHeldObject :2656-2677, the legacy arm: 17 + Clamp(frame, 0, 5) on row 1. Frame 3 clears throwingHeldObject at :2670-2672; the harness re-applies the setup before every step, so frames 4 and 5 still dispatch. No recursive ChangeFrame here, so every column is captured."
+    },
+    {
+      "name": "special_new",
+      "requires": {
+        "useNewThrowingFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": true,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "None",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 5,
+        "cols": [
+          17,
+          24
+        ]
+      },
+      "knownMismatch": "frame 7 writes column 24 and then clears usingSpecial and re-enters ChangeFrame (:2848-2853), so the captured cell for the last step is the post-cancel pose rather than column 24",
+      "note": "AnimateIdle :3421-3424 -> AnimateSpecial :2816; the useNewThrowingFrames arm :2837-2855 is 17 + Clamp(frame, 0, 7) at y = spritePixelHeight * 5. Frame 4 would fire the bro's real special via UseSpecial (:2845); the harness patches UseSpecial out for the sweep. Known limitation: frame 7 clears usingSpecial and re-enters ChangeFrame at :2848-2853, so that step's captured cell is the post-cancel pose."
+    },
+    {
+      "name": "special_legacy",
+      "requires": {
+        "useNewThrowingFrames": false
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": true,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "None",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 1,
+        "cols": [
+          16,
+          20
+        ]
+      },
+      "note": "AnimateSpecial :2818-2836, the legacy arm: 16 + Clamp(frame, 0, 4) on row 1. Frame 2 would fire UseSpecial (:2827); the harness patches it out for the sweep. Frame 4 clears usingSpecial at :2830-2835 but does not re-enter ChangeFrame, so every column is captured."
+    },
+    {
+      "name": "pocketed_special",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": true,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "usingPockettedSpecialType": "Standard",
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "None",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 12,
+        "cols": [
+          16,
+          26
+        ]
+      },
+      "knownMismatch": "frame 10 writes column 26 and then clears usingPockettedSpecial and re-enters ChangeFrame (:2869-2874), so the captured cell for the last step is the post-cancel pose rather than column 26",
+      "note": "AnimateIdle :3425-3428 -> BroBase.AnimatePockettedSpecial (BroBase.cs:1265-1289), which forwards to TestVanDammeAnim.AnimatePockettedSpecial :2858-2876 for every type except Airstrike/MechDrop/AlienPheromones: 16 + Clamp(frame, 0, 10) at y = spritePixelHeight * 12. Frame 4 would fire UsePockettedSpecial, which the harness patches out for the sweep. Known limitation: frame 10 clears the flag and re-enters ChangeFrame at :2869-2874, so that step's captured cell is the post-cancel pose."
+    },
+    {
+      "name": "pocketed_special_airstrike",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": true,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "usingPockettedSpecialType": "Airstrike",
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "None",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 5,
+        "cols": [
+          17,
+          24
+        ]
+      },
+      "knownMismatch": "frame 7 writes column 24 and then clears usingPockettedSpecial and re-enters ChangeFrame (BroBase.cs:1283-1288), so the captured cell for the last step is the post-cancel pose rather than column 24",
+      "note": "BroBase.AnimatePockettedSpecial (BroBase.cs:1272-1288) handles Airstrike/MechDrop/AlienPheromones itself: 17 + Clamp(frame, 0, 7) at y = spritePixelHeight * 5. Frame 4 would fire UsePockettedSpecial, which the harness patches out for the sweep. Known limitation: frame 7 clears the flag and re-enters ChangeFrame at BroBase.cs:1283-1288."
+    },
+    {
+      "name": "melee_knife_standing",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": true,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "canDoIndependentMeleeAnimation": false,
+        "meleeFollowUp": false,
+        "meleeHasHit": true,
+        "highFive": false,
+        "standingMelee": true,
+        "jumpingMelee": false,
+        "dashingMelee": false,
+        "rollingFrames": 0,
+        "actionState": "Idle",
+        "ducking": false,
+        "currentMeleeType": "Knife"
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 1,
+        "cols": [
+          25,
+          31
+        ]
+      },
+      "knownMismatch": "frame 6 writes column 31 and then CancelMelee clears doingMelee and re-enters ChangeFrame (TestVanDammeAnim.cs:6686-6713, from BroBase.cs:1163-1167), so the captured cell for the last step is the post-cancel pose rather than column 31",
+      "note": "AnimateIdle :3407-3411 (doingMelee && !canDoIndependentMeleeAnimation) -> BroBase.AnimateMelee (BroBase.cs:685-714) -> AnimateKnifeMelee (:1127-1153): 25 + Clamp(frame, 0, 6) on row 1 while standingMelee. meleeFollowUp false keeps AnimateMeleeCommon :755-761 from rewinding frame, and highFive false blocks the mook-throw at :764-769. Frame 3 calls PerformKnifeMeleeAttack (:1146-1149) unconditionally; the harness patches it out for the sweep, so the frames still walk but nothing is hit."
+    },
+    {
+      "name": "melee_knife_jumping",
+      "requires": {
+        "useNewKnifingFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": true,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "canDoIndependentMeleeAnimation": false,
+        "meleeFollowUp": false,
+        "meleeHasHit": true,
+        "highFive": false,
+        "standingMelee": false,
+        "jumpingMelee": true,
+        "dashingMelee": false,
+        "rollingFrames": 0,
+        "actionState": "Jumping",
+        "ducking": false,
+        "currentMeleeType": "Knife"
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 6,
+        "cols": [
+          17,
+          23
+        ]
+      },
+      "knownMismatch": "frame 6 writes column 23 and then CancelMelee clears doingMelee and re-enters ChangeFrame (TestVanDammeAnim.cs:6686-6713, from BroBase.cs:1163-1167), so the captured cell for the last step is the post-cancel pose rather than column 23",
+      "note": "ChangeFrame :4124-4127 takes the melee arm before the Jumping arm -> BroBase.AnimateMelee -> AnimateKnifeMelee (BroBase.cs:1132-1139): 17 + Clamp(frame, 0, 6) on row 6 while !standingMelee && jumpingMelee. SetMeleeType (TestVanDammeAnim.cs:8981-8990) forces standingMelee for bros without useNewKnifingFrames, which is why these cells are only authored for bros that set the flag."
+    },
+    {
+      "name": "melee_punch",
+      "requires": {
+        "meleeType": "Punch"
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": true,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "canDoIndependentMeleeAnimation": false,
+        "meleeFollowUp": false,
+        "meleeHasHit": true,
+        "highFive": false,
+        "standingMelee": false,
+        "jumpingMelee": false,
+        "dashingMelee": false,
+        "rollingFrames": 0,
+        "actionState": "Idle",
+        "ducking": false,
+        "currentMeleeType": "Punch"
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 9,
+        "cols": [
+          25,
+          31
+        ]
+      },
+      "note": "BroBase.AnimateMelee (BroBase.cs:692-694) routes Punch and JetpackPunch to AnimatePunch (:814-843): 25 + Clamp(frame, 0, 8) on row 9, of which the sheet holds 25-31. PerformPunchAttack at :829-832 is gated on !meleeHasHit, which the setup pins true, so no punch lands even before the harness's suppression patch. Frame 7 would clear the melee at :838-842, which is why the steps stop at 6."
+    },
+    {
+      "name": "gesture_salute",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "Salute",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false,
+        "blockMovementForGesture": true,
+        "buttonGesture": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 9,
+        "cols": [
+          0,
+          4
+        ]
+      },
+      "note": "AnimateIdle :3443-3446 (currentGesture != None) -> AnimateGesture :4707-4787, overridden by BroBase.AnimateGesture (BroBase.cs:537-551) which calls the base first. The cell is Min(frame, span - 1) * 32 at (9 + gestureIndex) * 32 (:4786), giving row 9 for Salute. blockMovementForGesture true keeps :4776-4779 from clearing the gesture."
+    },
+    {
+      "name": "gesture_wave",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "Wave",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false,
+        "blockMovementForGesture": true,
+        "buttonGesture": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 10,
+        "cols": [
+          0,
+          10
+        ]
+      },
+      "note": "AnimateIdle :3443-3446 (currentGesture != None) -> AnimateGesture :4707-4787, overridden by BroBase.AnimateGesture (BroBase.cs:537-551) which calls the base first. The cell is Min(frame, span - 1) * 32 at (9 + gestureIndex) * 32 (:4786), giving row 10 for Wave. blockMovementForGesture true keeps :4776-4779 from clearing the gesture. This gesture loops by rewinding frame at :4772-4775 once frame exceeds its span; the stepped values stay inside the span so the rewind never fires."
+    },
+    {
+      "name": "gesture_point",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "Point",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false,
+        "blockMovementForGesture": true,
+        "buttonGesture": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 11,
+        "cols": [
+          0,
+          5
+        ]
+      },
+      "note": "AnimateIdle :3443-3446 (currentGesture != None) -> AnimateGesture :4707-4787, overridden by BroBase.AnimateGesture (BroBase.cs:537-551) which calls the base first. The cell is Min(frame, span - 1) * 32 at (9 + gestureIndex) * 32 (:4786), giving row 11 for Point. blockMovementForGesture true keeps :4776-4779 from clearing the gesture."
+    },
+    {
+      "name": "gesture_flex",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "Flex",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false,
+        "blockMovementForGesture": true,
+        "buttonGesture": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 12,
+        "cols": [
+          0,
+          23
+        ]
+      },
+      "note": "AnimateIdle :3443-3446 (currentGesture != None) -> AnimateGesture :4707-4787, overridden by BroBase.AnimateGesture (BroBase.cs:537-551) which calls the base first. The cell is Min(frame, span - 1) * 32 at (9 + gestureIndex) * 32 (:4786), giving row 12 for Flex. blockMovementForGesture true keeps :4776-4779 from clearing the gesture. Side effects at frames 8 and 18: PlayFlexSound, TriggerFlexEvent and DisConnectFaceHugger (:4752-4760), plus BroBase.AnimateGesture's flex-power effects (BroBase.cs:537-551)."
+    },
+    {
+      "name": "gesture_thrust",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "Thrust",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false,
+        "blockMovementForGesture": true,
+        "buttonGesture": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 13,
+        "cols": [
+          0,
+          5
+        ]
+      },
+      "note": "AnimateIdle :3443-3446 (currentGesture != None) -> AnimateGesture :4707-4787, overridden by BroBase.AnimateGesture (BroBase.cs:537-551) which calls the base first. The cell is Min(frame, span - 1) * 32 at (9 + gestureIndex) * 32 (:4786), giving row 13 for Thrust. blockMovementForGesture true keeps :4776-4779 from clearing the gesture. This gesture loops by rewinding frame at :4772-4775 once frame exceeds its span; the stepped values stay inside the span so the rewind never fires."
+    },
+    {
+      "name": "gesture_kneedrop",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "KneeDrop",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false,
+        "blockMovementForGesture": true,
+        "buttonGesture": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 14,
+        "cols": [
+          0,
+          11
+        ]
+      },
+      "note": "AnimateIdle :3443-3446 (currentGesture != None) -> AnimateGesture :4707-4787, overridden by BroBase.AnimateGesture (BroBase.cs:537-551) which calls the base first. The cell is Min(frame, span - 1) * 32 at (9 + gestureIndex) * 32 (:4786), giving row 14 for KneeDrop. blockMovementForGesture true keeps :4776-4779 from clearing the gesture."
+    },
+    {
+      "name": "gesture_shhh",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "Shhh",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false,
+        "blockMovementForGesture": true,
+        "buttonGesture": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 16,
+        "cols": [
+          0,
+          12
+        ]
+      },
+      "note": "AnimateIdle :3443-3446 (currentGesture != None) -> AnimateGesture :4707-4787, overridden by BroBase.AnimateGesture (BroBase.cs:537-551) which calls the base first. The cell is Min(frame, span - 1) * 32 at (9 + gestureIndex) * 32 (:4786), giving row 16 for Shhh. blockMovementForGesture true keeps :4776-4779 from clearing the gesture."
+    },
+    {
+      "name": "dancing",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "None",
+        "stunTime": 1.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false,
+        "dancingTime": 1.0
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 14,
+        "cols": [
+          15,
+          26
+        ]
+      },
+      "note": "AnimateIdle :3447-3450 needs health > 0 && stunTime > 0 && dancingTime > 0 (and currentGesture None) -> AnimateDancingFrames :4798-4803: dancingFramesSheetPosition.x + frame % dancingFrames on row dancingFramesSheetPosition.y. The base defaults are (15, 14) and 12 frames (:11106, :11110), so a bro that overrides them will address a different block than the expect below."
+    },
+    {
+      "name": "death_grounded",
+      "lethal": true,
+      "lethalReason": "actionState Dead with health 0 is a real death: the game's own Update still runs while the sweep holds timeScale at 0, so the player dies and respawns mid-sweep",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 0,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Dead",
+        "groundHeight": 99999.0,
+        "inseminatedCounter": 0.0
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 1,
+        "cols": [
+          5,
+          5
+        ]
+      },
+      "note": "ChangeFrame :4202-4205 -> AnimateDeath :4637; with inseminatedCounter 0 and Y <= groundHeight + 0.2 it takes :4648-4651 -> AnimateActualDeath :4655-4660, fixed column 5 on row 1. groundHeight is pinned above any world position so the grounded arm is chosen regardless of where the bro stands."
+    },
+    {
+      "name": "death_falling",
+      "lethal": true,
+      "lethalReason": "actionState Dead with health 0 is a real death: the game's own Update still runs while the sweep holds timeScale at 0, so the player dies and respawns mid-sweep",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 0,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Dead",
+        "groundHeight": -99999.0,
+        "inseminatedCounter": 0.0
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 1,
+        "cols": [
+          4,
+          4
+        ]
+      },
+      "note": "AnimateDeath :4644-4647 needs Y > groundHeight + 0.2 and impaledByTransform null -> AnimateFallingDeath :4663-4667, fixed column 4 on row 1. groundHeight is pinned below any world position to force this arm."
+    },
+    {
+      "name": "wall_drag_hand_a",
+      "requires": {
+        "useNewKnifeClimbingFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": false,
+        "wallDrag": true,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 0.0,
+        "fire": false,
+        "ducking": false,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false,
+        "knifeHand": 0,
+        "yI": 0.0
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 3,
+        "cols": [
+          12,
+          16
+        ]
+      },
+      "note": "ChangeFrame :4167-4171 (WallDrag, the property over the wallDrag field at :564-570) -> AnimateWallDrag :4339; the useNewKnifeClimbingFrames arm with yI <= 100 and knifeHand even is :4371-4379, 12 + Clamp(frame, 0, 4) on row 3."
+    },
+    {
+      "name": "wall_drag_hand_b",
+      "requires": {
+        "useNewKnifeClimbingFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": false,
+        "wallDrag": true,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 0.0,
+        "fire": false,
+        "ducking": false,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false,
+        "knifeHand": 1,
+        "yI": 0.0
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 3,
+        "cols": [
+          22,
+          26
+        ]
+      },
+      "note": "AnimateWallDrag :4380-4388, the odd-knifeHand mirror: 22 + Clamp(frame, 0, 4) on row 3."
+    },
+    {
+      "name": "wall_drag_rising_hand_a",
+      "requires": {
+        "useNewKnifeClimbingFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": false,
+        "wallDrag": true,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 0.0,
+        "fire": false,
+        "ducking": false,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false,
+        "knifeHand": 0,
+        "yI": 150.0
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 3,
+        "cols": [
+          12,
+          13
+        ]
+      },
+      "note": "AnimateWallDrag :4345-4354, the yI > 100 arm with knifeHand even: 12 + Clamp(frame, 0, 1) on row 3."
+    },
+    {
+      "name": "wall_drag_rising_hand_b",
+      "requires": {
+        "useNewKnifeClimbingFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": false,
+        "wallDrag": true,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 0.0,
+        "fire": false,
+        "ducking": false,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false,
+        "knifeHand": 1,
+        "yI": 150.0
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 3,
+        "cols": [
+          22,
+          23
+        ]
+      },
+      "note": "AnimateWallDrag :4355-4363, the yI > 100 arm with knifeHand odd: 22 + Clamp(frame, 0, 1) on row 3."
+    },
+    {
+      "name": "wall_drag_legacy_hand_a",
+      "requires": {
+        "useNewKnifeClimbingFrames": false
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": false,
+        "wallDrag": true,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 0.0,
+        "fire": false,
+        "ducking": false,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false,
+        "knifeHand": 0,
+        "yI": 0.0
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 1,
+        "cols": [
+          11,
+          13
+        ]
+      },
+      "note": "AnimateWallDrag :4391-4399, the !useNewKnifeClimbingFrames arm with knifeHand even: 11 + Clamp(frame, 0, 2) on row 1."
+    },
+    {
+      "name": "wall_drag_legacy_hand_b",
+      "requires": {
+        "useNewKnifeClimbingFrames": false
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": false,
+        "wallDrag": true,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 0.0,
+        "fire": false,
+        "ducking": false,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false,
+        "knifeHand": 1,
+        "yI": 0.0
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 1,
+        "cols": [
+          14,
+          16
+        ]
+      },
+      "note": "AnimateWallDrag :4400-4408, the !useNewKnifeClimbingFrames arm with knifeHand odd: 14 + Clamp(frame, 0, 2) on row 1."
+    },
+    {
+      "name": "wall_climb_hand_a",
+      "requires": {
+        "useNewKnifeClimbingFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": true,
+        "wallDrag": false,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 0.0,
+        "fire": false,
+        "ducking": false,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false,
+        "knifeHand": 0,
+        "yI": 0.0
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 3,
+        "cols": [
+          12,
+          16
+        ]
+      },
+      "note": "ChangeFrame :4162-4166 (wallClimbing && !fire) -> AnimateWallClimb :4492; the useNewKnifeClimbingFrames arm with frame < 8 and knifeHand even is :4506-4511, 12 + Clamp(frame, 0, 4) on row 3. yI must be <= 16 or :4529-4533 decrements frame at step 1."
+    },
+    {
+      "name": "wall_climb_hand_b",
+      "requires": {
+        "useNewKnifeClimbingFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": true,
+        "wallDrag": false,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 0.0,
+        "fire": false,
+        "ducking": false,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false,
+        "knifeHand": 1,
+        "yI": 0.0
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 3,
+        "cols": [
+          22,
+          26
+        ]
+      },
+      "note": "AnimateWallClimb :4512-4516, the odd-knifeHand mirror: 22 + Clamp(frame, 0, 4) on row 3."
+    },
+    {
+      "name": "wall_climb_legacy_hand_a",
+      "requires": {
+        "useNewKnifeClimbingFrames": false
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": true,
+        "wallDrag": false,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 0.0,
+        "fire": false,
+        "ducking": false,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false,
+        "knifeHand": 0,
+        "yI": 0.0
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 1,
+        "cols": [
+          10,
+          13
+        ]
+      },
+      "note": "AnimateWallClimb :4555-4576, the !useNewKnifeClimbingFrames arm with knifeHand even: 10 + Clamp(frame, 0, 3) on row 1. Frame 1 sets yI to 190 at :4560; the harness re-applies the setup before every step so the pinned yI is restored."
+    },
+    {
+      "name": "wall_climb_legacy_hand_b",
+      "requires": {
+        "useNewKnifeClimbingFrames": false
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": true,
+        "wallDrag": false,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 0.0,
+        "fire": false,
+        "ducking": false,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false,
+        "knifeHand": 1,
+        "yI": 0.0
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 1,
+        "cols": [
+          13,
+          16
+        ]
+      },
+      "note": "AnimateWallClimb :4577-4598, the !useNewKnifeClimbingFrames arm with knifeHand odd: 13 + Clamp(frame, 0, 3) on row 1."
+    },
+    {
+      "name": "ledge_grapple",
+      "unsupported": "unreachable from ChangeFrame",
+      "note": "ChangeFrame's Jumping arm tests ledgeGrapple at :4154-4157 and routes it to AnimateRunning, which is before the only two call sites of AnimateJumping (:4199 and AnimateAirdashDown :3123). AnimateJumping's own ledge-grapple arm :3165-3168 and AnimateLedgeGrapple :3202-3214 (row 3, columns 12-25, driven by ledgeOffsetY) therefore cannot be reached by pinning fields and calling ChangeFrame."
+    },
+    {
+      "name": "ladder_climb_up",
+      "unsupported": "needs a ladder collider in the level",
+      "note": "AnimateClimbingLadder up the ladder, row 6 columns 0-7 (:4326-4335) is only reached after IsNearbyLadder(:4241) returns true, and IsNearbyLadder (:5907-5911) is a Physics.OverlapSphere against ladderLayer. With no ladder within 4 units the method falls through to AnimateActualIdleFrames or AnimateActualNewRunningFrames (:4243-4251), so no pinned field can reach these cells."
+    },
+    {
+      "name": "ladder_climb_down",
+      "unsupported": "needs a ladder collider in the level",
+      "note": "AnimateClimbingLadder down the ladder, row 6 columns 8-10 (:4305-4325) is only reached after IsNearbyLadder(:4241) returns true, and IsNearbyLadder (:5907-5911) is a Physics.OverlapSphere against ladderLayer. With no ladder within 4 units the method falls through to AnimateActualIdleFrames or AnimateActualNewRunningFrames (:4243-4251), so no pinned field can reach these cells."
+    },
+    {
+      "name": "ladder_one_armed_hang",
+      "unsupported": "needs a ladder collider in the level",
+      "note": "AnimateClimbingLadder one-armed hang, row 6 columns 11-13 (:4258-4275) is only reached after IsNearbyLadder(:4241) returns true, and IsNearbyLadder (:5907-5911) is a Physics.OverlapSphere against ladderLayer. With no ladder within 4 units the method falls through to AnimateActualIdleFrames or AnimateActualNewRunningFrames (:4243-4251), so no pinned field can reach these cells."
+    },
+    {
+      "name": "ladder_climb_legacy",
+      "unsupported": "needs a ladder collider in the level",
+      "note": "AnimateClimbingLadder legacy climb, row 1 columns 0-3 (:4278-4304) is only reached after IsNearbyLadder(:4241) returns true, and IsNearbyLadder (:5907-5911) is a Physics.OverlapSphere against ladderLayer. With no ladder within 4 units the method falls through to AnimateActualIdleFrames or AnimateActualNewRunningFrames (:4243-4251), so no pinned field can reach these cells."
+    },
+    {
+      "name": "zipline_moving",
+      "unsupported": "needs a live ZipLine reference",
+      "note": "AnimateJumping :3145-3148 dispatches on attachedToZipline != null -> AnimateZipline :3226; the moving arm :3228-3233 additionally reads attachedToZipline.Direction and IsHorizontalZipline."
+    },
+    {
+      "name": "zipline_firing",
+      "unsupported": "needs a live ZipLine reference",
+      "note": "AnimateZipline :3234-3251 reads attachedToZipline.isGuts; the whole method is gated on attachedToZipline != null at AnimateJumping :3145."
+    },
+    {
+      "name": "impaled",
+      "unsupported": "needs a live impaledByTransform reference",
+      "note": "ChangeFrame :4067-4070 requires impaledByTransform != null && useImpaledFrames before AnimateImpaled :3375-3384 (row 2 columns 10-12) can run."
+    },
+    {
+      "name": "impaled_dead",
+      "unsupported": "needs a live impaledByTransform reference",
+      "note": "AnimateImpaled :3385-3388 (row 2 columns 8-9) is the actionState Dead arm of the same method, behind the same impaledByTransform gate at ChangeFrame :4067."
+    },
+    {
+      "name": "on_back_of",
+      "unsupported": "needs a live onBackOf reference",
+      "note": "ChangeFrame :4059-4062 dispatches to AnimateOnBackOffUnit :3275-3278 (row 2 column 12) only while onBackOf != null."
+    },
+    {
+      "name": "strung_up",
+      "unsupported": "needs a live strungUpBy reference",
+      "note": "ChangeFrame :4063-4066 dispatches to AnimateStrungUpFrames :3269-3272 (row 1 column 15) only while strungUpBy != null; AnimateJumping :3141-3144 has the same gate."
+    },
+    {
+      "name": "wall_anticipation_stab",
+      "unsupported": "keyed to a live world position",
+      "note": "AnimateWallAnticipation :4455-4468 (row 3 columns 16-21 and 26-31) picks its column from Y + knifeClimbStabHeight - lastKnifeClimbStabY (:4453), a delta against the position where the knife was last planted. A static field value cannot express it, and the dispatch at ChangeFrame :4183-4186 also needs left/right plus canTouchLeftWalls/canTouchRightWalls, which are set by wall contact."
+    },
+    {
+      "name": "wall_climb_stab",
+      "unsupported": "keyed to a live world position",
+      "note": "AnimateWallClimb :4536-4547 (row 3 columns 16-21 and 26-31) is the frame >= 8 arm and picks its column from Y + knifeClimbStabHeight - lastKnifeClimbStabY (:4535), the same live delta."
+    },
+    {
+      "name": "frozen",
+      "unsupported": "no cells on the bro sheet",
+      "note": "ChangeFrame :4025-4029 dispatches to AnimateFrozen while frozenTime > 0, but BroBase overrides it with an empty body (BroBase.cs:555-557), so a bro never addresses the TestVanDammeAnim frozen cells."
+    }
+  ]
+}

@@ -7,10 +7,11 @@ This directory contains test scripts for automating Unity Inspector commands. Te
 ```
 scripts/
 ├── README.md           # This file
-├── examples/           # Example scripts (not listed in list_test_scripts)
+├── examples/           # Example scripts, listed by list_test_scripts too
 │   ├── example-movement-test.json
 │   ├── example-combat-test.json
 │   └── example-level-sequence.json
+├── csharp/             # C# script library (see csharp/README.md)
 └── your-scripts.json   # Your custom test scripts go here
 ```
 

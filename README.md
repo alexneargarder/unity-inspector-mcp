@@ -143,7 +143,7 @@ None of this applies off Linux, where the server serves the one game it finds.
 
 ## Tools
 
-There are 34, 33 from the server and `restart_server` from the wrapper.
+There are 35, 34 from the server and `restart_server` from the wrapper.
 
 | Tool | Description |
 |---|---|
@@ -175,6 +175,7 @@ There are 34, 33 from the server and `restart_server` from the wrapper.
 | `unload_script` | Unload a running script, unpatching it and destroying its GameObjects. |
 | `list_test_scripts` | List the JSON test scripts. |
 | `run_test_script` | Run a JSON command sequence and report each step, checking any per-step `expect` so a step can be required to fail. |
+| `capture_animations` | Sweep a bro's animation states into PNG frame strips with the game clock held at zero, and report which sprite-sheet cells each state addressed against what the state list expected. |
 | `read_log` | Read the last N lines of the mod manager log, with an optional filter. |
 | `watch_log` | Return only the log lines written since the previous call. |
 | `launch_game` | Launch Broforce and wait until it answers, with `restart`, `vanilla` and `launchArgs` options. If it never answers, it reports which failure mode it hit, same as `wait_for_game`. |
@@ -195,6 +196,8 @@ Once a script is loaded, the types it defines are in scope for `execute_code`, b
 ## Test scripts
 
 Test scripts are JSON files with a sequence of game commands and optional waits between the steps, for reproducing the same scenario identically every run. There are three examples in `scripts/examples/` and the format is covered in [scripts/README.md](scripts/README.md). Steps go straight to the game, so server side tools like `read_log` and `launch_game` get rejected before the run starts.
+
+The `capture_animations` tool drives its own in-game script end to end — level, bro swap, sweep, report — out of `lib/animation-capture/`, where relative `states` names resolve and `states/base-states.json` is the shape a state list follows.
 
 ## Troubleshooting
 

@@ -1,0 +1,195 @@
+{
+  "schema": 1,
+  "name": "Drunken Broster layer",
+  "source": "BroforceMods/Drunken Broster/Drunken Broster/DrunkenBroster.cs",
+  "note": "A per-bro layer, meant to be passed after the base list: capture_animations with states [\"base-states.json\", \"drunken-broster.json\"]. Entries replace the base entry of the same name outright, so special_new here is the whole entry, not a patch over the base one.",
+  "states": [
+    {
+      "name": "special_new",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "None",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false,
+        "attackStationary": false,
+        "attackUpwards": false,
+        "attackDownwards": false,
+        "attackForwards": false,
+        "usingSpecial": true,
+        "wasDrunk": false,
+        "usedSpecial": false,
+        "playedSpecialSound": false,
+        "canChimneyFlip": true,
+        "Invulnerable": false,
+        "invulnerableTime": 0.0,
+        "speed": 110.0
+      },
+      "step": {
+        "field": "usingSpecialFrame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 8,
+        "cols": [
+          0,
+          7
+        ]
+      },
+      "knownMismatch": "usingSpecialFrame 7 writes column 7 and then StopUsingSpecial clears usingSpecial and re-enters ChangeFrame (DrunkenBroster.cs:3089-3092, :3157-3170), so the captured cell for the last step is the post-cancel pose rather than column 7",
+      "note": "Replaces the base special_new entry: DrunkenBroster.AnimateSpecial (DrunkenBroster.cs:3061-3119) overrides TestVanDammeAnim.AnimateSpecial and is driven by its own usingSpecialFrame counter (:135, incremented from IncreaseFrame :1901-1912), not by frame, so the base entry's step field addresses nothing here. The !wasDrunk arm :3070-3092 is usingSpecialFrame * spritePixelWidth at spritePixelHeight * 8, so row 8 columns 0-7 on the main sheet. usingSpecialFrame 6 calls UseSpecial (:3085), whose override (:3143-3156) runs BecomeDrunk (:3174-3189) and swaps the renderer's material to the drunk sheet: with the harness's default suppression that call is patched out and every frame stays on the main sheet, so run with --allow-side-effects to see the swap as a change of texId from frame 6 onward. Invulnerable, invulnerableTime and speed are named in the setup only so the values :3064-3077 writes are snapshotted and put back."
+    },
+    {
+      "name": "special_new_sober",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "None",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false,
+        "attackStationary": false,
+        "attackUpwards": false,
+        "attackDownwards": false,
+        "attackForwards": false,
+        "usingSpecial": true,
+        "wasDrunk": true,
+        "usedSpecial": false,
+        "playedSpecialSound": false,
+        "canChimneyFlip": true,
+        "Invulnerable": false,
+        "invulnerableTime": 0.0,
+        "speed": 110.0
+      },
+      "step": {
+        "field": "usingSpecialFrame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 10,
+        "cols": [
+          0,
+          10
+        ]
+      },
+      "knownMismatch": "usingSpecialFrame 10 writes column 10 and then StopUsingSpecial clears usingSpecial and re-enters ChangeFrame (DrunkenBroster.cs:3115-3118, :3157-3170), so the captured cell for the last step is the post-cancel pose rather than column 10",
+      "note": "The wasDrunk arm of DrunkenBroster.AnimateSpecial (:3094-3118): usingSpecialFrame * spritePixelWidth at spritePixelHeight * 10, so row 10 columns 0-10. Which sheet those rows come off depends on suppression: the bro is on the drunk sheet when the state starts, and usingSpecialFrame 6 calls UseSpecial (:3111) -> BecomeSober (:3207-3222), which swaps the material back to the normal sheet, so with --allow-side-effects frames 0-5 carry the drunk sheet's texId and 6-10 the normal one. Under the default suppression every frame stays on whichever sheet the bro was already wearing. Getting there needs the bro actually drunk first: sweep special_new with --allow-side-effects, or trigger the special in game, before this entry."
+    },
+    {
+      "name": "running_holding_item",
+      "insert_before": "special_new",
+      "requires": {
+        "useNewFrames": true,
+        "holdingItem": false
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Running",
+        "releasingHighFive": false,
+        "pushingTime": 0.0,
+        "rollingTime": 0.0,
+        "rollingFrames": 0,
+        "ledgeGrapple": false,
+        "isInQuicksand": false,
+        "fire": false,
+        "ducking": false,
+        "dashing": false,
+        "attackStationary": false,
+        "attackUpwards": false,
+        "attackDownwards": false,
+        "attackForwards": false,
+        "gunFrame": 0,
+        "chosenItem": "Bottle"
+      },
+      "before": [
+        "SwitchToHeldItem"
+      ],
+      "after": [
+        "ClearHeldItem"
+      ],
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 2,
+        "cols": [
+          0,
+          7
+        ]
+      },
+      "expectGun": {
+        "row": 8,
+        "cols": [
+          0,
+          7
+        ]
+      },
+      "note": "The base running body frames walked with a melee item in hand. before calls SwitchToHeldItem (DrunkenBroster.cs:2751-2766), which sets holdingItem, moves chosenItem into heldItem, activates the gunSpriteMelee object, hides the original gun object and repoints gunSprite at gunSpriteMeleeSprite, whose material is the 512x768 gunSpriteMelee.png cut into 32x32 cells (DrunkenBroster.cs:179-195); after calls ClearHeldItem (DrunkenBroster.cs:2768-2778), which puts the original gun sprite back. The body cells are the base running ones: DrunkenBroster.ChangeFrame (DrunkenBroster.cs:1914-1940) dispatches on attackStationary, attackUpwards, attackDownwards and attackForwards before anything else, so the setup pins all four false and it forwards to base.ChangeFrame, where TestVanDammeAnim.cs:4075-4078 -> AnimateRunning :3522 reaches DrunkenBroster.AnimateActualNewRunningFrames (DrunkenBroster.cs:2983-3008), which writes frame % 8 at spritePixelHeight * 2 -- main row 2 columns 0-7. expectGun holds the gun cells, so a SwitchToHeldItem that stopped repointing gunSprite fails the state rather than passing on an unchanged body row: DrunkenBroster.cs:3004-3006 calls SetGunSprite(frame % 8, 1) while gunFrame <= 0 and !doingMelee, and the override (DrunkenBroster.cs:419-447) adds (int)heldItem * 2 to the row, so with heldItem Bottle (= 3, DrunkenBroster.cs:69-82) the lower-left pixel is gunSpritePixelHeight * (1 + 1 + 6) which is melee-sheet row 8, columns 0-7. gunFrame is pinned to 0 so that branch is taken on every step. The melee gun object is drawn on every step whatever active state it inherited from the original at DrunkenBroster.cs:2756: ChangeFrame calls ActivateGun on the swapped-in gunSprite whenever health > 0 and neither usingSpecial nor doingMelee (TestVanDammeAnim.cs:4055-4058, :9776-9782), all three pinned here, and AnimateRunning's else arm calls it again (TestVanDammeAnim.cs:3574). Bottle rather than ExplosiveBarrel because a barrel arms a five-second timer in SwitchToHeldItem (DrunkenBroster.cs:2761-2765) that Update runs down through RunBarrelEffects (DrunkenBroster.cs:272-276). insert_before and the holdingItem requirement are there because BecomeDrunk (DrunkenBroster.cs:3174-3189) picks up a bottle of its own and BecomeSober (DrunkenBroster.cs:3207-3223) never puts it down: sweeping special_new with --allow-side-effects leaves the bro holding, and running this state afterwards would hand ClearHeldItem an item the bro is meant to keep, on top of a chosenItem the restore had already put back. Placed ahead of special_new it runs on an empty-handed bro, and the requires check skips it rather than corrupting one that is already holding."
+    }
+  ]
+}
