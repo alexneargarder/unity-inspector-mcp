@@ -5,9 +5,6 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 
-// Port 1 has no listener: a live game would leave the module-level client's socket open and hang the run
-process.env.UNITY_INSPECTOR_PORT = '1';
-
 const { commandIsRunnable, configureLaunchTiming, handleToolCall, vanillaTookEffect } = await import('../index.js');
 const { isGameRunning, lastSpawnOptions, resolveLaunchCommand } = await import('../lib/game-process.js');
 const { tokenizeCommand } = await import('../lib/command-line.js');

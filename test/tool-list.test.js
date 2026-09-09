@@ -2,9 +2,6 @@ import '../test-support/session.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-// Port 1 has no listener: a live game would leave the module-level client's socket open and hang the run
-process.env.UNITY_INSPECTOR_PORT = '1';
-
 const { buildToolList, handleToolCall, resolvePollBudget } = await import('../index.js');
 const { isGameRunning } = await import('../lib/game-process.js');
 
@@ -32,7 +29,7 @@ test('every tool has a name, description and input schema', async () => {
   }
 });
 
-test('execute_code advertises statements, return, and the inner success field', async () => {
+test('execute_code advertises statements, return, and the result contract', async () => {
   const { description } = await toolNamed('execute_code');
   assert.match(description, /statements/i);
   assert.match(description, /return expr;/);
@@ -42,6 +39,29 @@ test('execute_code advertises statements, return, and the inner success field', 
   assert.match(description, /resultSet:true/);
   assert.match(description, /resultSet:false/);
   assert.match(description, /stackTrace/);
+  assert.match(description, /position/);
+  assert.match(description, /statement/);
+  assert.doesNotMatch(description, /envelope/i, 'the tool result is the mod object, not a wrapper around it');
+});
+
+test('simulate_input advertises the sequence form and what the actions do', async () => {
+  const tool = await toolNamed('simulate_input');
+
+  const sequence = tool.inputSchema.properties.sequence;
+  assert.equal(sequence?.type, 'array');
+  assert.equal(sequence.items.type, 'object');
+  assert.equal(sequence.items.properties.action.type, 'string');
+  assert.equal(sequence.items.properties.duration.type, 'number');
+  assert.equal(sequence.items.properties.wait.type, 'number');
+  assert.deepEqual(tool.inputSchema.required, [], 'action-or-sequence is enforced by the handler, not the schema');
+
+  assert.match(tool.description, /exactly one of/i);
+  assert.match(tool.description, /'sequence'/);
+  assert.match(tool.description, /highFive/);
+  assert.match(tool.description, /interact button/);
+  assert.match(tool.description, /switch/);
+  assert.match(tool.description, /count/);
+  assert.match(tool.description, /duration/);
 });
 
 test('query_gameobjects advertises base-type matching and the scan fields', async () => {

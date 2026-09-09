@@ -46,6 +46,15 @@ Test scripts are JSON files with the following structure:
 - **command** (required): Name of any Unity Inspector MCP tool
 - **params** (optional): Object containing parameters for the command
 - **wait** (optional): Milliseconds to wait after this step completes
+- **expect** (optional): Checks run against this step's result — `success` (boolean), `contains` and `notContains` (arrays of substrings matched against the result as it is returned). The step passes when every check holds, so a step that is expected to fail does not stop the script; an unmet check fails the step and stops it. An `expect` must carry at least one of the three, and neither array may be empty — an `expect` that checks nothing is rejected before the script runs
+
+```json
+{
+  "command": "execute_code",
+  "params": { "code": "object o = null; return o.ToString();" },
+  "expect": { "success": false, "contains": ["NullReferenceException"] }
+}
+```
 
 ## Available Commands
 
@@ -58,7 +67,7 @@ You can use any Unity Inspector MCP tool in your scripts:
 ### Input Simulation
 - `simulate_input` - Simulate controller input
   - Actions: up, down, left, right, fire, jump, special, highFive, gesture, sprint, start, escape
-  - Supports duration (hold time) and count (repeated presses)
+  - Supports duration (hold time), count (repeated presses), and sequence (ordered steps run back to back)
 
 ### Inspection
 - `inspect_player` - Get player information

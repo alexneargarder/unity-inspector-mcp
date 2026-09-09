@@ -128,5 +128,45 @@ test('command timeout budgets cover the game-side dispatcher budget', () => {
   assert.equal(commandTimeout('compile_script'), 30000);
   assert.equal(commandTimeout('unload_script'), 10000);
   assert.equal(commandTimeout('execute_code'), 10000);
-  assert.equal(commandTimeout('simulate_input', { count: 40, interval: 200 }), 39 * 200 + 1000);
+});
+
+test('simulate_input budgets cover every press it asks the game to hold', () => {
+  assert.equal(
+    commandTimeout('simulate_input', { count: 40, interval: 200, duration: 120 }),
+    39 * 200 + 40 * 120 + 1000,
+  );
+  assert.equal(
+    commandTimeout('simulate_input', { count: 40, interval: 200 }),
+    39 * 200 + 40 * 50 + 1000,
+    'a press with no duration is held for the game-side 50ms default',
+  );
+  assert.equal(
+    commandTimeout('simulate_input', { count: 2, interval: 100, duration: 50 }),
+    DEFAULT_COMMAND_TIMEOUT_MS,
+    'a short burst still gets the default floor',
+  );
+
+  const sequence = [
+    { action: 'right', duration: 4000, wait: 1000 },
+    { action: 'jump', duration: 500 },
+    { wait: 250 },
+  ];
+  assert.equal(
+    commandTimeout('simulate_input', { sequence }),
+    4000 + 1000 + 500 + 250 + 1000,
+    'a pause step costs only its wait',
+  );
+  assert.equal(
+    commandTimeout('simulate_input', { sequence: [{ action: 'jump', duration: 0, wait: 6000 }] }),
+    6000 + 50 + 1000,
+    'a zero duration is held for the game-side 50ms default',
+  );
+
+  assert.equal(
+    commandTimeout('simulate_input', { sequence: [{ action: 'special', duration: 150 }, { wait: 800 }] }),
+    DEFAULT_COMMAND_TIMEOUT_MS,
+    'a short sequence gets the default floor',
+  );
+  assert.equal(commandTimeout('simulate_input', { sequence: [] }), DEFAULT_COMMAND_TIMEOUT_MS);
+  assert.equal(commandTimeout('simulate_input', { action: 'fire' }), DEFAULT_COMMAND_TIMEOUT_MS);
 });

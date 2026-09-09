@@ -1,0 +1,109 @@
+{
+  "name": "execute_code error contract",
+  "description": "Checks what execute_code reports for an inaccessible type, a throw inside a multi-statement block, a throw inside a single expression, two calls that must succeed, a throw in the statement after a block, a throw in the second statement of a single line, and a compiler diagnostic in the second statement of a single line, whose column is reported against the submitted input. Needs BroMakerLib and RocketLib installed in the profile. Run it once the game has finished loading its hero prefabs: for the first fifteen seconds or so after launch_game reports the game ready, HeroController.GetHeroPrefab returns null and the grenade steps fail for that reason instead.",
+  "steps": [
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var s = new Unity_Inspector_Mod.Splice();"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "CS0122"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var a = \"x\";\nobject o = null;\nreturn o.ToString();"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "NullReferenceException",
+          "\"line\": 3",
+          "\"statement\": \"return o.ToString();\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "\"registryGrenadeDamage=\" + BroMakerLib.Loaders.LoadBroforceObjects.GetGrenadeFromName(\"Grenade\").damage + \" | rambroPrefabGrenadeDmg=\" + HeroController.GetHeroPrefab(HeroType.Rambro).GetFieldValue<Grenade>(\"grenadePrefab\").damage"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "NullReferenceException",
+          "\"line\": 1",
+          "\"statement\": \"\\\"registryGrenadeDamage=\\\" + BroMakerLib.Loaders.LoadBroforceObjects.GetGrenadeFromName("
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "HeroController.GetHeroPrefab(HeroType.Rambro).specialGrenade.damage"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "HeroController.GetHeroPrefab(HeroType.Rambro).GetFieldValue<Grenade>(\"grenadePrefab\") == null"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "try { int unused = 1; } catch (System.Exception e) { }\nobject o = null;\nreturn o.ToString();"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "NullReferenceException",
+          "\"line\": 3",
+          "\"statement\": \"return o.ToString();\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "object o = null; return o.ToString();"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "NullReferenceException",
+          "\"line\": 1",
+          "\"column\": 18",
+          "\"statement\": \"return o.ToString();\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "object o = null; o.NoSuchMethod();"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "CS1061",
+          "(1,20): "
+        ]
+      }
+    }
+  ]
+}

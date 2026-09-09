@@ -1,4 +1,4 @@
-import '../test-support/session.js';
+import { NO_LISTENER_PORT } from '../test-support/session.js';
 import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs/promises';
@@ -28,7 +28,6 @@ const {
   targetLogPaths,
   unityClient,
 } = await import('../index.js');
-const { DEFAULT_PORT } = await import('../lib/unity-client.js');
 const { LINUX_GAME_COMM, isGameRunning, resetInstanceModeProbe, setProcReader } = await import('../lib/game-process.js');
 
 // The port is only this instance's while a game of its own is running, so ownership has to be faked
@@ -40,6 +39,10 @@ test.after(() => setProcReader(null));
 test.after(() => fs.rm(root, { recursive: true, force: true }));
 test.after(() => fs.rm(binDir, { recursive: true, force: true }));
 
+// The `steam` target's own port, as the test session fences it: nothing listens on it, so no
+// assertion here can be answered by the user's real game
+const STEAM_PORT = Number(NO_LISTENER_PORT);
+
 const portFile = path.join(instanceDir, 'port');
 const noGameStart = async () => null;
 
@@ -49,7 +52,7 @@ beforeEach(async () => {
   setProcReader(null);
   unityClient.disconnect();
   process.env.CLAUDE_SESSION_ID = SESSION;
-  delete process.env.UNITY_INSPECTOR_PORT;
+  process.env.UNITY_INSPECTOR_PORT = NO_LISTENER_PORT;
   delete process.env.UNITY_INSPECTOR_LOG;
   await fs.rm(instanceDir, { recursive: true, force: true });
 });
@@ -112,7 +115,7 @@ test('no session id means the user\'s game on the usual port', { timeout: 30000,
 
   assert.equal(await resolveTarget(), 'steam');
   assert.equal(activeConfig().isAgentInstance, false);
-  assert.equal(unityClient.port, DEFAULT_PORT);
+  assert.equal(unityClient.port, STEAM_PORT);
 
   const { instance, instanceReason } = await instanceField();
   assert.equal(instance, null);
@@ -164,7 +167,7 @@ test('without a configured instance launcher there is no instance', { timeout: 3
 
   assert.equal(await resolveTarget(), 'steam');
   assert.equal(activeConfig().isAgentInstance, false);
-  assert.equal(unityClient.port, DEFAULT_PORT);
+  assert.equal(unityClient.port, STEAM_PORT);
 
   const state = payload(await handleToolCall({ params: { name: 'game_state', arguments: {} } }));
   assert.equal(state.target, 'steam');
@@ -185,14 +188,14 @@ test('a malformed session id serves the user\'s game and says why', { timeout: 3
   assert.equal(state.target, 'steam');
   assert.equal(state.instance, null);
   assert.match(state.instanceReason, /not a usable instance id/);
-  assert.equal(state.port, DEFAULT_PORT);
+  assert.equal(state.port, STEAM_PORT);
 });
 
 test('a launcher without instance mode serves the user\'s game, never a refusal', { timeout: 30000, skip: !isLinux }, async () => {
   resetInstanceModeProbe(false);
 
   assert.equal(await resolveTarget(), 'steam');
-  assert.equal(unityClient.port, DEFAULT_PORT);
+  assert.equal(unityClient.port, STEAM_PORT);
 
   const { instance, instanceReason } = await instanceField();
   assert.equal(instance, null);
@@ -213,7 +216,7 @@ test('switching the target re-points the client and drops the other game\'s sock
   const switched = await setTarget('steam');
   assert.equal(switched.changed, true);
   assert.equal(activeTarget(), 'steam');
-  assert.equal(unityClient.port, DEFAULT_PORT);
+  assert.equal(unityClient.port, STEAM_PORT);
   assert.equal(unityClient.connected, false, 'the instance\'s socket survived the switch');
   assert.equal(unityClient.gameConfig.isAgentInstance, false);
 
@@ -312,7 +315,7 @@ test('UNITY_INSPECTOR_PORT and UNITY_INSPECTOR_LOG belong to the user\'s game al
   process.env.UNITY_INSPECTOR_PORT = '9500';
   process.env.UNITY_INSPECTOR_LOG = elsewhere;
   t.after(() => {
-    delete process.env.UNITY_INSPECTOR_PORT;
+    process.env.UNITY_INSPECTOR_PORT = NO_LISTENER_PORT;
     delete process.env.UNITY_INSPECTOR_LOG;
   });
 
@@ -363,7 +366,7 @@ test('game_state carries the target, the instance and the logs with no game answ
   await setTarget('steam');
   const steam = payload(await handleToolCall({ params: { name: 'game_state', arguments: {} } }));
   assert.equal(steam.target, 'steam');
-  assert.equal(steam.port, DEFAULT_PORT);
+  assert.equal(steam.port, STEAM_PORT);
   // The session still has an instance; the top-level port is the one this reply is about
   assert.equal(steam.instance.port, 9931);
 });

@@ -2,7 +2,7 @@ import fs from 'fs/promises';
 import net from 'net';
 import path from 'path';
 
-import { NO_OP_LAUNCH_CMD } from './session.js';
+import { NO_LISTENER_PORT, NO_OP_LAUNCH_CMD } from './session.js';
 
 // The launcher's own game root, which it reports as `root` and the server has no use for: instances
 // live under `instancesRoot`, and a server that confused the two would derive every path from here
@@ -158,7 +158,8 @@ export async function useStubLauncher({ session, root, binDir }) {
   // The user's-game launch stays the no-op every test entry point starts with: a launch that fell
   // through to the `steam` target must never be a real one
   process.env.BROFORCE_LAUNCH_CMD = NO_OP_LAUNCH_CMD;
-  delete process.env.UNITY_INSPECTOR_PORT;
+  // Restored, never deleted: unset, the `steam` target falls back to the port the user's game listens on
+  process.env.UNITY_INSPECTOR_PORT = NO_LISTENER_PORT;
   delete process.env.UNITY_INSPECTOR_LOG;
   return { instanceDir: path.join(root, session), launcher };
 }

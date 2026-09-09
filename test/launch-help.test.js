@@ -7,9 +7,6 @@ import path from 'path';
 
 import { writeStubLauncher } from '../test-support/stub-launcher.js';
 
-// Port 1 has no listener: a live game would leave the module-level client's socket open
-process.env.UNITY_INSPECTOR_PORT = '1';
-
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'launch-help-'));
 const binDir = await fs.mkdtemp(path.join(os.tmpdir(), 'launch-help-bin-'));
 const launcher = await writeStubLauncher(binDir, root);

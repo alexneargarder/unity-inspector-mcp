@@ -1002,7 +1002,7 @@ export async function buildToolList() {
       },
       {
         name: "execute_code",
-        description: "Run C# in the Unity context. Accepts statements, local declarations, and a trailing 'return expr;' (a return before the final statement does not compile); input ending in an expression returns that expression's value. No lambda or Select wrapping trick is needed. Locals are call-scoped and do not persist to the next call — use static members or game objects for cross-call state. Types defined by a script loaded with execute_script are in scope here, by direct name and by reflection over the script assembly (field reads, member enumeration); MethodBase.GetMethodBody() on a script-compiled method kills the game process. Check the inner result's 'success' field (nested inside the TCP envelope's own success:true), which has three states: a value was produced (resultSet:true), the code ran but returned nothing (success:true, resultSet:false, no error), or it failed (success:false with 'error'; 'stackTrace' accompanies exceptions thrown by the submitted code and is null for plain compiler diagnostics and timeouts).",
+        description: "Run C# in the Unity context. Accepts statements, local declarations, and a trailing 'return expr;' (a return before the final statement does not compile); input ending in an expression returns that expression's value. No lambda or Select wrapping trick is needed. Locals are call-scoped and do not persist to the next call — use static members or game objects for cross-call state. Types defined by a script loaded with execute_script are in scope here, by direct name and by reflection over the script assembly (field reads, member enumeration); MethodBase.GetMethodBody() on a script-compiled method kills the game process. The result's top-level 'success' field has three states: a value was produced (resultSet:true, with the value in 'result'), the code ran but returned nothing (success:true, resultSet:false, no error), or it failed (success:false with 'error'). When the submitted code throws, the failure also carries 'stackTrace', 'position' ({line, column} of the top-level statement that was executing) and 'statement' (that statement's text); all three are null for plain compiler diagnostics and for timeouts.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1217,7 +1217,7 @@ export async function buildToolList() {
       },
       {
         name: "simulate_input",
-        description: "Simulate keyboard/controller input",
+        description: "Simulate keyboard/controller input for a player. Exactly one of 'action' (one press or hold) or 'sequence' (an ordered list of steps the game runs back to back) must be given. Actions: 'up', 'down', 'left' and 'right' move and aim the bro; 'fire' shoots the primary weapon; 'jump' jumps (held with 'down' it drops through a platform); 'special' uses the bro's special; 'sprint' runs; 'gesture' plays the taunt; 'start' opens the pause menu; 'escape' backs out of menus. 'highFive' is the interact button: it high-fives a rescued prisoner, melees, and activates the first registered switch within 16 units horizontally and 24 vertically — which covers switch-driven pickups and item boxes (Broforce MobileSwitch objects) — so teleporting next to an item and pressing highFive is how a pickup is driven; a live grenade within 20 units is thrown back instead, a teleport door in range is used instead, a citizen within 32 units takes the high-five, and a held grenade or mook or a running special blocks the press. Input reaches every player: 'player' is accepted and echoed but does not narrow it. With 'count' the action is pressed that many times, each press held for 'duration' ms and separated by 'interval' ms. A plan over 60 seconds is refused before anything is pressed — a hold's 'duration', 'count' presses with their 'duration' and 'interval', or a 'sequence' with its holds and waits totalled.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1225,13 +1225,34 @@ export async function buildToolList() {
               type: "string",
               description: "Input action (up, down, left, right, fire, jump, special, highFive, gesture, sprint, start, escape)",
             },
+            sequence: {
+              type: "array",
+              description: "Steps run in order on the game side, for timed combos; mutually exclusive with 'action'",
+              items: {
+                type: "object",
+                properties: {
+                  action: {
+                    type: "string",
+                    description: "Input action to hold for this step; omit it to make the step a pure pause",
+                  },
+                  duration: {
+                    type: "number",
+                    description: "Milliseconds to hold this step's action (default: 50)",
+                  },
+                  wait: {
+                    type: "number",
+                    description: "Milliseconds to pause after this step before the next one (default: 0)",
+                  },
+                },
+              },
+            },
             duration: {
               type: "number",
-              description: "Hold duration in milliseconds (optional)",
+              description: "Hold duration in milliseconds; also the per-press hold when count is used (default: 50)",
             },
             count: {
               type: "number",
-              description: "Number of times to press the key (optional, cannot be used with duration)",
+              description: "Number of times to press the action, each press held for duration",
             },
             interval: {
               type: "number",
@@ -1242,7 +1263,7 @@ export async function buildToolList() {
               description: "Player number (0-3, default: 0)",
             },
           },
-          required: ["action"],
+          required: [],
         },
       },
       {
@@ -1311,7 +1332,7 @@ export async function buildToolList() {
       },
       {
         name: "run_test_script",
-        description: "Execute a test script containing a sequence of commands. Scripts are JSON files with command sequences that can include wait delays. Steps run directly against the game, so only game-side commands work — server-side tools (read_log, watch_log, list_scripts, launch_game, stop_game, wait_for_game, ...) cannot be used as steps.",
+        description: "Execute a test script containing a sequence of commands. Scripts are JSON files with command sequences that can include wait delays. Steps run directly against the game, so only game-side commands work — server-side tools (read_log, watch_log, list_scripts, launch_game, stop_game, wait_for_game, ...) cannot be used as steps. A step may also carry an 'expect' object with 'success', 'contains' and 'notContains' checks against its result; a step with 'expect' passes when its expectations are met even if the command itself failed, so a step written to fail does not stop the script. Each such result record reports 'expect' and 'expectations' (the met and unmet checks).",
         inputSchema: {
           type: "object",
           properties: {
@@ -1887,18 +1908,22 @@ export async function handleToolCall(request) {
         result = await unityClient.sendCommand("restart_level", {});
         break;
 
-      case "simulate_input":
-        if (!args.action) {
-          throw new Error("Input action is required");
+      case "simulate_input": {
+        const hasAction = Boolean(args.action);
+        const hasSequence = Array.isArray(args.sequence) && args.sequence.length > 0;
+        if (hasAction === hasSequence) {
+          throw new Error("Exactly one of action or sequence is required");
         }
         result = await unityClient.sendCommand("simulate_input", {
           action: args.action,
+          sequence: args.sequence,
           duration: args.duration,
           count: args.count,
           interval: args.interval,
           player: args.player,
         });
         break;
+      }
 
       case "list_test_scripts":
         result = await listTestScripts();

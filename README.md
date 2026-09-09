@@ -164,17 +164,17 @@ There are 34, 33 from the server and `restart_server` from the wrapper.
 | `spawn_entity` | Spawn an enemy at a coordinate in the loaded level, with optional initial velocity. Which types work depends on the level's theme, and an unknown type comes back with the list of the ones that do. |
 | `modify_component` | Write properties on a component. |
 | `set_game_speed` | Set the time scale (1.0 is normal). |
-| `simulate_input` | Press or hold a game action for a player, with an optional hold duration or repeat count. |
+| `simulate_input` | Press or hold a game action for a player, with an optional hold duration or repeat count, or run an ordered sequence of held steps and pauses in one call. |
 | `list_campaigns` | List campaigns with their indices. |
 | `go_to_level` | Go directly to a campaign/level pair. |
 | `restart_level` | Restart the current level, clearing checkpoints and trigger state. |
-| `execute_code` | Run C# in the Unity context: statements, local declarations and a trailing `return` all work, and a trailing expression comes back as the value. Locals last for the one call. Exceptions thrown by submitted code come back with their stack trace. |
+| `execute_code` | Run C# in the Unity context: statements, local declarations and a trailing `return` all work, and a trailing expression comes back as the value. Locals last for the one call. Exceptions thrown by submitted code come back with their stack trace, plus the line and text of the statement that was running. |
 | `execute_script` | Compile and run a full C# script in the game, Harmony patches and private members included. |
 | `compile_script` | Compile a script without running it, to check for compiler errors. |
 | `list_scripts` | List the C# script library with descriptions, tags and arguments. |
 | `unload_script` | Unload a running script, unpatching it and destroying its GameObjects. |
 | `list_test_scripts` | List the JSON test scripts. |
-| `run_test_script` | Run a JSON command sequence and report each step. |
+| `run_test_script` | Run a JSON command sequence and report each step, checking any per-step `expect` so a step can be required to fail. |
 | `read_log` | Read the last N lines of the mod manager log, with an optional filter. |
 | `watch_log` | Return only the log lines written since the previous call. |
 | `launch_game` | Launch Broforce and wait until it answers, with `restart`, `vanilla` and `launchArgs` options. If it never answers, it reports which failure mode it hit, same as `wait_for_game`. |

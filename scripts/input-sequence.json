@@ -1,0 +1,32 @@
+{
+  "name": "simulate_input sequence",
+  "description": "Runs a two-press special combo as one game-side sequence, then a repeated fire press with a per-press hold",
+  "steps": [
+    {
+      "command": "simulate_input",
+      "params": {
+        "sequence": [
+          { "action": "special", "duration": 150 },
+          { "wait": 800 },
+          { "action": "special", "duration": 150 }
+        ]
+      },
+      "expect": {
+        "success": true,
+        "contains": ["\"steps\": 3"]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "fire",
+        "count": 3,
+        "interval": 150,
+        "duration": 80
+      },
+      "expect": {
+        "success": true
+      }
+    }
+  ]
+}
