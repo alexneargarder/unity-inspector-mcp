@@ -1,0 +1,34 @@
+# Instance launcher contract
+
+The contract a launcher named in `BROFORCE_INSTANCE_CMD` implements.
+
+`BROFORCE_INSTANCE_CMD` holds a command plus optional leading arguments, parsed with shell-style quoting, and the server appends a verb to it, so the program name doesn't matter.
+
+## What the server needs
+
+A launcher that does these and nothing else works with the server.
+
+- **`--help`**: exits 0 within 5 seconds and prints usage naming `instance <id>`. Help that doesn't name it means the launcher has no instance mode.
+- **`instance <id> launch`**: creates the instance if it isn't there yet and starts its game. Exit 0 once the game is started, and any non-zero exit means it refused or failed. Exit 75 is the one exception, and only from a launcher that caps how many instances run at once. It means the launcher is at that cap, and the server waits for a slot and launches again. `<id>` is the session id and matches `^[A-Za-z0-9_-]{1,64}$`.
+- **`instance <id> stop`**: stops that instance's game and takes down the display it created. **`instance <id> remove`**: deletes the instance directory and leaves that instance's own lock file under the instances root.
+- **`instance list --json`**: JSON Lines, within 4 seconds. A header object first, then one object per instance with `id`, `running`, `pid`, `port`, `display`, `last_launch` and `stale`. The header is printed even when there are no instances yet. Header fields:
+  - **`instancesRoot`**: absolute path of the directory holding one directory per instance. Required, and every instance path comes from it. A header without it means no instances.
+  - **`cap`**: how many instances this launcher runs at once. A launcher that caps nothing leaves it out or reports it null, which reads as a slot always being free.
+  - **`stageRoot`**: optional, an absolute path. The stage root: `<stageRoot>/<id>/UMM/` is where this session builds, and `game_state` reports it as `instance.stage`, whatever the running game was composed from. A launcher that leaves it out gives the session no stage.
+  - No other header field is read, `root` included.
+- **Instance directory**: `<instancesRoot>/<id>/` holds `profile/` (the mod profile, log at `profile/UMM/Core/Log.txt`), `home/` (the game's config home, log at `home/unity3d/Free Lives/Broforce/Player.log`), `work/`, `port`, `game.pid`, `owner.pid` and `launch.log`.
+- **`port`**: the inspector port the launcher allocated, the lowest free port in 9900-9998. The port your own game listens on (9999, or whatever `UNITY_INSPECTOR_PORT` names) is never handed to an instance. It gets rewritten on every launch, before `game.pid` is written, and the server never picks one itself. The instance's game has to listen on that port: the launcher patches it into `profile/UMM/Config/Unity Inspector Mod/Settings.xml` after it has composed the profile, writing a file holding only `serverPort` when the composition left none there.
+- **Working directory**: the game process runs in the instance's `work/`. The server uses that to tell one instance's game from another's and from your own.
+- **`owner.pid`**: written by the server, never by the launcher, though a launcher may read it to tell an owned instance from an abandoned one. One line, `<pid> <starttime>`: the pid of the MCP wrapper that owns the id, and field 22 of that pid's `/proc/<pid>/stat` (clock ticks since boot), both decimal. The wrapper runs `instance <id> stop` at the end of its session when the file still names it. Writing it never creates the instance directory, so a launcher creating a brand-new instance finds nothing there ahead of it.
+- **`--vanilla`**: launch without mods, appended to `instance <id> launch` and to `BROFORCE_LAUNCH_CMD` alike. It is the one flag the server ever adds on its own.
+- **`--args-help`** (optional): prints the launch arguments the program accepts, within 10 seconds. The server runs it only when `--help` lists it.
+
+## What isolation adds
+
+The server reads none of these and behaves the same with a launcher that does none of them; they are what the build workflow relies on when a session builds into a private copy.
+
+- **Composing the profile**: every launch rebuilds `profile/UMM/` before it starts the game, from your own profile — the mod profile the launcher starts your own game from. `Mods/`, `BroMaker_Storage/`, `Core/` and `Config/` are copied with deletion, so a mod you took out of your profile leaves the instance too. Left out of the copy, at the profile root and nowhere else: `Config/Unity Inspector Mod/`, `Core/Log.txt`, log files, `Screenshots/` and `Results/`. The same names inside a mod's own directory are copied.
+- **The stage overlay**: when `<stageRoot>/<id>/UMM/` is there, each top-level entry under its `Mods/`, `BroMaker_Storage/` and `Config/`, directory or file, replaces the instance's copy of that name, or is added when there isn't one. Every `Mods/` entry overlaid from the stage is enabled in `Params.xml`, with the entry added when the mod has none there. A session builds into its stage and the launcher only reads it.
+- **Locks**: composition holds the source profile's `UMM/.install.lock` while it copies and the stage's `.install.lock` while it overlays, waiting up to 120 seconds for each. A wait that runs out refuses the launch and names the lock it couldn't take in `launch.log`.
+- **Saves**: at instance creation the launcher seeds `work/Saves/progress.sav` from your own save, that file and no other. It goes in once and is never copied back, so progress in either game stays separate. `Options.xml` stays the game's default.
+- **On launch**: the launcher clears an `owner.pid` that no longer names a live wrapper, stops the games of instances whose owner has exited, skipping any instance with a launch or a stop of its own in flight, and removes a stage directory once no instance directory for that id is left and nothing under it has been written for that same period. Retiring idle instance directories at all, and after how long, is the launcher's own policy; the stage rule only follows it. Stopping an instance that way also rewrites its `last_launch`, and the port it frees is not handed out again in the same launch. An instance with no `owner.pid` is not owner-tracked and is never stopped this way.

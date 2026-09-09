@@ -12,7 +12,7 @@ const isLinux = process.platform === 'linux';
 const SESSION = 'launch-session-a41f';
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'instances-'));
 const binDir = await fs.mkdtemp(path.join(os.tmpdir(), 'launcher-bin-'));
-const { instanceDir, launcher } = await useStubLauncher({ session: SESSION, root, binDir });
+const { instanceDir, launcher, stagePath } = await useStubLauncher({ session: SESSION, root, binDir });
 
 const {
   activeTarget,
@@ -101,6 +101,26 @@ test('launch_game starts this session\'s instance and reads the allocated port b
     'the launcher is asked for its instance mode, then for where it keeps its instances');
   assert.ok(calls.includes(`instance ${SESSION} launch`), calls.join(' | '));
   assert.ok(!calls.some(call => call.includes('--port')), 'the server never asks for a port');
+});
+
+test('a launch that finds the instance already running names the game it would have started', { timeout: 30000, skip: !isLinux }, async () => {
+  await fs.mkdir(instanceDir, { recursive: true });
+  await fs.writeFile(portFile, String(inspector.port));
+  setProcReader(fakeProcReader({
+    900: { comm: LINUX_GAME_COMM, cwd: path.join(instanceDir, 'work'), startTicks: 100 },
+  }));
+
+  const result = payload(await launch());
+
+  assert.equal(result.success, true, result.message);
+  assert.equal(result.alreadyRunning, true);
+  // The game already running is the one this launch would have started, so it is named the same way
+  assert.deepEqual(result.instance, { id: SESSION, port: inspector.port });
+  assert.deepEqual(result.logs, {
+    umm: path.join(instanceDir, 'profile/UMM/Core/Log.txt'),
+    player: path.join(instanceDir, 'home/unity3d/Free Lives/Broforce/Player.log'),
+  });
+  assert.ok(!(await launcherCalls()).includes(`instance ${SESSION} launch`), 'and nothing was launched');
 });
 
 test('a launch that writes no port is reported rather than waited out', { timeout: 30000, skip: !isLinux }, async () => {
@@ -552,16 +572,30 @@ test('the id is claimed as soon as the root is known', { timeout: 30000, skip: !
 });
 
 test('a stage root the launcher reports is carried on the config', { timeout: 30000, skip: !isLinux }, async (t) => {
+  const reported = process.env.STUB_STAGE_ROOT;
   process.env.STUB_STAGE_ROOT = '/srv/stage';
-  t.after(() => { delete process.env.STUB_STAGE_ROOT; });
+  t.after(() => { process.env.STUB_STAGE_ROOT = reported; });
 
   assert.equal(await resolveTarget(), 'instance');
   assert.equal(sessionInstance().stageRoot, '/srv/stage');
+  assert.equal(sessionInstance().stagePath, `/srv/stage/${SESSION}/UMM`);
   // instancesRoot is where instances live; the launcher's own `root` in the same header is not,
   // and no path of this server's comes from it
   assert.equal(sessionInstance().instancesRoot, root);
   assert.equal(sessionInstance().root, instanceDir);
   assert.ok(!sessionInstance().root.startsWith(STUB_GAME_ROOT), sessionInstance().root);
+});
+
+test('a stage root that is not an absolute path is dropped, as a relative instances root is', { timeout: 30000, skip: !isLinux }, async (t) => {
+  const reported = process.env.STUB_STAGE_ROOT;
+  process.env.STUB_STAGE_ROOT = 'stages';
+  t.after(() => { process.env.STUB_STAGE_ROOT = reported; });
+
+  assert.equal(await resolveTarget(), 'instance', 'the instances root is absolute and the instance stands');
+  assert.equal((await discoverInstancesRoot()).stageRoot, null);
+  assert.equal(sessionInstance().stageRoot, null);
+  assert.equal(sessionInstance().stagePath, null, 'resolving it against a cwd would name a directory of somebody else\'s');
+  assert.equal(userGame().stageRoot, null);
 });
 
 test('a list the launcher cannot print leaves the session on the user\'s game', { timeout: 30000, skip: !isLinux }, async () => {
@@ -782,7 +816,7 @@ test('game_state alone drives the probe retry and the discovery after it', { tim
   // One reply later the launcher has been asked again, and the list after it
   const answered = payload(await handleToolCall({ params: { name: 'game_state', arguments: {} } }));
   assert.equal(answered.instanceReason, undefined, answered.instanceReason);
-  assert.deepEqual(answered.instance, { id: SESSION, port: 9931, root: instanceDir });
+  assert.deepEqual(answered.instance, { id: SESSION, port: 9931, root: instanceDir, stage: stagePath });
   assert.deepEqual((await launcherCalls()).filter(call => call === '--help'), ['--help', '--help']);
   assert.ok((await launcherCalls()).includes('instance list --json'));
 });

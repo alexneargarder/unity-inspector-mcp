@@ -118,28 +118,9 @@ On Linux, each Claude Code session can get its own game instance. An instance is
 
 Your session's instance is stopped when the session ends. Reconnecting the client on the same session id keeps it running, and the new server picks it up.
 
-A launcher that can't be asked where it keeps its instances is no help in telling your game from another session's, so `stop_game` and `launch_game` answer `root-unknown` and leave your game alone until it answers. Your game is still served meanwhile, and `BROFORCE_STOP_CMD` still runs first if you set one. A launcher that caps how many instances run at once can refuse a launch, and the launch then waits for a slot and reports which instances are holding them if none opens.
-
 None of this applies off Linux, where the server serves the one game it finds.
 
-### What the instance launcher has to do
-
-`BROFORCE_INSTANCE_CMD` holds a command plus optional leading arguments, parsed with shell-style quoting, and the server appends a verb to it, so the program name doesn't matter.
-
-- **`--help`**: exits 0 within 5 seconds and prints usage naming `instance <id>`. Help that doesn't name it means the launcher has no instance mode.
-- **`instance <id> launch`**: creates the instance if it isn't there yet and starts its game. Exit 0 once the game is started, and any non-zero exit means it refused or failed. Exit 75 is the one exception, and only from a launcher that caps how many instances run at once. It means the launcher is at that cap, and the server waits for a slot and launches again. `<id>` is the session id and matches `^[A-Za-z0-9_-]{1,64}$`.
-- **`instance <id> stop`**: stops that instance's game and takes down the display it created. **`instance <id> remove`**: deletes the instance directory.
-- **`instance list --json`**: JSON Lines, within 4 seconds. A header object first, then one object per instance with `id`, `running`, `pid`, `port`, `display`, `last_launch` and `stale`. The header is printed even when there are no instances yet. Header fields:
-  - **`instancesRoot`**: absolute path of the directory holding one directory per instance. Required, and every instance path comes from it. A header without it means no instances.
-  - **`cap`**: how many instances this launcher runs at once. A launcher that caps nothing leaves it out or reports it null, which reads as a slot always being free.
-  - **`stageRoot`**: optional, an absolute path. The server records it and no tool reads it.
-  - No other header field is read, `root` included.
-- **Instance directory**: `<instancesRoot>/<id>/` holds `profile/` (the mod profile, log at `profile/UMM/Core/Log.txt`), `home/` (the game's config home, log at `home/unity3d/Free Lives/Broforce/Player.log`), `work/`, `port`, `game.pid`, `owner.pid` and `launch.log`.
-- **`port`**: the inspector port the launcher allocated, the lowest free port in 9900-9998. The port your own game listens on (9999, or whatever `UNITY_INSPECTOR_PORT` names) is never handed to an instance. It gets rewritten on every launch, before `game.pid` is written, and the server never picks one itself.
-- **Working directory**: the game process runs in the instance's `work/`. The server uses that to tell one instance's game from another's and from your own.
-- **`owner.pid`**: written by the server, never by the launcher, though a launcher may read it to tell an owned instance from an abandoned one. One line, `<pid> <starttime>`: the pid of the MCP wrapper that owns the id, and field 22 of that pid's `/proc/<pid>/stat` (clock ticks since boot), both decimal. The wrapper runs `instance <id> stop` at the end of its session when the file still names it. Writing it never creates the instance directory, so a launcher creating a brand-new instance finds nothing there ahead of it.
-- **`--vanilla`**: launch without mods, appended to `instance <id> launch` and to `BROFORCE_LAUNCH_CMD` alike. It is the one flag the server ever adds on its own.
-- **`--args-help`** (optional): prints the launch arguments the program accepts, within 10 seconds. The server runs it only when `--help` lists it.
+Writing a launcher of your own: [docs/launcher-contract.md](docs/launcher-contract.md) is the contract it has to implement.
 
 ## Tools
 

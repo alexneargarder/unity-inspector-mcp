@@ -597,14 +597,19 @@ export async function discoverInstancesRoot() {
       return result;
     }
 
-    const applied = { stageRoot: summary.stageRoot };
+    // A stage root that is not an absolute path is no place to hang a stage off, so the session
+    // has none at all rather than one resolved against whatever this process's cwd happens to be
+    const stageRoot = typeof summary.stageRoot === 'string' && path.isAbsolute(summary.stageRoot)
+      ? summary.stageRoot
+      : null;
+    const applied = { stageRoot };
     // Assigned into the memos rather than replacing them: a config handed out before the root was
     // known — the client's `gameConfig`, a caller's local — is the same object and gains it too
     Object.assign(sessionInstance(), withRoot(sessionInstance(), summary.instancesRoot, applied));
     // The user's game is every Broforce process outside the instances root, so it takes the same
     // answer even when this session has no instance of its own
     Object.assign(userGame(), withRoot(userGame(), summary.instancesRoot, applied));
-    return { instancesRoot: summary.instancesRoot, stageRoot: summary.stageRoot, reason: null };
+    return { instancesRoot: summary.instancesRoot, stageRoot, reason: null };
   })();
   return rootDiscovery;
 }
@@ -837,6 +842,9 @@ export async function instanceField() {
       id: config.id,
       port: await readInstancePort(config),
       root: config.root,
+      // Where this session stages its own build; null from a launcher whose list header reports
+      // no stage root
+      stage: config.stagePath,
     },
   };
 }
@@ -1294,7 +1302,7 @@ export async function buildToolList() {
       },
       {
         name: "game_state",
-        description: "Get a high-level summary of the current game state: scene, game mode, level info, player status, and bro type. Single call to orient yourself. Every reply also carries what this server is pointed at, whether or not a game answers: `target` (`instance` or `steam`), `port` (the port that target is on), `instance` with its id, port and directory (null with an `instanceReason` when this session has none), the `logs` read_log and watch_log are using, and `runningInstances` when the launcher can list them.",
+        description: "Get a high-level summary of the current game state: scene, game mode, level info, player status, and bro type. Single call to orient yourself. Every reply also carries what this server is pointed at, whether or not a game answers: `target` (`instance` or `steam`), `port` (the port that target is on), `instance` with its id, port, directory and stage (null with an `instanceReason` when this session has none), the `logs` read_log and watch_log are using, and `runningInstances` when the launcher can list them.",
         inputSchema: {
           type: "object",
           properties: {},
@@ -2472,6 +2480,14 @@ export async function handleToolCall(request) {
             success: true,
             alreadyRunning: true,
             message: `${targetDescription(nextTarget)} is already running. Use restart: true to stop and relaunch.`,
+            // The game this launch would have started is the one already running, so it names it
+            // exactly as a launch of its own would
+            ...(config.isAgentInstance
+              ? {
+                  instance: { id: config.id, port: unityClient.port },
+                  logs: { umm: config.ummLog, player: config.playerLog },
+                }
+              : {}),
           });
           break;
         }

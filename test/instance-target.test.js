@@ -12,7 +12,7 @@ const isLinux = process.platform === 'linux';
 const SESSION = 'target-session-8c02';
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'instances-'));
 const binDir = await fs.mkdtemp(path.join(os.tmpdir(), 'launcher-bin-'));
-const { instanceDir } = await useStubLauncher({ session: SESSION, root, binDir });
+const { instanceDir, stagePath } = await useStubLauncher({ session: SESSION, root, binDir });
 
 const {
   activeConfig,
@@ -348,7 +348,7 @@ test('game_state carries the target, the instance and the logs with no game answ
   assert.ok(result.message, 'the reply says why no game answered');
   assert.equal(result.target, 'instance');
   assert.equal(result.port, null, 'the target port is the one in use, not the one on record');
-  assert.deepEqual(result.instance, { id: SESSION, port: 9931, root: instanceDir });
+  assert.deepEqual(result.instance, { id: SESSION, port: 9931, root: instanceDir, stage: stagePath });
   assert.equal(result.instanceReason, undefined);
   assert.equal(result.logs.umm, path.join(instanceDir, 'profile/UMM/Core/Log.txt'));
   assert.equal(result.logs.player, path.join(instanceDir, 'home/unity3d/Free Lives/Broforce/Player.log'));

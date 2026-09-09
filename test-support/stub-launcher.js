@@ -149,19 +149,22 @@ exit 64
 
 // The environment an instance test runs in: its own instances root, its own session id, and
 // BROFORCE_INSTANCE_CMD pointing straight at the stub, so no real launcher is reachable. The server
-// learns the root from the stub's own list header, exactly as it would from a real launcher
-export async function useStubLauncher({ session, root, binDir }) {
+// learns both roots from the stub's own list header, exactly as it would from a real launcher
+export async function useStubLauncher({ session, root, binDir, stageRoot = path.join(root, 'stages') }) {
   const launcher = await writeStubLauncher(binDir, root);
   process.env.CLAUDE_SESSION_ID = session;
   process.env.BROFORCE_INSTANCE_CMD = launcher;
   process.env.STUB_INSTANCES_ROOT = root;
+  // A stage root of its own, reported in the same header, so no test can read the stages of the
+  // session running them
+  process.env.STUB_STAGE_ROOT = stageRoot;
   // The user's-game launch stays the no-op every test entry point starts with: a launch that fell
   // through to the `steam` target must never be a real one
   process.env.BROFORCE_LAUNCH_CMD = NO_OP_LAUNCH_CMD;
   // Restored, never deleted: unset, the `steam` target falls back to the port the user's game listens on
   process.env.UNITY_INSPECTOR_PORT = NO_LISTENER_PORT;
   delete process.env.UNITY_INSPECTOR_LOG;
-  return { instanceDir: path.join(root, session), launcher };
+  return { instanceDir: path.join(root, session), launcher, stageRoot, stagePath: path.join(stageRoot, session, 'UMM') };
 }
 
 // An instance directory as a launch has already left it: the profile is what tells the launcher the
@@ -203,12 +206,18 @@ export function fakeInspector({ answers = true } = {}) {
 }
 
 // The launcher prints its list as JSON Lines: a header carrying instancesRoot — the stub's own
-// instances root, which is where the server learns where instances live — its own unrelated `root`,
-// and cap from a launcher that caps running instances, an undefined cap being one that reports
-// none. Then one line per instance directory. The fixtures are that layout and nothing else.
-export function instanceListJsonl(cap, instances = [], instancesRoot = process.env.STUB_INSTANCES_ROOT) {
+// instances root, which is where the server learns where instances live — stageRoot where the
+// launcher stages one, its own unrelated `root`, and cap from a launcher that caps running
+// instances, an undefined cap being one that reports none. Then one line per instance directory.
+// The fixtures are that layout and nothing else.
+export function instanceListJsonl(
+  cap,
+  instances = [],
+  instancesRoot = process.env.STUB_INSTANCES_ROOT,
+  stageRoot = process.env.STUB_STAGE_ROOT,
+) {
   return [
-    JSON.stringify({ instancesRoot, root: STUB_GAME_ROOT, cap }),
+    JSON.stringify({ instancesRoot, root: STUB_GAME_ROOT, stageRoot, cap }),
     ...instances.map(entry => JSON.stringify({
       id: String(entry.id),
       running: entry.running ? 1 : 0,

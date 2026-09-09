@@ -27,6 +27,7 @@ test('the session id derives every per-instance path from the launcher\'s root',
   assert.equal(derived.root, null);
   assert.equal(derived.workDir, undefined);
   assert.equal(derived.ownerFile, undefined);
+  assert.equal(derived.stagePath, null);
 
   const config = withRoot(derived, INSTANCES_ROOT);
   const root = `${INSTANCES_ROOT}/${SESSION}`;
@@ -41,6 +42,8 @@ test('the session id derives every per-instance path from the launcher\'s root',
   assert.equal(config.pidfile, `${root}/game.pid`);
   assert.equal(config.portFile, `${root}/port`);
   assert.equal(config.launchLog, `${root}/launch.log`);
+  // A header naming no stage root leaves the session no stage of its own
+  assert.equal(config.stagePath, null);
   assert.equal(config.ummLog, `${root}/profile/UMM/Core/Log.txt`);
   assert.equal(config.playerLog, `${root}/home/unity3d/Free Lives/Broforce/Player.log`);
   assert.equal(config.ownerFile, `${root}/owner.pid`);
@@ -134,6 +137,7 @@ test('the root the launcher reports is the only root there is', () => {
   // A launcher that stages instances elsewhere says so in the same header
   const staged = withRoot(instanceConfig(withId(SESSION), options), INSTANCES_ROOT, { stageRoot: '/srv/stage' });
   assert.equal(staged.stageRoot, '/srv/stage');
+  assert.equal(staged.stagePath, `/srv/stage/${SESSION}/UMM`);
 
   for (const nothing of [undefined, null, '', 42]) {
     assert.throws(() => withRoot(instanceConfig(withId(SESSION), options), nothing), /instances root/);

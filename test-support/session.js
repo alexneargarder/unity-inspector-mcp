@@ -2,7 +2,7 @@
 // instance launcher inherited from the session running the tests would give those modules an agent
 // instance, and the tests would then act on a game they never asked for. A file that wants one sets
 // its own session id and points BROFORCE_INSTANCE_CMD, BROFORCE_LAUNCH_CMD or BROFORCE_STOP_CMD at a
-// stub of its own.
+// stub of its own, with a stage root of its own.
 export const NO_OP_LAUNCH_CMD = 'sh -c "exit 0"';
 // Port 1 has no listener and refuses a connect at once. Nothing else here is a fence against the
 // user's own game answering: with UNITY_INSPECTOR_PORT unset the `steam` target falls back to 9999,
@@ -20,6 +20,7 @@ process.env.BROFORCE_LAUNCH_CMD = NO_OP_LAUNCH_CMD;
 process.env.UNITY_INSPECTOR_TEST = '1';
 process.env.UNITY_INSPECTOR_PORT = NO_LISTENER_PORT;
 delete process.env.BROFORCE_STOP_CMD;
+delete process.env.STUB_STAGE_ROOT;
 // The wrapper hands its child this path to record the owner.pid it wrote; inherited, it would have
 // the tests writing a claim into a live session's wrapper file
 delete process.env.UNITY_INSPECTOR_MCP_CLAIM_FILE;
