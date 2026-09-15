@@ -65,6 +65,36 @@ test('simulate_input forwards a sequence to the game untouched', async () => {
   assert.equal(sent.params.action, undefined, 'no action is invented for a sequence call');
 });
 
+test('a dotted member path reaches the game unchanged', async () => {
+  const inspected = await handleToolCall({
+    params: {
+      name: 'inspect_component',
+      arguments: { path: '/Player', componentType: 'TestVanDammeAnim', memberPath: 'transform.localPosition.x' },
+    },
+  });
+
+  assert.ok(!inspected.isError, textOf(inspected));
+  const read = lastRequest('inspect_component');
+  assert.equal(read.params.memberPath, 'transform.localPosition.x');
+  assert.equal(read.params.path, '/Player');
+  assert.equal(read.params.componentType, 'TestVanDammeAnim');
+
+  const modified = await handleToolCall({
+    params: {
+      name: 'modify_component',
+      arguments: {
+        path: '/Player',
+        component: 'TestVanDammeAnim',
+        properties: { 'transform.localPosition.x': 3.5 },
+      },
+    },
+  });
+
+  assert.ok(!modified.isError, textOf(modified));
+  const written = lastRequest('modify_component');
+  assert.deepEqual(written.params.properties, { 'transform.localPosition.x': 3.5 });
+});
+
 test('simulate_input needs exactly one of action and sequence', async () => {
   const neither = await handleToolCall({ params: { name: 'simulate_input', arguments: {} } });
   assert.equal(neither.isError, true);
@@ -80,4 +110,23 @@ test('simulate_input needs exactly one of action and sequence', async () => {
 
   const empty = await handleToolCall({ params: { name: 'simulate_input', arguments: { sequence: [] } } });
   assert.equal(empty.isError, true, 'an empty sequence is not a sequence');
+});
+
+test('take_screenshot sends a highlight only when one was asked for', async () => {
+  const bare = await handleToolCall({ params: { name: 'take_screenshot', arguments: {} } });
+  assert.ok(!bare.isError, textOf(bare));
+  assert.deepEqual(lastRequest('take_screenshot').params, {}, 'a bare call sends no highlight');
+
+  const byPath = await handleToolCall({
+    params: { name: 'take_screenshot', arguments: { highlight: '/Player' } },
+  });
+  assert.ok(!byPath.isError, textOf(byPath));
+  assert.deepEqual(lastRequest('take_screenshot').params, { highlight: '/Player' });
+
+  const rectangle = { x: -10.5, y: 4, width: 20, height: 8.25 };
+  const byRect = await handleToolCall({
+    params: { name: 'take_screenshot', arguments: { highlight: rectangle } },
+  });
+  assert.ok(!byRect.isError, textOf(byRect));
+  assert.deepEqual(lastRequest('take_screenshot').params, { highlight: rectangle });
 });

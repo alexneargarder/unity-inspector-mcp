@@ -942,17 +942,21 @@ export async function buildToolList() {
       },
       {
         name: "inspect_component",
-        description: "Inspect a specific component on a GameObject",
+        description: "Inspect a component's fields and properties, instance and static, plus its declared instance methods. 'memberPath' reads one member instead, a dotted path into nested members; a miss answers 'suggestions'.",
         inputSchema: {
           type: "object",
           properties: {
             path: {
               type: "string",
-              description: "Path to the GameObject (e.g., '/Player')",
+              description: "Path to the GameObject",
             },
             componentType: {
               type: "string",
-              description: "Component type name to inspect",
+              description: "Component type name",
+            },
+            memberPath: {
+              type: "string",
+              description: "One member instead of the whole component, e.g. 'weapon.damage'",
             },
           },
           required: ["path", "componentType"],
@@ -995,7 +999,7 @@ export async function buildToolList() {
       },
       {
         name: "list_enemies",
-        description: "List all enemies in the scene",
+        description: "Live enemies in the loaded level by the game's own classification: vehicles, tank weapons, boss pieces included. Entries: name, type, isMook, position, health, isAlive, plus RocketLib's unitType (its finer type) and category (its group) — null off a Unit, unitType 'None' and category 'none' when unclassifiable, category 'unknown' when in no group. mapLoaded says a level is loaded; when empty, enemySpawnSuppressed/suppressedBy report a live suppressor and enemySpawnPrefixOwners mods that could.",
         inputSchema: {
           type: "object",
           properties: {},
@@ -1003,10 +1007,22 @@ export async function buildToolList() {
       },
       {
         name: "take_screenshot",
-        description: "Take a screenshot of the game. Returns the path to the saved screenshot.",
+        description: "Take a screenshot of the game; returns the saved path. An optional `highlight` outlines a target for that frame only: the reply has `highlighted` or `highlightError`, and the screenshot succeeds either way.",
         inputSchema: {
           type: "object",
-          properties: {},
+          properties: {
+            highlight: {
+              type: ["string", "object"],
+              properties: {
+                x: { type: "number" },
+                y: { type: "number" },
+                width: { type: "number" },
+                height: { type: "number" },
+              },
+              description:
+                "A GameObject path, or a rectangle {x, y, width, height} in world units, x/y its bottom-left corner. An inactive, boundless or off-camera target is a highlightError.",
+            },
+          },
         },
       },
       {
@@ -1025,21 +1041,22 @@ export async function buildToolList() {
       },
       {
         name: "modify_component",
-        description: "Modify properties of a component on a GameObject",
+        description: "Write a component's fields and properties, public or private, instance or static. 'modifiedProperties' lists what was written, 'errors' each failure with a 'reason': 'not-found' (with 'suggestions'), 'read-only' or 'error'. 'success' is false when nothing was written. Keys may be dotted paths into nested members.",
         inputSchema: {
           type: "object",
           properties: {
             path: {
               type: "string",
-              description: "Path to the GameObject",
+              description: "GameObject path",
             },
             component: {
               type: "string",
-              description: "Component type name",
+              description: "Component type",
             },
             properties: {
               type: "object",
-              description: "Properties to modify",
+              minProperties: 1,
+              description: "Properties to write; keys may be dotted paths, e.g. 'gun.damage'",
             },
           },
           required: ["path", "component", "properties"],
@@ -1091,13 +1108,13 @@ export async function buildToolList() {
       },
       {
         name: "spawn_entity",
-        description: "Spawn an enemy at a world position in the currently loaded level (a level must be loaded). `type` is matched case-insensitively against the enemy prefabs of the level's active theme: the theme field name (`mookBigGuy`), the name without the `mook` prefix (`bigGuy`), or the prefab's own name; `facehugger` and `baneling` alias `alienFaceHugger` and `alienBaneling`. Which types exist depends on the loaded level's theme — an unknown type fails with `availableTypes` listing everything spawnable right now, so a bogus type discovers the roster. Enemies spawn alert, on the ground, and registered with the networking layer like level-placed enemies, except the two alien aliases, which use the game's local-only spawn helpers. Success returns `type` (resolved field name), `prefab`, `name`, `instanceId`, `networked`, `x`, `y`; failure returns `error` plus `availableTypes` or `stackTrace`. If another mod suppresses enemy spawning (Utility Mod's `disableEnemySpawn`, for one), the spawn fails and the error names the Harmony patch owners responsible.",
+        description: "Spawn a unit at a world position; a level must be loaded. `type` is any RocketLib `UnitType`, by enum name (`SuicideMook`) or display name (`Suicide Mook`). The prefab comes from the level's theme or the shared assets: a type this theme has no prefab for fails saying so — try a level whose theme has it. `Baneling` is the theme's mosquito and `Screecher` its baneling; `Bro` is refused — use set_bro or swap_bro. Success returns `type`, `unitType`, `prefab`, `name`, `instanceId`, `networked`; a failure returns `error`, with `availableTypes` on an unknown name and `unitType` on a missing prefab.",
         inputSchema: {
           type: "object",
           properties: {
             type: {
               type: "string",
-              description: "Enemy type to spawn, matched case-insensitively against the current theme's enemy prefabs",
+              description: "A RocketLib UnitType, by enum name (SuicideMook) or display name (Suicide Mook); case, spaces and punctuation are ignored",
             },
             x: {
               type: "number",
@@ -1109,12 +1126,12 @@ export async function buildToolList() {
             },
             xI: {
               type: "number",
-              description: "Initial horizontal velocity (default: 0)",
+              description: "Initial horizontal velocity",
               default: 0,
             },
             yI: {
               type: "number",
-              description: "Initial vertical velocity, positive is up (default: 0)",
+              description: "Initial vertical velocity, up is positive",
               default: 0,
             },
           },
@@ -1145,7 +1162,7 @@ export async function buildToolList() {
       },
       {
         name: "go_to_level",
-        description: "Go directly to a specific campaign level",
+        description: "Go to a campaign level. An out-of-range campaignIndex is rejected; a levelIndex past the campaign's last level loads the Victory map.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1155,7 +1172,7 @@ export async function buildToolList() {
             },
             levelIndex: {
               type: "number",
-              description: "Level index within the campaign (0-based)",
+              description: "Level index in the campaign (0-based)",
             },
           },
           required: ["campaignIndex", "levelIndex"],
@@ -1164,14 +1181,14 @@ export async function buildToolList() {
       {
         name: "swap_bro",
         description:
-          "Swap the current player's bro mid-level. Kills the current bro and spawns the new one at the same position. Integrates with Swap Bros Mod when available, falls back to direct game manipulation.",
+          "Swap the current player's bro mid-level: kills the current bro and spawns the new one at the same position. Requires Swap Bros Mod, and is refused when it is not active. A name that matches nothing answers `availableBros` plus the full `allNormal`, `allExpendabros` and `allUnfinished` rosters.",
         inputSchema: {
           type: "object",
           properties: {
             broName: {
               type: "string",
               description:
-                "Bro name (e.g., 'Rambro', 'Brommando', 'B. A. Broracus'). Use list_bros to see available names.",
+                "Bro name, e.g. 'Rambro'; see list_bros.",
             },
             playerNum: {
               type: "number",
@@ -1184,14 +1201,14 @@ export async function buildToolList() {
       {
         name: "set_bro",
         description:
-          "Set which bro the player will spawn as next (on death/respawn/next level). Does NOT change the current bro mid-level.",
+          "Set the bro a player spawns as next (on death, respawn or the next level), not the current one. Requires Swap Bros Mod, and is refused when it is not active. A miss answers `availableBros` and the `allNormal`/`allExpendabros`/`allUnfinished` rosters.",
         inputSchema: {
           type: "object",
           properties: {
             broName: {
               type: "string",
               description:
-                "Bro name (e.g., 'Rambro', 'Brommando'). Use list_bros to see available names.",
+                "Bro name, e.g. 'Rambro'; see list_bros.",
             },
             playerNum: {
               type: "number",
@@ -1204,13 +1221,13 @@ export async function buildToolList() {
       {
         name: "list_bros",
         description:
-          "List all available bros that can be used with swap_bro and set_bro. Reports the selected bro for the given player (currentBro) and for all active players (currentBros array).",
+          "List all available bros that can be used with swap_bro and set_bro. Requires Swap Bros Mod, and is refused when it is not active. Reports the selected bro for the given player (currentBro) and for all active players (currentBros array).",
         inputSchema: {
           type: "object",
           properties: {
             playerNum: {
               type: "number",
-              description: "Player number 0-3 for the currentBro readout (default: 0). The bro lists and currentBros array are always returned regardless.",
+              description: "Player number 0-3 for the currentBro readout (default: 0)",
             },
           },
         },
@@ -1302,7 +1319,7 @@ export async function buildToolList() {
       },
       {
         name: "game_state",
-        description: "Get a high-level summary of the current game state: scene, game mode, level info, player status, and bro type. Single call to orient yourself. Every reply also carries what this server is pointed at, whether or not a game answers: `target` (`instance` or `steam`), `port` (the port that target is on), `instance` with its id, port, directory and stage (null with an `instanceReason` when this session has none), the `logs` read_log and watch_log are using, and `runningInstances` when the launcher can list them.",
+        description: "A high-level summary of the game state: loaded level, game mode, player status, bro type. Single call to orient yourself. 'scene' is the Unity scene: a loaded level is always the one gameplay scene, while the world map, the victory screen and cutscenes are scenes of their own — 'isCampaignScene' tells them apart. The level is 'campaignName' (list_campaigns' 'name'), 'campaignDisplay' (its 'displayName'), 'levelName' (from the campaign file, or null), 'levelIndex' (0-based) and 'levelNumber' (1-based). The main menu keeps a level loaded as its backdrop, so those fields and 'isInGame' stay populated there. Every reply also carries `target` (`instance` or `steam`), `port`, `instance` (id, port, directory, stage, else an `instanceReason`), the `logs` read_log and watch_log use, and `runningInstances`.",
         inputSchema: {
           type: "object",
           properties: {},
@@ -2026,6 +2043,7 @@ export async function handleToolCall(request) {
         result = await unityClient.sendCommand("inspect_component", {
           path: args.path,
           componentType: args.componentType,
+          memberPath: args.memberPath,
         });
         break;
 
@@ -2047,7 +2065,10 @@ export async function handleToolCall(request) {
         break;
 
       case "take_screenshot":
-        result = await unityClient.sendCommand("take_screenshot");
+        result = await unityClient.sendCommand(
+          "take_screenshot",
+          args.highlight === undefined ? {} : { highlight: args.highlight },
+        );
         if (result && result.path) {
           result.path = unityClient.translateScreenshotPath(result.path);
         }
@@ -2065,6 +2086,9 @@ export async function handleToolCall(request) {
       case "modify_component":
         if (!args.path || !args.component || !args.properties) {
           throw new Error("Path, component, and properties are required");
+        }
+        if (Object.keys(args.properties).length === 0) {
+          throw new Error("No properties were given - pass at least one member name and value to write");
         }
         result = await unityClient.sendCommand("modify_component", {
           path: args.path,

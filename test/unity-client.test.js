@@ -126,7 +126,7 @@ test('command timeout budgets cover the game-side dispatcher budget', () => {
 
   assert.equal(commandTimeout('execute_script'), 30000);
   assert.equal(commandTimeout('compile_script'), 30000);
-  assert.equal(commandTimeout('unload_script'), 10000);
+  assert.equal(commandTimeout('unload_script'), 20000);
   assert.equal(commandTimeout('execute_code'), 10000);
 });
 

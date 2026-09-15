@@ -129,21 +129,21 @@ There are 35, 34 from the server and `restart_server` from the wrapper.
 | Tool | Description |
 |---|---|
 | `ping` | Test the connection to the mod. |
-| `game_state` | Scene, game mode, level, player status and bro type in one call. |
+| `game_state` | The loaded level, game mode, player status and bro type in one call. `scene` is the one Unity scene every level plays in, so `campaignName`, `campaignDisplay`, `levelName` and `levelNumber` are what identify the level. |
 | `list_gameobjects` | List GameObjects in the scene. |
 | `query_gameobjects` | Search GameObjects by name pattern and/or component type. A component type on its own works, and it matches base types and interfaces, so asking for `Projectile` finds subclasses too. |
 | `inspect_gameobject` | Inspect one GameObject by path, with optional component details. |
-| `inspect_component` | Inspect a single component. |
-| `take_screenshot` | Capture the game window and return the path. |
+| `inspect_component` | Inspect a single component, including its static fields and properties. |
+| `take_screenshot` | Capture the game window and return the path. An optional `highlight` outlines a GameObject path or a `{x, y, width, height}` rectangle in world units for that one frame. |
 | `inspect_player` | Detailed state for the active player(s). |
 | `teleport_player` | Move a player (or all players) to a coordinate. |
 | `set_player_health` | Set a player's health. |
-| `list_bros` | List usable bros and which one each player has. |
-| `set_bro` | Choose the bro a player spawns as next. Does not change the current one. |
-| `swap_bro` | Swap a player's bro immediately, in place, mid-level. |
-| `list_enemies` | List enemies currently in the scene. |
-| `spawn_entity` | Spawn an enemy at a coordinate in the loaded level, with optional initial velocity. Which types work depends on the level's theme, and an unknown type comes back with the list of the ones that do. |
-| `modify_component` | Write properties on a component. |
+| `list_bros` | List usable bros and which one each player has. Requires Swap Bros Mod. |
+| `set_bro` | Choose the bro a player spawns as next. Does not change the current one. Requires Swap Bros Mod. |
+| `swap_bro` | Swap a player's bro immediately, in place, mid-level. Requires Swap Bros Mod. |
+| `list_enemies` | List the live enemies in the loaded level, from the game's own unit registry plus a scene sweep, classified by the game's own enemy test, so aliens, hell units, vehicles and bosses are covered as well as mooks. An empty list says whether a level is loaded at all. If one is, `enemySpawnSuppressed` says a suppressor is active right now (Utility Mod with `disableEnemySpawn` on) and `enemySpawnPrefixOwners` lists every mod that could suppress spawning. |
+| `spawn_entity` | Spawn a unit at a coordinate in the loaded level, with optional initial velocity. The type is any RocketLib `UnitType`, given as its enum name or its display name. The prefab comes from the level's theme or the shared assets, and most units are the theme's, so a type this level's theme holds no prefab for fails naming that. Try a level whose theme has it. An unknown name comes back with the list of the names that exist. |
+| `modify_component` | Write fields and properties on a component, instance or static. Each property that could not be written comes back with a reason: not found, read-only, or a conversion error. |
 | `set_game_speed` | Set the time scale (1.0 is normal). |
 | `simulate_input` | Press or hold a game action for a player, with an optional hold duration or repeat count, or run an ordered sequence of held steps and pauses in one call. |
 | `list_campaigns` | List campaigns with their indices. |
@@ -168,7 +168,7 @@ Under Proton and WSL the game returns Windows paths for screenshots, and the ser
 
 ## C# scripts
 
-`scripts/csharp/` has a library of scripts committed to the repo: `find-by-type`, `inspect-private-fields`, `watch-field`, `trace-method-calls`, `spawn-capture` and `dump-harmony-patches`, which work on any modded install, plus `menu-tweaker` (needs the RocketLib mod) and `rogueforce-runner` (needs the Rogueforce mod). Each one has a header of `// #name`, `// #description`, `// #tags` and `// #args` comments. `list_scripts` and the `execute_script` tool description both report that metadata, so the agent can pick a script and fill in its arguments on its own.
+`scripts/csharp/` has a library of scripts committed to the repo: `find-by-type`, `inspect-private-fields`, `watch-field`, `trace-method-calls`, `spawn-capture` and `dump-harmony-patches`, which work on any modded install, plus `menu-tweaker` and `diff-component` (both need the RocketLib mod) and `rogueforce-runner` (needs the Rogueforce mod). Each one has a header of `// #name`, `// #description`, `// #tags` and `// #args` comments. `list_scripts` and the `execute_script` tool description both report that metadata, so the agent can pick a script and fill in its arguments on its own.
 
 A script gets its own Harmony instance, a logger and a dictionary of its arguments, and its patches and GameObjects are cleaned up when it unloads. The format, the lifecycle, the ScriptContext API and the .NET 3.5 constraints are in [scripts/csharp/README.md](scripts/csharp/README.md). You can run a script that isn't in the library by passing an absolute path to it, it just won't show up in the catalog.
 

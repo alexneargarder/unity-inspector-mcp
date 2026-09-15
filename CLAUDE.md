@@ -60,12 +60,33 @@ Claude Code --stdio/MCP--> wrapper.js --stdio--> index.js --TCP:9999--> Unity In
 4. Node-only (file ops, process management): handle directly, no `sendCommand`
 5. Matching handler in `BroforceMods/Unity Inspector Mod/Unity Inspector Mod/MessageHandler.cs`
 
+### list_enemies
+
+The tool is a thin `sendCommand`; everything below is the mod's `HandleListEnemies`.
+
+- **The set**: the union of the game's own unit registry (`Map.units`) and a scene sweep of `NetworkedUnit`, since `Boss` derives from `NetworkedUnit` rather than `Unit` and sandworms never register. Duplicates are dropped by instance id. Entries are kept only when the GameObject is `activeInHierarchy` — `Map.units` holds inactive pre-spawned units, 52 face huggers on `Challenge_Alien` — and only when the game's own `IsEnemy` is true. `IsEnemy` means "not a hero and not a rescue bro", so neutral characters (villagers, citizens, animals) and a vehicle a player is currently piloting count, a tank's weapons are units of their own beside the tank, and a `BossTank` contributes dozens of `BossPiece` entries that all report the rig's origin as their position
+- **`unitType` and `category`**: RocketLib classifies `Unit`/`TestVanDammeAnim`, so a `NetworkedUnit` that is neither reports both as null; a `Unit` RocketLib cannot classify reports `None`/`none`. `category` comes from a static dictionary built once from RocketLib's eight `UnitTypes` group arrays (`NormalUnits`, `AlienUnits`, `HellUnits`, `BossUnits`, `WormUnits`, `VehicleEnemies`, `FriendlyUnits`, `OtherUnits`) in that precedence — the arrays are disjoint, so precedence is only insurance. A type in no array reads `unknown`, which today is only `Bro`, and `IsEnemy` keeps that out of the list
+- **Suppression**, reported only when the count is 0 and a level is loaded: `enemySpawnSuppressed`/`suppressedBy` assert a suppressor is active *right now* — Utility Mod loaded, enabled, and its `disableEnemySpawn` setting on, read by reflection through the mod's settings — so the level loaded with its enemies skipped rather than being empty. `enemySpawnPrefixOwners` is informational: every mod holding a Harmony prefix on the game's enemy placement or runtime spawn methods, i.e. who *could* suppress. A prefix may test its own settings before acting, so an owner there is no evidence anything was suppressed
+- A response carrying `error` is a failed call — a main-thread timeout or an exception — and its `count`, `mapLoaded` and `enemies` are not observations of the level
+
+### Tool notes
+
+Behaviour the tool descriptions are too small to carry.
+
+- **`game_state`**: the one gameplay scene is `Test Evan2` and the world map is `WorldMap3D`; `levelName` is null on the challenge maps, which carry none, and `levelNumber` is the number `go_to_level`'s success message names
+- **`go_to_level`**: a `levelIndex` past the campaign's last level loads the Victory map, and the success message still names the level number that was asked for
+- **`take_screenshot`**: a highlighted GameObject is outlined at its own renderer bounds, else its own collider bounds, else the combined bounds of its child renderers
+- **`inspect_component` / `modify_component`**: `suggestions` are the closest paths, qualified with the prefix that resolved
+- **`modify_component`**: `not-found` is no such field or property on the type, `read-only` one that exists with no setter or is a const field — readonly fields are written — and `error` a value that could not be converted, a setter that threw, or a dotted path that could not be walked: an empty segment, a `shared*` twin that would copy on read, an intermediate read that threw, or a null or destroyed intermediate
+- **`spawn_entity`**: `Mook` units spawn alert, grounded and networked like level-placed enemies; `Facehugger` and `Screecher` go through the game's own local spawn helpers, so they are neither parented nor in the deterministic registry; every other unit is instantiated locally, parented to the map and registered, with `xI`/`yI` as its initial velocity. A mod suppressing enemy spawns (Utility Mod's `disableEnemySpawn`) fails a networked spawn, and the error names the patch owners
+
 ### Timeouts
 
 `commandTimeout()` in `lib/unity-client.js`:
 - default 6s — keep above the game's 5s `MainThreadDispatcher` budget
 - `execute_script` / `compile_script`: 30s
-- `unload_script` / `execute_code`: 10s — keep above the mod's own 9s `execute_code` budget
+- `execute_code`: 10s — keep above the mod's own 9s `execute_code` budget
+- `unload_script`: 20s — keep above the mod's teardown, a 10s `Unload()` wait plus a 5s tracked-object destroy, so a timed-out stage's still-loaded refusal reaches the caller
 - scene commands (`go_to_level`, `restart_level`, `swap_bro`, `set_bro`, `take_screenshot`): 10s
 - `simulate_input` with a non-empty `sequence`: the sum of each step's (duration ?? 50) + (wait ?? 0), + 1s, floored at the 6s default
 - `simulate_input` with count > 1: (count − 1) × interval + count × (duration ?? 50) + 1s, floored the same way
