@@ -1,4 +1,4 @@
-import '../test-support/session.js';
+import './support/session.js';
 import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs/promises';
@@ -21,7 +21,7 @@ import {
   resetInstanceModeProbe,
   scanGameProcesses,
 } from '../lib/game-process.js';
-import { FAKE_BOOT_TIME_MS, fakeFileSystem, fakeProcReader, recordingKill } from '../test-support/fake-proc.js';
+import { FAKE_BOOT_TIME_MS, fakeFileSystem, fakeProcReader, recordingKill } from './support/fake-proc.js';
 
 // These tests own their launch command: an inherited one would change what they mean
 delete process.env.BROFORCE_LAUNCH_CMD;

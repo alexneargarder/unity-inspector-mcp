@@ -1,4 +1,4 @@
-import '../test-support/session.js';
+import './support/session.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'path';
@@ -10,7 +10,7 @@ import {
   resolveTestScriptPath,
   runTestScript,
   validateTestScriptSteps,
-  EXAMPLE_SCRIPTS_DIR,
+  TEST_SCRIPTS_DIR,
 } from '../lib/script-library.js';
 
 test('parseScriptMetadata reads a header preceded by blank lines and a banner', () => {
@@ -50,28 +50,44 @@ test('readScriptSource loads a library script by bare name', async () => {
   assert.match(script.source, /WatchField/);
 });
 
-test('list_test_scripts finds the shipped examples', async () => {
-  const listing = await listTestScripts();
-  const names = listing.scripts.map((s) => s.name);
+const SHIPPED_TEST_SCRIPTS = [
+  'example-combat-test.json',
+  'example-level-sequence.json',
+  'example-movement-test.json',
+  'execute-code-errors.json',
+  'input-sequence.json',
+];
 
-  for (const example of [
-    'example-combat-test.json',
-    'example-level-sequence.json',
-    'example-movement-test.json',
-  ]) {
-    assert.ok(names.includes(example), `expected ${example} in ${JSON.stringify(names)}`);
-  }
-  assert.ok(listing.count >= 3);
+test('list_test_scripts finds every script shipped in scripts/tests', async () => {
+  const listing = await listTestScripts();
+  const names = listing.scripts.map((s) => s.name).sort();
+
+  assert.deepEqual(names, SHIPPED_TEST_SCRIPTS);
+  assert.equal(listing.count, SHIPPED_TEST_SCRIPTS.length);
+  assert.equal(listing.scriptsDirectory, TEST_SCRIPTS_DIR);
 });
 
-test('run_test_script resolves a shipped example by name', async () => {
+test('run_test_script resolves a shipped script by name', async () => {
   const resolved = await resolveTestScriptPath('example-combat-test');
-  assert.equal(resolved, path.join(EXAMPLE_SCRIPTS_DIR, 'example-combat-test.json'));
+  assert.equal(resolved, path.join(TEST_SCRIPTS_DIR, 'example-combat-test.json'));
 
   const withExtension = await resolveTestScriptPath('example-movement-test.json');
-  assert.equal(withExtension, path.join(EXAMPLE_SCRIPTS_DIR, 'example-movement-test.json'));
+  assert.equal(withExtension, path.join(TEST_SCRIPTS_DIR, 'example-movement-test.json'));
+
+  const relative = await resolveTestScriptPath('./input-sequence.json');
+  assert.equal(relative, path.join(TEST_SCRIPTS_DIR, 'input-sequence.json'));
+
+  const absolute = path.join(TEST_SCRIPTS_DIR, 'execute-code-errors.json');
+  assert.equal(await resolveTestScriptPath(absolute), absolute);
 
   await assert.rejects(resolveTestScriptPath('no-such-script'), /Test script not found/);
+});
+
+test('run_test_script refuses a relative name that escapes scripts/tests', async () => {
+  await assert.rejects(
+    resolveTestScriptPath('../csharp/watch-field.json'),
+    /escapes the script library/
+  );
 });
 
 test('test scripts reject steps that only the MCP server can run', () => {
@@ -91,14 +107,10 @@ test('test scripts reject steps that only the MCP server can run', () => {
   assert.match(problems[3], /step 6: missing "command"/);
 });
 
-test('the shipped examples only use game-side commands', async () => {
+test('the shipped test scripts only use game-side commands', async () => {
   const { readFile } = await import('fs/promises');
-  for (const name of [
-    'example-combat-test.json',
-    'example-level-sequence.json',
-    'example-movement-test.json',
-  ]) {
-    const script = JSON.parse(await readFile(path.join(EXAMPLE_SCRIPTS_DIR, name), 'utf-8'));
+  for (const name of SHIPPED_TEST_SCRIPTS) {
+    const script = JSON.parse(await readFile(path.join(TEST_SCRIPTS_DIR, name), 'utf-8'));
     assert.deepEqual(validateTestScriptSteps(script.steps), [], `${name} has unsupported steps`);
   }
 });

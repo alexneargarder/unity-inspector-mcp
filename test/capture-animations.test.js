@@ -1,4 +1,4 @@
-import { NO_LISTENER_PORT } from '../test-support/session.js';
+import { NO_LISTENER_PORT } from './support/session.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -45,7 +45,7 @@ import {
 } from '../lib/animation-capture.js';
 import { UnityInspectorClient } from '../lib/unity-client.js';
 import { CSHARP_SCRIPTS_DIR, SCRIPTS_DIR, listCSharpScripts } from '../lib/script-library.js';
-import { startStubServer, reply } from '../test-support/stub-server.js';
+import { startStubServer, reply } from './support/stub-server.js';
 
 // session.js leaves UNITY_INSPECTOR_PORT on a port with no listener: a live game would leave the
 // module-level client's socket open and hang the run. Every handleToolCall test points it at its own

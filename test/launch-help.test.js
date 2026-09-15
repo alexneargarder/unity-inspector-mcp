@@ -1,11 +1,11 @@
-import '../test-support/session.js';
+import './support/session.js';
 import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 
-import { writeStubLauncher } from '../test-support/stub-launcher.js';
+import { writeStubLauncher } from './support/stub-launcher.js';
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'launch-help-'));
 const binDir = await fs.mkdtemp(path.join(os.tmpdir(), 'launch-help-bin-'));

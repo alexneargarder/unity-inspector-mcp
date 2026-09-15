@@ -1277,7 +1277,7 @@ export async function buildToolList() {
       },
       {
         name: "list_test_scripts",
-        description: "List all available test scripts in scripts/ and scripts/examples/",
+        description: "List all available test scripts in scripts/tests/",
         inputSchema: {
           type: "object",
           properties: {},
@@ -1347,7 +1347,7 @@ export async function buildToolList() {
           properties: {
             script: {
               type: "string",
-              description: "Script name (from scripts/ or scripts/examples/) or absolute file path",
+              description: "Script name (from scripts/tests/) or absolute file path",
             },
           },
           required: ["script"],

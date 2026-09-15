@@ -1,4 +1,4 @@
-import '../test-support/session.js';
+import './support/session.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -8,7 +8,7 @@ import {
   DEFAULT_COMMAND_TIMEOUT_MS,
   SCENE_COMMAND_TIMEOUT_MS,
 } from '../lib/unity-client.js';
-import { startStubServer, reply } from '../test-support/stub-server.js';
+import { startStubServer, reply } from './support/stub-server.js';
 
 function connectedClient(port) {
   return new UnityInspectorClient({ host: '127.0.0.1', port, connectTimeoutMs: 2000 });

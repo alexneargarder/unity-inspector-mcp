@@ -1,8 +1,8 @@
-import '../test-support/session.js';
+import './support/session.js';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { startStubServer, reply } from '../test-support/stub-server.js';
+import { startStubServer, reply } from './support/stub-server.js';
 
 const requests = [];
 const stub = await startStubServer((request, socket) => {

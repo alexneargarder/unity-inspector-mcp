@@ -1,12 +1,12 @@
-import { NO_OP_LAUNCH_CMD } from '../test-support/session.js';
+import { NO_OP_LAUNCH_CMD } from './support/session.js';
 import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 
-import { STUB_GAME_ROOT, fakeInspector, instanceListJsonl, seedInstanceDir, useStubLauncher, writeStubStopCommand } from '../test-support/stub-launcher.js';
-import { fakeFileSystem, fakeProcReader } from '../test-support/fake-proc.js';
+import { STUB_GAME_ROOT, fakeInspector, instanceListJsonl, seedInstanceDir, useStubLauncher, writeStubStopCommand } from './support/stub-launcher.js';
+import { fakeFileSystem, fakeProcReader } from './support/fake-proc.js';
 
 const isLinux = process.platform === 'linux';
 const SESSION = 'launch-session-a41f';

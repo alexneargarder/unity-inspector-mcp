@@ -1,4 +1,4 @@
-import '../test-support/session.js';
+import './support/session.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs/promises';

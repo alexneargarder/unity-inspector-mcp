@@ -1,19 +1,18 @@
 # Test Scripts
 
-This directory contains test scripts for automating Unity Inspector commands. Test scripts allow you to create repeatable test sequences for debugging and testing game behavior.
+`tests/` holds the JSON test scripts that automate Unity Inspector commands. Test scripts allow you to create repeatable test sequences for debugging and testing game behavior.
 
 ## Directory Structure
 
 ```
 scripts/
-├── README.md           # This file
-├── examples/           # Example scripts, listed by list_test_scripts too
-│   ├── example-movement-test.json
-│   ├── example-combat-test.json
-│   └── example-level-sequence.json
-├── csharp/             # C# script library (see csharp/README.md)
-└── your-scripts.json   # Your custom test scripts go here
+├── README.md   # This file
+├── csharp/     # The C# script library (see csharp/README.md)
+└── tests/      # Every test script in the repo
 ```
+
+A script outside the repo runs by absolute path, so there is no need to
+copy your own scripts into this tree.
 
 ## Script Format
 
@@ -228,15 +227,17 @@ You can use any Unity Inspector MCP tool in your scripts:
 
 ### From Claude Code
 
-Use the `run_test_script` tool with the script name:
+Use the `run_test_script` tool with the name of a script in `tests/`:
 ```
-run_test_script with script: "your-script.json"
+run_test_script with script: "example-movement-test.json"
 ```
 
 Or with just the base name:
 ```
-run_test_script with script: "your-script"
+run_test_script with script: "example-movement-test"
 ```
+
+A bare or relative name resolves inside `tests/`; a script kept anywhere else takes its absolute path.
 
 Or with an absolute path:
 ```
@@ -245,10 +246,10 @@ run_test_script with script: "/full/path/to/script.json"
 
 ### Listing Scripts
 
-Use the `list_test_scripts` tool to see all available scripts in this directory.
+Use the `list_test_scripts` tool to see all available scripts in `tests/`.
 
 ## See Also
 
-- Check `examples/` for complete working examples
+- Check `tests/` for complete working examples
 - See main README.md for Unity Inspector setup
 - Unity Inspector Mod documentation for available game commands

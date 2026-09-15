@@ -176,7 +176,7 @@ Once a script is loaded, the types it defines are in scope for `execute_code`, b
 
 ## Test scripts
 
-Test scripts are JSON files with a sequence of game commands and optional waits between the steps, for reproducing the same scenario identically every run. There are three examples in `scripts/examples/` and the format is covered in [scripts/README.md](scripts/README.md). Steps go straight to the game, so server side tools like `read_log` and `launch_game` get rejected before the run starts.
+Test scripts are JSON files with a sequence of game commands and optional waits between the steps, for reproducing the same scenario identically every run. Every test script in the repo is in `scripts/tests/`: three examples and the repo's own contract checks. A script of your own runs by absolute path, and the format is covered in [scripts/README.md](scripts/README.md). Steps go straight to the game, so server side tools like `read_log` and `launch_game` get rejected before the run starts.
 
 The `capture_animations` tool drives its own in-game script end to end — level, bro swap, sweep, report — out of `lib/animation-capture/`, where relative `states` names resolve and `states/base-states.json` is the shape a state list follows.
 

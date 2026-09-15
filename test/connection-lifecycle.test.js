@@ -1,9 +1,9 @@
-import '../test-support/session.js';
+import './support/session.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { UnityInspectorClient, defaultPort, DEFAULT_PORT } from '../lib/unity-client.js';
-import { startStubServer, reply } from '../test-support/stub-server.js';
+import { startStubServer, reply } from './support/stub-server.js';
 
 const echoStub = (request, socket) => reply(socket, request.id, { from: request.method });
 

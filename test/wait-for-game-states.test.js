@@ -1,8 +1,8 @@
-import '../test-support/session.js';
+import './support/session.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { startStubServer } from '../test-support/stub-server.js';
+import { startStubServer } from './support/stub-server.js';
 import { isGameRunning } from '../lib/game-process.js';
 
 // The port must be set before index.js is imported: the module-level client reads it at construction

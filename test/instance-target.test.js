@@ -1,12 +1,12 @@
-import { NO_LISTENER_PORT } from '../test-support/session.js';
+import { NO_LISTENER_PORT } from './support/session.js';
 import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 
-import { fakeInspector, instanceListJsonl, useStubLauncher } from '../test-support/stub-launcher.js';
-import { fakeProcReader } from '../test-support/fake-proc.js';
+import { fakeInspector, instanceListJsonl, useStubLauncher } from './support/stub-launcher.js';
+import { fakeProcReader } from './support/fake-proc.js';
 
 const isLinux = process.platform === 'linux';
 const SESSION = 'target-session-8c02';

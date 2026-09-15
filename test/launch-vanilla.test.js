@@ -1,4 +1,4 @@
-import { NO_OP_LAUNCH_CMD } from '../test-support/session.js';
+import { NO_OP_LAUNCH_CMD } from './support/session.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs/promises';

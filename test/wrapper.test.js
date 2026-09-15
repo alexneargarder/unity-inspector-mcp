@@ -1,8 +1,8 @@
-import '../test-support/session.js';
+import './support/session.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { startWrapper } from '../test-support/wrapper-harness.js';
+import { startWrapper } from './support/wrapper-harness.js';
 
 const posix = process.platform !== 'win32';
 

@@ -1,4 +1,4 @@
-import '../test-support/session.js';
+import './support/session.js';
 import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs/promises';
@@ -6,8 +6,8 @@ import { readFileSync } from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { startWrapper } from '../test-support/wrapper-harness.js';
-import { writeStubLauncher } from '../test-support/stub-launcher.js';
+import { startWrapper } from './support/wrapper-harness.js';
+import { writeStubLauncher } from './support/stub-launcher.js';
 
 const isLinux = process.platform === 'linux';
 const SESSION = 'wrapper-session-77b0';

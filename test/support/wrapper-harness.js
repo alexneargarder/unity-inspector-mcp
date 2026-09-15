@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 import { mkdtempSync, rmSync } from 'fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const WRAPPER_PATH = path.join(__dirname, '..', 'wrapper.js');
+const WRAPPER_PATH = path.join(__dirname, '..', '..', 'wrapper.js');
 const STUB_CHILD_PATH = path.join(__dirname, 'stub-child.js');
 
 export function startWrapper(env = {}) {
