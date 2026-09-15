@@ -6,6 +6,10 @@ const { buildToolList, handleToolCall, resolvePollBudget } = await import('../in
 const { isGameRunning } = await import('../lib/game-process.js');
 const { NODE_ONLY_TOOLS, validateTestScriptSteps } = await import('../lib/script-library.js');
 
+// The tool list ships to clients on every session start; these limits keep growth deliberate.
+const MAX_TOOL_CHARS = 2800;
+const MAX_TOTAL_CHARS = 26000;
+
 function textOf(response) {
   return response.content.map((c) => c.text).join('\n');
 }
@@ -154,4 +158,24 @@ test('unusable poll budgets fall back instead of producing NaN deadlines', () =>
 
   assert.deepEqual(resolvePollBudget(0, 10), { budgetMs: 0, intervalMs: 250 }, 'the interval has a floor');
   assert.deepEqual(resolvePollBudget(1500, 500), { budgetMs: 1500, intervalMs: 500 });
+});
+
+test('the tool list stays within its size limits', async () => {
+  const tools = await buildToolList();
+  const sizes = tools.map((tool) => ({ name: tool.name, size: JSON.stringify(tool).length }));
+
+  for (const { name, size } of sizes) {
+    assert.ok(size <= MAX_TOOL_CHARS, `${name} is ${size} chars, over the ${MAX_TOOL_CHARS}-char limit`);
+  }
+
+  const total = sizes.reduce((sum, { size }) => sum + size, 0);
+  const largest = [...sizes]
+    .sort((a, b) => b.size - a.size)
+    .slice(0, 3)
+    .map(({ name, size }) => `${name} (${size})`)
+    .join(', ');
+  assert.ok(
+    total <= MAX_TOTAL_CHARS,
+    `tool list is ${total} chars, over the ${MAX_TOTAL_CHARS}-char limit; largest tools: ${largest}`,
+  );
 });

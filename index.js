@@ -1410,82 +1410,54 @@ export async function buildToolList() {
       {
         name: "capture_animations",
         description:
-          "Sweep a bro's animation states into frame strips. Loads a level, swaps the bro, then runs the animation-capture C# script " +
-          "in the game with the clock held at zero: it writes one PNG strip per state (frames left to right), a `capture.json` " +
-          "recording the sprite-sheet cell every frame addressed, the merged `states.json` it swept, and a `report.md` comparing " +
-          "what was addressed against what the state list expected. The report text comes back in the reply as well as being written.\n\n" +
-          "- `out` — absolute directory the output lands in. The sweep deletes every `.png` in it first, so a directory that already " +
-          "holds files is only accepted when it holds a `states.json` from an earlier sweep; an empty or non-existent one is always fine.\n" +
-          "- `gameOut` — the same directory as the game's filesystem sees it (default: `out`). Only a Proton or WSL install needs it; " +
-          "a wrong value surfaces as the script's `state file not found` error.\n" +
-          "- `level` — \"CAMPAIGN:LEVEL\" to load first, then wait (up to `timeout`) for that player to spawn alive. A game sitting in " +
-          "the intro scene has no player and the bro swap fails against it; the campaign index must be one the game has (list_campaigns prints them).\n" +
-          "- `settle` — seconds to wait after the level reports its player (default 3, only used with `level`). The player goes live about " +
-          "a second before the world renders, and a sweep started in that gap captures nothing.\n" +
-          "- `bro` — bro to swap to first (vanilla or BroMaker display names; needs Swap Bros Mod). The swap is confirmed by the slot's " +
-          "character changing, never by matching the requested name, so a landed swap means the slot changed and not that it changed to " +
-          "the bro asked for. The reply's `swap` says which, and reports `alreadyHeld` when the slot already held it.\n" +
-          "- `swapTimeout` — seconds to wait for the slot to report the change (default 15). Past it the run fails without sweeping, " +
-          "rather than stripping whatever the slot holds.\n" +
-          "- `swapSettle` — seconds to wait after the swap lands (default 2, only used with `bro`). swap_bro answers while the old " +
-          "character is still the one being drawn.\n" +
-          "- `states` — state lists to sweep, in layer order (default: `base-states.json`); a single string is taken as one layer. A " +
-          "relative name resolves under `lib/animation-capture/states/` and must stay inside it; absolute paths are used as given. A later " +
-          "layer's entry replaces an earlier one of the same name and keeps its position.\n" +
-          "- `timeout` — seconds for the sweep, and for `level`'s player to spawn (default 60; a full sweep takes about 2).\n" +
-          "- `player` — player index to capture, 0-3 (default 0). `box` — world-unit half-size of the crop box; each strip cell is " +
-          "2*box px (the script's own default is 24).\n" +
-          "- `includeLethal` — also sweep the states that kill the player; without it they are left out and listed as excluded.\n" +
-          "- `allowSideEffects` — let the swept animations fire their real specials and attacks. Needed to see a sprite-sheet swap " +
-          "performed inside UseSpecial; costs ammo and damages the level.\n\n" +
-          "With the defaults the worst case is about 80s without level (swap timeout, swap settle and the sentinel timeout in a row) and about 140s with it, since the level's player gets the same timeout to spawn. " +
-          "`report.md` and `capture.json` land in `out` whether or not the caller is still waiting, so a client that gives up first can " +
-          "read them off disk. While a sweep runs, launch_game, wait_for_game and a second capture_animations are refused; stop_game is " +
-          "not, and ends the sweep within one poll. A server stopped mid-sweep (a signal, restart_server) unloads the script and restores " +
-          "the game speed on its way out, unless that teardown overruns the wrapper's grace period.",
+          "Sweep a bro's animation states with the game clock held at zero, optionally loading a level and swapping the bro first: one " +
+          "PNG strip per state, a `capture.json` of the sprite-sheet cell every frame addressed, and a `report.md` comparing those " +
+          "against the state list, all into `out`. The reply carries `success`, `status` " +
+          "(`done`/`error`/`timeout`/`game-gone`), the report text and the paths written. Full reference: " +
+          "`.claude/rules/animation-capture.md` (state-list format, argument behaviour).",
         inputSchema: {
           type: "object",
           properties: {
             out: {
               type: "string",
-              description: "Absolute path to the directory the strips, capture.json, states.json and report.md are written to",
+              description: "Absolute output directory",
             },
             gameOut: {
               type: "string",
-              description: "The same directory as the game's filesystem sees it (default: out)",
+              description: "out as the game's filesystem sees it (default: out)",
             },
             bro: {
               type: "string",
-              description: "Bro to swap to before the sweep (Swap Bros Mod display name)",
+              description: "Bro to swap to first (Swap Bros Mod display name)",
             },
             level: {
               type: "string",
-              description: "Campaign and level to load first, as \"CAMPAIGN:LEVEL\" (e.g. \"1:0\")",
+              description: "Level to load first, CAMPAIGN:LEVEL (e.g. 1:0)",
             },
             states: {
               type: ["array", "string"],
               items: { type: "string" },
-              description: "State lists to sweep, in layer order. Relative names resolve under lib/animation-capture/states/ (default: base-states.json)",
+              description: "Layered state lists, relative to lib/animation-capture/states/ (default: base-states.json)",
             },
             settle: {
               type: "number",
               minimum: 0,
-              description: "Seconds to wait after the level reports its player (default: 3, only used with level)",
+              description: "Seconds after the level's player spawns (default: 3)",
             },
             swapSettle: {
               type: "number",
               minimum: 0,
-              description: "Seconds to wait after the bro swap lands (default: 2, only used with bro)",
+              description: "Seconds after the swap lands (default: 2)",
             },
             swapTimeout: {
               type: "number",
               minimum: 1,
-              description: "Seconds to wait for the slot to report the swapped-in character (default: 15)",
+              description: "Seconds to wait for the swap (default: 15)",
             },
             timeout: {
               type: "number",
               minimum: 1,
-              description: "Seconds to wait for the sweep, and for level's player to spawn (default: 60)",
+              description: "Seconds for the sweep and the level wait (default: 60)",
             },
             player: {
               type: "integer",
@@ -1496,15 +1468,15 @@ export async function buildToolList() {
             box: {
               type: "number",
               minimum: 1,
-              description: "World-unit half-size of the crop box; each strip cell is 2*box px (script default: 24)",
+              description: "Crop-box half-size in world units; cells are 2*box px (default: 24)",
             },
             includeLethal: {
               type: "boolean",
-              description: "Also sweep the states that kill the player (default: false)",
+              description: "Also sweep states that kill the player (default: false)",
             },
             allowSideEffects: {
               type: "boolean",
-              description: "Let the swept animations fire their real specials and attacks (default: false)",
+              description: "Let animations fire real specials/attacks (default: false)",
             },
           },
           required: ["out"],

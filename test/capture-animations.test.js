@@ -2191,13 +2191,13 @@ test('the capture_animations schema carries every argument and the bounds the sw
   assert.equal(properties.includeLethal.type, 'boolean');
   assert.equal(properties.allowSideEffects.type, 'boolean');
 
-  // The defaults the description promises are the ones the library holds
-  assert.match(description, new RegExp(`default ${DEFAULT_SETTLE_MS / 1000}`));
-  assert.match(description, new RegExp(`default ${DEFAULT_SWAP_SETTLE_MS / 1000}`));
-  assert.match(description, new RegExp(`default ${DEFAULT_SWAP_TIMEOUT_MS / 1000}`));
-  assert.match(description, new RegExp(`default ${DEFAULT_TIMEOUT_MS / 1000}`));
-  assert.match(description, /about 80s without level.*about 140s with it/, 'the caller is told what it is waiting for');
-  assert.match(description, /read them off disk/, 'and that the files land whether it waits or not');
+  // The defaults each argument promises are the ones the library holds
+  assert.match(properties.settle.description, new RegExp(`default: ${DEFAULT_SETTLE_MS / 1000}`));
+  assert.match(properties.swapSettle.description, new RegExp(`default: ${DEFAULT_SWAP_SETTLE_MS / 1000}`));
+  assert.match(properties.swapTimeout.description, new RegExp(`default: ${DEFAULT_SWAP_TIMEOUT_MS / 1000}`));
+  assert.match(properties.timeout.description, new RegExp(`default: ${DEFAULT_TIMEOUT_MS / 1000}`));
+  assert.match(description, /report\.md/, 'the description says what the sweep writes');
+  assert.match(description, /animation-capture\.md/, 'and where the full reference lives');
 });
 
 test('capture_animations refuses an out that is missing, relative or not a directory', async (t) => {
