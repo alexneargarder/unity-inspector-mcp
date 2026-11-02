@@ -14,7 +14,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import { UnityInspectorClient, defaultPort } from './lib/unity-client.js';
-import { captureCommandHelp, composeExtraLaunchArgs, detectActiveProfile, gameStartTime, instanceModeChecked, invalidateGameProcessScan, isGameRunning, killGame, listInstances, ownedGameProcesses, probeInstanceMode, readValidatedPidfile, removeInstance, resolveLaunchCommand, runCommandCapture, spawnDetached } from './lib/game-process.js';
+import { captureCommandHelp, composeExtraLaunchArgs, detectActiveProfile, forgetCommandHelp, gameStartTime, instanceModeChecked, invalidateGameProcessScan, isGameRunning, killGame, listInstances, ownedGameProcesses, probeInstanceMode, readValidatedPidfile, removeInstance, resolveLaunchCommand, runCommandCapture, spawnDetached } from './lib/game-process.js';
 import { NO_INSTANCE_REASONS, instanceConfig, launcherConfig, steamConfig, withRoot } from './lib/instance.js';
 import { tokenizeCommand } from './lib/command-line.js';
 import { CAPTURE_FILE, CAPTURE_STATES_DIR, DEFAULT_SETTLE_MS, DEFAULT_STATES_PATH, DEFAULT_SWAP_SETTLE_MS, DEFAULT_SWAP_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, REPORT_FILE, STATES_COPY_NAME, formatLogTail, parseLevel, runCapture, teardownGame } from './lib/animation-capture.js';
@@ -458,11 +458,49 @@ export async function pointClientAtTarget() {
   return port;
 }
 
-// This server knows none of the launch command's flags, so the command speaks for itself: its
-// --help is captured at startup, and only a --help that lists --args-help is followed up, since an
-// unknown launcher handed an unknown flag by name might launch the game instead of explaining itself
 const ARGS_HELP_FLAG = '--args-help';
 const ARGS_HELP_MAX_BYTES = 1024;
+const ARGS_HELP_HEADER = /^\[[^\]]+\]$/;
+const ARGS_HELP_LABELS = { '[instance launch]': 'instance', '[plain launch]': 'plain' };
+
+function cutToBytes(text, max) {
+  const bytes = Buffer.from(text, 'utf8');
+  if (bytes.length <= max) return text;
+  // Back off to the start of the character the cut fell inside
+  let end = max;
+  while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--;
+  return bytes.subarray(0, end).toString('utf8');
+}
+
+function argsHelpBlock(text) {
+  const truncated = Buffer.byteLength(text) > ARGS_HELP_MAX_BYTES;
+  return { text: truncated ? cutToBytes(text, ARGS_HELP_MAX_BYTES) : text, truncated };
+}
+
+function parseArgsHelp(text) {
+  const sections = {};
+  let label = 'unlabelled';
+  let labelled = false;
+  let held = [];
+  const close = () => {
+    const body = held.join('\n').trim();
+    if (label !== null && body !== '' && sections[label] === undefined) sections[label] = argsHelpBlock(body);
+    held = [];
+  };
+  for (const raw of String(text).replace(/\r\n/g, '\n').split('\n')) {
+    const line = raw.trimEnd();
+    if (ARGS_HELP_HEADER.test(line)) {
+      if (labelled) close();
+      else held = [];
+      labelled = true;
+      label = ARGS_HELP_LABELS[line] ?? null;
+      continue;
+    }
+    if (label !== null) held.push(raw);
+  }
+  close();
+  return sections;
+}
 
 export function launchCommandTokens(env = process.env) {
   const custom = (env.BROFORCE_LAUNCH_CMD || '').trim();
@@ -475,48 +513,203 @@ export function launchCommandTokens(env = process.env) {
   }
 }
 
-let launchHelpCapture = null;
+const ARGS_HELP_GRACE_MS = 1500;
+const UNSETTLED = Symbol('still being asked');
+
+const argsHelpCaptures = new Map();
+const argsHelpRetries = new Set();
+const NOT_ASKED = { background: true, settled: false, value: UNSETTLED, promise: null };
+
+let renderedTail = null;
+let announcedTail = null;
+let launcherReadiness = { settled: false, value: UNSETTLED, promise: null };
+let tailFollowUp = null;
 
 export function resetLaunchHelpCapture() {
-  launchHelpCapture = null;
+  argsHelpCaptures.clear();
+  argsHelpRetries.clear();
+  renderedTail = null;
+  announcedTail = null;
+  launcherReadiness = { settled: false, value: UNSETTLED, promise: null };
+  tailFollowUp = null;
 }
 
-// Started at startup so no tool listing pays for it, and awaited by the listing that quotes it
-export function startLaunchHelpCapture() {
-  const tokens = launchCommandTokens();
-  if (tokens === null) return null;
+function argsHelpRecord(tokens, { startRetry = true } = {}) {
+  if (tokens === null || tokens.length === 0) return null;
+  const key = JSON.stringify(tokens);
+  const running = argsHelpCaptures.get(key);
+  if (running !== undefined) return running;
+  if (!startRetry && argsHelpRetries.has(key)) return NOT_ASKED;
+
   const command = tokens.join(' ');
-  const noHelp = { command, argsHelp: null, truncated: false };
-  launchHelpCapture ??= (async () => {
+  const noHelp = { command, sections: {}, unknown: false };
+  const record = { background: argsHelpRetries.has(key), settled: false, value: UNSETTLED, promise: null };
+  record.promise = (async () => {
     const help = await captureCommandHelp(tokens[0], tokens.slice(1));
-    if (help.error !== null || !help.text.includes(ARGS_HELP_FLAG)) return noHelp;
+    if (help.error !== null || help.code !== 0) return { ...noHelp, unknown: true };
+    if (!help.text.includes(ARGS_HELP_FLAG)) return noHelp;
 
     const printed = await runCommandCapture(tokens[0], [...tokens.slice(1), ARGS_HELP_FLAG]);
     if (printed.error !== null || printed.text === '') return noHelp;
 
-    const truncated = printed.text.length > ARGS_HELP_MAX_BYTES;
-    return {
-      command,
-      argsHelp: truncated ? printed.text.slice(0, ARGS_HELP_MAX_BYTES) : printed.text,
-      truncated,
-    };
-  })().catch(() => noHelp);
-  return launchHelpCapture;
+    return { command, sections: parseArgsHelp(printed.text), unknown: false };
+  })().catch(() => noHelp).then((capture) => {
+    record.settled = true;
+    record.value = capture;
+    if (capture.unknown) {
+      if (argsHelpCaptures.get(key) === record) argsHelpCaptures.delete(key);
+      argsHelpRetries.add(key);
+      forgetCommandHelp(tokens[0], tokens.slice(1));
+    }
+    return capture;
+  });
+  argsHelpCaptures.set(key, record);
+  return record;
 }
 
-// What launch_game tells a caller about the arguments it may pass, in the launch command's own words
-export async function launchArgumentHelp() {
-  const capture = await startLaunchHelpCapture();
-  if (capture === null) {
-    return "\n\nThe Steam protocol launch takes no arguments, so launchArgs are not accepted.";
+function instanceLauncherTokens() {
+  const { launchCommand, leadingArgs } = sessionLauncher();
+  return launchCommand === null ? null : [launchCommand, ...leadingArgs];
+}
+
+export function startLaunchHelpCapture() {
+  return argsHelpRecord(launchCommandTokens())?.promise ?? null;
+}
+
+export async function startInstanceHelpCapture() {
+  if (!launcherIsUsable()) return null;
+  if (!(await instanceTargetReady())) return null;
+  return argsHelpRecord(instanceLauncherTokens())?.promise ?? null;
+}
+
+function readinessRecord({ refresh }) {
+  const readiness = launcherReadiness;
+  if (readiness.promise === null && readiness.value !== true && (refresh || readiness.value === UNSETTLED)) {
+    readiness.promise = instanceTargetReady().then((ready) => ready, () => false).then((ready) => {
+      readiness.settled = true;
+      readiness.value = ready;
+      readiness.promise = null;
+      return ready;
+    });
   }
-  if (capture.argsHelp === null) {
-    return "\n\nThe configured launch command publishes no argument help, so launchArgs pass through to it as given.";
-  }
-  return "\n\nArguments the configured launch command accepts, in its own words:\n```\n" +
-    capture.argsHelp +
-    (capture.truncated ? `\n[cut off at ${ARGS_HELP_MAX_BYTES} bytes]` : '') +
+  return readiness;
+}
+
+async function settleWithin(record, deadline) {
+  const left = deadline - Date.now();
+  if (left > 0) await Promise.race([record.promise, delay(left)]);
+  return record.value;
+}
+
+async function captureWithin(record, deadline) {
+  if (record === null) return null;
+  if (record.value !== UNSETTLED) return record.value;
+  if (record.background || record.promise === null) return UNSETTLED;
+  return settleWithin(record, deadline);
+}
+
+function argsHelpQuote(block) {
+  return "\n```\n" + block.text +
+    (block.truncated ? `\n[cut off at ${ARGS_HELP_MAX_BYTES} bytes]` : '') +
     "\n```";
+}
+
+function renderArgumentHelp(instance, launch) {
+  const known = (capture) => capture !== null && capture !== UNSETTLED && !capture.unknown;
+  const blockFor = (capture, launchLabel) => capture.sections[launchLabel] ?? capture.sections.unlabelled ?? null;
+  const labelled = (capture) => capture.sections.instance !== undefined || capture.sections.plain !== undefined;
+
+  if (instance === null) {
+    if (launch === null) {
+      return "\n\nThe Steam protocol launch takes no arguments, so launchArgs are not accepted.";
+    }
+    if (!known(launch)) return '';
+    const block = blockFor(launch, 'plain');
+    return block === null
+      ? "\n\nThe configured launch command publishes no argument help, so launchArgs pass through to it as given."
+      : "\n\nArguments the configured launch command accepts, in its own words:" + argsHelpQuote(block);
+  }
+
+  if (known(instance) && instance === launch && !labelled(instance)) {
+    const block = blockFor(instance, 'plain');
+    return block === null
+      ? "\n\nThe configured launcher publishes no argument help, so launchArgs pass through to either launch as given."
+      : "\n\nArgument help from the configured launcher, which both launches go through:" + argsHelpQuote(block);
+  }
+
+  const instanceBlock = known(instance) ? blockFor(instance, 'instance') : null;
+  const forInstance = !known(instance) ? ''
+    : instanceBlock === null
+      ? "\n\nThe configured instance launcher publishes no argument help, so launchArgs pass through to the instance launch as given."
+      : "\n\nArguments the instance launch accepts, in the instance launcher's own words:" + argsHelpQuote(instanceBlock);
+  if (launch === null) {
+    return forInstance + "\n\nWith steam: true the Steam protocol launch takes no arguments, so launchArgs are not accepted.";
+  }
+  if (!known(launch)) return forInstance;
+  const launchBlock = blockFor(launch, 'plain');
+  return forInstance + (launchBlock === null
+    ? "\n\nWith steam: true the configured launch command publishes no argument help, so launchArgs pass through to it as given."
+    : "\n\nArguments the launch command accepts with steam: true, in its own words:" + argsHelpQuote(launchBlock));
+}
+
+const LAUNCHER_STILL_ANSWERING =
+  "\n\nThe argument help for this launch follows once the configured launcher has answered.";
+
+async function composeTail({ deadline, refresh, startRetry }) {
+  const pending = [];
+  const readiness = readinessRecord({ refresh });
+  const ready = readiness.value === UNSETTLED && readiness.promise !== null
+    ? await settleWithin(readiness, deadline)
+    : readiness.value;
+  if (readiness.promise !== null) pending.push(readiness.promise);
+  if (ready === UNSETTLED) return { tail: LAUNCHER_STILL_ANSWERING, pending };
+
+  const instanceRecord = ready === true && launcherIsUsable()
+    ? argsHelpRecord(instanceLauncherTokens(), { startRetry })
+    : null;
+  const launchRecord = argsHelpRecord(launchCommandTokens(), { startRetry });
+  const instance = await captureWithin(instanceRecord, deadline);
+  const launch = await captureWithin(launchRecord, deadline);
+  for (const record of [instanceRecord, launchRecord]) {
+    if (record !== null && record.value === UNSETTLED && record.promise !== null) pending.push(record.promise);
+  }
+  return { tail: renderArgumentHelp(instance, launch), pending };
+}
+
+let notifyToolListChanged = () => server.sendToolListChanged();
+
+export function setToolListChangedNotifier(notify) {
+  notifyToolListChanged = notify ?? (() => server.sendToolListChanged());
+}
+
+function announceTail(tail) {
+  if (renderedTail === null || tail === renderedTail || tail === announcedTail) return;
+  announcedTail = tail;
+  try {
+    Promise.resolve(notifyToolListChanged()).catch(() => {});
+  } catch {}
+}
+
+function scheduleTailFollowUp(pending) {
+  if (pending.length === 0 || tailFollowUp !== null) return;
+  tailFollowUp = Promise.allSettled(pending).then(async () => {
+    tailFollowUp = null;
+    const { tail, pending: left } = await composeTail({ deadline: Date.now(), refresh: false, startRetry: false });
+    if (left.length === 0) announceTail(tail);
+    else scheduleTailFollowUp(left);
+  }).catch(() => { tailFollowUp = null; });
+}
+
+export async function launchArgumentHelp() {
+  const firstListing = renderedTail === null;
+  const { tail, pending } = await composeTail({
+    deadline: Date.now() + (firstListing ? ARGS_HELP_GRACE_MS : 0),
+    refresh: true,
+    startRetry: true,
+  });
+  renderedTail = tail;
+  scheduleTailFollowUp(pending);
+  return tail;
 }
 
 // The launcher is asked once, at startup, and an answer settles what this server serves
@@ -671,6 +864,7 @@ export function resetTargetResolution() {
   userGameMemo = null;
   launcherMemo = null;
   currentTarget = null;
+  launcherReadiness = { settled: false, value: UNSETTLED, promise: null };
 }
 
 export async function resolveTarget() {
@@ -864,17 +1058,17 @@ export async function serverStateFields({ withInstanceList = false } = {}) {
   return fields;
 }
 
+export const SERVER_CAPABILITIES = {
+  tools: { listChanged: true },
+  resources: {},
+};
+
 const server = new Server(
   {
     name: "unity-inspector-mcp",
     version: "1.0.0",
   },
-  {
-    capabilities: {
-      tools: {},
-      resources: {},
-    },
-  }
+  { capabilities: SERVER_CAPABILITIES }
 );
 
 // Define available tools
@@ -1534,7 +1728,7 @@ export async function buildToolList() {
       },
       {
         name: "launch_game",
-        description: "Launch Broforce and wait for it to become responsive. By default it launches this session's own game instance through the configured instance launcher — a separate copy of the game with its own profile, saves, logs and port — and points this server at it. With steam: true it launches the user's own game instead (BROFORCE_LAUNCH_CMD when that is set, otherwise Steam app 274190) and points the server there; a configured launch command is run exactly as configured, with launchArgs appended. Sessions without an instance (no session id, no configured instance launcher, or a launcher without instance mode) always launch the user's game. Switching targets leaves the other game running and says so. Acts only on the target it launches: a live game in the instance's pidfile refuses a second launch, a launcher at its instance cap is waited on, and a failed launch shows the launch.log tail. Returns a warning if the game is already running unless restart is true, which stops only the target's game first." + (await launchArgumentHelp()),
+        description: "Launch Broforce and wait for it to become responsive. By default it launches this session's own game instance through the configured instance launcher — a separate copy with its own profile, saves, logs and port — and points this server at it. With steam: true it launches the user's own game instead (BROFORCE_LAUNCH_CMD when set, run exactly as configured, otherwise Steam app 274190) and points the server there; a window on the user's screen is that launch plus the placement option that command documents. launchArgs go to whichever launch the call runs: the instance launch by default, the configured launch command with steam: true. Sessions without an instance always launch the user's game; switching targets leaves the other game running and says so. Acts only on the target it launches: a live game in the instance's pidfile refuses a second launch, a launcher at its instance cap is waited on, and a failed launch shows the launch.log tail. Warns if the game is already running unless restart is true, which stops only the target's game first." + (await launchArgumentHelp()),
         inputSchema: {
           type: "object",
           properties: {
@@ -1544,7 +1738,7 @@ export async function buildToolList() {
             },
             vanilla: {
               type: "boolean",
-              description: "Launch without mods (default: false). No inspector loads, so nothing will answer on the TCP port and the call does not wait for one: it returns once the launch command has been started, or on an instance once that command has finished, reporting a failure if it exited non-zero.",
+              description: "Launch without mods (default: false). No inspector loads and nothing answers on the TCP port, so the call does not wait for one: it returns once the launch command has started, or on an instance once that command has finished, with a failure if it exited non-zero.",
             },
             restart: {
               type: "boolean",
@@ -1552,7 +1746,7 @@ export async function buildToolList() {
             },
             launchArgs: {
               type: "string",
-              description: "Extra arguments appended to the configured launch command, tokenized with shell-style quoting. The Steam protocol launch takes no arguments and says so.",
+              description: "Arguments appended to the launch this call runs, tokenized with shell-style quoting: the instance launch by default, the configured launch command with steam: true. The Steam protocol launch takes no arguments and says so.",
             },
           },
         },
@@ -2971,6 +3165,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
 async function main() {
   // Asking a command what it accepts takes a moment, and the handshake must not wait on it
   startLaunchHelpCapture()?.catch((err) => console.error(`Could not read the launch command's help: ${err.message}`));
+  startInstanceHelpCapture().catch((err) => console.error(`Could not read the instance launcher's help: ${err.message}`));
 
   // Asking the launcher takes a moment, and the handshake must not wait on it
   resolveTarget().then(

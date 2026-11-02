@@ -19,6 +19,8 @@ root="\${STUB_INSTANCES_ROOT:-${instancesRoot}}"
 stamp() { printf '[2026-01-02 03:04:05] %s\\n' "$1" >> "$dir/launch.log"; }
 printf '%s\\n' "$*" >> "$root/calls.log"
 
+while [ "\${1#-}" != "\${1:-}" ] && [ "$1" != --help ] && [ "$1" != --args-help ]; do shift; done
+
 case "$1" in
   --help)
     [ -f "$root/slow-help" ] && sleep 2
@@ -30,11 +32,16 @@ case "$1" in
     # One that answers and names no instance mode is a launcher without one, for good
     [ -f "$root/no-instance-mode" ] || printf '  stub instance <id> <cmd>   launch, stop, status or remove an agent instance\\n'
     [ -f "$root/no-args-help" ] || printf '  --args-help   print the launch arguments this launcher accepts\\n'
+    [ -f "$root/help-nonzero" ] && exit 2
     exit 0
     ;;
   --args-help)
     if [ -f "$root/long-args-help" ]; then
       awk 'BEGIN { while (i++ < 40) print "  --pad-" i "   padding so the capture has to be cut" }'
+      exit 0
+    fi
+    if [ -f "$root/args-help-text" ]; then
+      cat "$root/args-help-text"
       exit 0
     fi
     printf 'stub launch arguments:\\n  --window WxH   the size of the window it opens\\n'

@@ -95,3 +95,16 @@ test('the crash-loop guard stops respawning, and restart_server recovers', { tim
   assert.ok(!recovered.error, 'the wrapper did not recover after restart_server');
   assert.equal(recovered.result.tools.length, 2);
 });
+
+test("a notification from the child reaches the parent as the child sent it", { timeout: 20000, skip: !posix }, async (t) => {
+  const w = startWrapper();
+  t.after(() => w.stop());
+  await w.initialize(0);
+
+  w.send({ jsonrpc: '2.0', id: 9, method: 'test/notify', params: {} });
+  const notification = await w.waitFor((m) => m.method === 'notifications/tools/list_changed');
+
+  assert.ok(notification, 'the notification never reached the parent');
+  assert.deepEqual(notification, { jsonrpc: '2.0', method: 'notifications/tools/list_changed' });
+  assert.ok(await w.waitFor((m) => m.id === 9), 'the request the notification came with went unanswered');
+});

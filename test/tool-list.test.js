@@ -2,11 +2,10 @@ import './support/session.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-const { buildToolList, handleToolCall, resolvePollBudget } = await import('../index.js');
+const { SERVER_CAPABILITIES, buildToolList, handleToolCall, resolvePollBudget } = await import('../index.js');
 const { isGameRunning } = await import('../lib/game-process.js');
 const { NODE_ONLY_TOOLS, validateTestScriptSteps } = await import('../lib/script-library.js');
 
-// The tool list ships to clients on every session start; these limits keep growth deliberate.
 const MAX_TOOL_CHARS = 2800;
 const MAX_TOTAL_CHARS = 26000;
 
@@ -256,6 +255,18 @@ test('capture_animations is listed, and is server-side orchestration rather than
   );
 });
 
+test('launch_game says which launch launchArgs reach', async () => {
+  const tool = await toolNamed('launch_game');
+
+  assert.match(tool.description, /launchArgs go to whichever launch the call runs/);
+  assert.match(tool.description, /the instance launch by default, the configured launch command with steam: true/);
+
+  const { launchArgs } = tool.inputSchema.properties;
+  assert.match(launchArgs.description, /appended to the launch this call runs/);
+  assert.match(launchArgs.description, /the instance launch by default, the configured launch command with steam: true/);
+  assert.match(launchArgs.description, /The Steam protocol launch takes no arguments/);
+});
+
 test('wait_for_game reports which failure mode a timeout hit', { timeout: 30000 }, async () => {
   const running = await isGameRunning();
   const expected = { true: 'connection-refused', false: 'no-process', null: 'unknown' }[String(running)];
@@ -313,6 +324,10 @@ test('unusable poll budgets fall back instead of producing NaN deadlines', () =>
 
   assert.deepEqual(resolvePollBudget(0, 10), { budgetMs: 0, intervalMs: 250 }, 'the interval has a floor');
   assert.deepEqual(resolvePollBudget(1500, 500), { budgetMs: 1500, intervalMs: 500 });
+});
+
+test('the server announces a tool list that changes', () => {
+  assert.deepEqual(SERVER_CAPABILITIES.tools, { listChanged: true });
 });
 
 test('the tool list stays within its size limits', async () => {

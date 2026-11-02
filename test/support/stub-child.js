@@ -42,6 +42,9 @@ process.stdin.on('data', (chunk) => {
       });
     } else if (method === 'test/echo') {
       send({ jsonrpc: '2.0', id, result: { echo: request.params ?? null } });
+    } else if (method === 'test/notify') {
+      send({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' });
+      send({ jsonrpc: '2.0', id, result: {} });
     } else if (method === 'test/die') {
       process.exit(9);
     } else if (method === 'test/hang') {
