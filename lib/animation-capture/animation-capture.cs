@@ -15,6 +15,7 @@ public class AnimationCapture : MonoBehaviour
     private const string DoneFile = "done";
     private const string ErrorFile = "error";
     private const string CaptureFile = "capture.json";
+    private const string NoPixelFailure = "the character's renderers contributed no pixel to the crop";
 
     // A failure inside Main() can happen before outDir is usable, so there is no sentinel file to
     // poll for. This goes to the UMM log, which the driver tails when its wait times out.
@@ -65,12 +66,16 @@ public class AnimationCapture : MonoBehaviour
 
     private bool stateSawWritten;
     private int stateOnscreenCells;
+    private int stateContributedCells;
+    private int stateEmptyCells;
+    private readonly List<string> stateContributionFailures = new List<string>();
+    private readonly Dictionary<string, int> opaqueByCell = new Dictionary<string, int>();
+    private bool sheetReadLogged;
     private bool blankLogged;
     private bool noCameraLogged;
 
-    // The sweep renders into this rather than reading the backbuffer, so it is allocated once and
-    // rebuilt only if the window is resized mid-sweep
     private RenderTexture captureTexture;
+    private RenderTexture contributionTexture;
 
     private static void Log(string message)
     {
@@ -107,6 +112,7 @@ public class AnimationCapture : MonoBehaviour
             return;
         }
 
+        AnimationCapture created = null;
         try
         {
             if (string.IsNullOrEmpty(statesFile)) throw new Exception("statesFile is required");
@@ -121,6 +127,7 @@ public class AnimationCapture : MonoBehaviour
             ScriptContext.GameObjects.Add(go);
 
             instance = go.AddComponent<AnimationCapture>();
+            created = instance;
             instance.character = hero;
             instance.playerIndex = player;
             instance.states = stateList;
@@ -135,9 +142,18 @@ public class AnimationCapture : MonoBehaviour
         }
         catch (Exception ex)
         {
+            if (created != null) created.Abort();
             Log(StartupFailure + ex.Message);
             WriteError(ex.Message);
         }
+    }
+
+    private void Abort()
+    {
+        finished = true;
+        ReleaseTimeScale();
+        RestoreOverlays();
+        ReleaseBubbles();
     }
 
     // Several states walk frames that fire the real thing: AnimateSpecial calls UseSpecial, the
@@ -165,6 +181,36 @@ public class AnimationCapture : MonoBehaviour
         Patch(Declared(AccessTools.Method(type, "PerformKnifeMeleeAttack", twoBools), twoBools), skip, "PerformKnifeMeleeAttack");
         Patch(Declared(AccessTools.Method(type, "PerformPunchAttack", twoBools), twoBools), skip, "PerformPunchAttack");
 
+        PatchOverloads(typeof(Map), "HitUnits", skip);
+        PatchOverloads(typeof(MapController), "DamageGround", skip);
+
+        // Land dereferences the returned wave, so CreateShockWave cannot be skipped and the wave is retired instead
+        Type[] threeFloats = new Type[] { typeof(float), typeof(float), typeof(float) };
+        Patch(AccessTools.Method(typeof(EffectsController), "CreateShockWave", threeFloats), null,
+            new HarmonyMethod(AccessTools.Method(typeof(AnimationCapture), "RetireDuringSweep")),
+            "EffectsController.CreateShockWave");
+    }
+
+    private static void RetireDuringSweep(ExplosionGroundWave __result)
+    {
+        if (__result == null || !SweepLive()) return;
+        __result.EffectDie();
+    }
+
+    private static void PatchOverloads(Type type, string name, MethodInfo prefix)
+    {
+        MethodInfo[] methods = type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static
+                                               | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+        int found = 0;
+
+        for (int i = 0; i < methods.Length; i++)
+        {
+            if (methods[i].Name != name || methods[i].IsGenericMethodDefinition) continue;
+            found++;
+            Patch(methods[i], prefix, type.Name + "." + name + "/" + methods[i].GetParameters().Length);
+        }
+
+        if (found == 0) Log("Not suppressing " + type.Name + "." + name + ": no such method on this build");
     }
 
     // Harmony refuses a MethodInfo it was handed off a derived type that only inherits it, so the
@@ -177,6 +223,11 @@ public class AnimationCapture : MonoBehaviour
 
     private static void Patch(MethodInfo target, MethodInfo prefix, string label)
     {
+        Patch(target, new HarmonyMethod(prefix), null, label);
+    }
+
+    private static void Patch(MethodInfo target, HarmonyMethod prefix, HarmonyMethod postfix, string label)
+    {
         if (target == null)
         {
             Log("Not suppressing " + label + ": no such method on this build");
@@ -185,7 +236,7 @@ public class AnimationCapture : MonoBehaviour
 
         try
         {
-            ScriptContext.Harmony.Patch(target, new HarmonyMethod(prefix));
+            ScriptContext.Harmony.Patch(target, prefix, postfix);
         }
         catch (Exception ex)
         {
@@ -197,7 +248,12 @@ public class AnimationCapture : MonoBehaviour
     // once the sweep is over or gone: while it is live, the call is skipped.
     private static bool SkipDuringSweep()
     {
-        return instance == null || instance.finished;
+        return !SweepLive();
+    }
+
+    private static bool SweepLive()
+    {
+        return instance != null && !instance.finished;
     }
 
     public static void Unload()
@@ -230,6 +286,16 @@ public class AnimationCapture : MonoBehaviour
         Time.timeScale = 0f;
         HideOverlays();
         HoldBubbles();
+
+        SpriteSM body = GetSprite();
+        Vector3 center = CropCenterOf(body);
+        cropCenter = Vec(center);
+        string intruder = ProbeOverlaps(body, center);
+        if (intruder != null)
+        {
+            throw new Exception("another hero '" + intruder + "' that no player slot holds is drawn in the capture "
+                + "crop and the sweep would strip it: raise swapSettle or wait for the old character to be destroyed");
+        }
     }
 
     // The player-number bubble (Rambo(Clone)/Player1Bubble) hangs 16 units above the bro, inside the
@@ -303,11 +369,10 @@ public class AnimationCapture : MonoBehaviour
         hiddenOverlays.Clear();
     }
 
-    // Anything else drawing inside the crop is named here on the first frame, so a run that sees a
-    // stray marker in the strips can say exactly which object it belongs to.
-    private void ProbeOverlaps(SpriteSM body, Vector3 center)
+    private string ProbeOverlaps(SpriteSM body, Vector3 center)
     {
         overlapProbe = new JArray();
+        string intruder = null;
 
         try
         {
@@ -315,7 +380,7 @@ public class AnimationCapture : MonoBehaviour
             GameObject gunGo = character.gunSprite == null ? null : character.gunSprite.gameObject;
             Renderer[] all = UnityEngine.Object.FindObjectsOfType<Renderer>();
 
-            for (int i = 0; i < all.Length && overlapProbe.Count < 24; i++)
+            for (int i = 0; i < all.Length; i++)
             {
                 Renderer r = all[i];
                 if (r == null || !r.enabled || r.gameObject == bodyGo || r.gameObject == gunGo) continue;
@@ -323,6 +388,9 @@ public class AnimationCapture : MonoBehaviour
                 Bounds bounds = r.bounds;
                 if (Mathf.Abs(bounds.center.x - center.x) > box + bounds.extents.x) continue;
                 if (Mathf.Abs(bounds.center.y - center.y) > box + bounds.extents.y) continue;
+
+                if (intruder == null) intruder = OtherCharacterOf(r);
+                if (overlapProbe.Count >= 24) continue;
 
                 JObject entry = new JObject();
                 entry["path"] = PathOf(r.transform);
@@ -336,6 +404,44 @@ public class AnimationCapture : MonoBehaviour
         {
             Log("Overlap probe failed: " + ex.Message);
         }
+        return intruder;
+    }
+
+    private string OtherCharacterOf(Renderer r)
+    {
+        Vector3 scale = r.transform.lossyScale;
+        if (scale.x == 0f || scale.y == 0f) return null;
+
+        for (Transform t = r.transform; t != null; t = t.parent)
+        {
+            TestVanDammeAnim rig = t.GetComponent<TestVanDammeAnim>();
+            if (rig == null) continue;
+            // IsEnemy is false only for heroes and rescue bros, and a RescueBro is a caged one the level owns
+            if (rig == character || rig.IsEnemy || rig is RescueBro || HeldBySlot(rig) || IsCompanion(rig)) return null;
+            return rig.gameObject.name;
+        }
+        return null;
+    }
+
+    private static bool HeldBySlot(TestVanDammeAnim rig)
+    {
+        if (HeroController.players == null) return false;
+
+        for (int i = 0; i < HeroController.players.Length; i++)
+        {
+            Player slot = HeroController.players[i];
+            if (slot != null && slot.character == rig) return true;
+        }
+        return false;
+    }
+
+    private bool IsCompanion(TestVanDammeAnim rig)
+    {
+        // Boondock Bros' trailing bro is a separate root that points back at its lead through leadingBro
+        FieldInfo lead = AccessTools.Field(rig.GetType(), "leadingBro");
+        if (lead == null) return false;
+        TestVanDammeAnim leader = lead.GetValue(rig) as TestVanDammeAnim;
+        return leader != null && leader == character;
     }
 
     private static string PathOf(Transform transform)
@@ -464,6 +570,9 @@ public class AnimationCapture : MonoBehaviour
             snapshot.Clear();
             stateSawWritten = false;
             stateOnscreenCells = 0;
+            stateContributedCells = 0;
+            stateEmptyCells = 0;
+            stateContributionFailures.Clear();
 
             if (state == null) throw new Exception("state list holds a non-object entry");
 
@@ -626,18 +735,13 @@ public class AnimationCapture : MonoBehaviour
             frame["step"] = currentValues[index].DeepClone();
 
             bool offscreen;
-            cells.Add(Crop(out offscreen));
+            string contributionFailure;
+            cells.Add(Crop(out offscreen, out contributionFailure));
             if (offscreen) frame["offscreen"] = true;
             else stateOnscreenCells++;
 
             SpriteSM body = GetSprite();
             frame["body"] = CellOf(body, body == null ? null : MaterialOf(body));
-            if (cropCenter == null)
-            {
-                Vector3 center = CropCenterOf(body);
-                cropCenter = Vec(center);
-                ProbeOverlaps(body, center);
-            }
 
             SpriteSM gun = character.gunSprite;
             if (gun == null)
@@ -650,6 +754,8 @@ public class AnimationCapture : MonoBehaviour
                 gunCell["enabled"] = gun.gameObject.activeInHierarchy;
                 frame["gun"] = gunCell;
             }
+
+            if (!offscreen) RecordContribution(frame, index, contributionFailure, body, gun);
 
             frame["scaleX"] = character.transform.localScale.x;
 
@@ -669,6 +775,104 @@ public class AnimationCapture : MonoBehaviour
         }
     }
 
+    private void RecordContribution(JObject frame, int index, string failure, SpriteSM body, SpriteSM gun)
+    {
+        frame["contributed"] = failure == null;
+        if (failure == null)
+        {
+            stateContributedCells++;
+            return;
+        }
+
+        if (failure == NoPixelFailure)
+        {
+            bool? empty = AddressedCellsEmpty(body, gun);
+            if (empty.HasValue) frame["cellEmpty"] = empty.Value;
+            if (empty.HasValue && empty.Value)
+            {
+                stateEmptyCells++;
+                return;
+            }
+        }
+
+        string message = "state '" + currentName + "' frame " + index + ": " + failure;
+        stateContributionFailures.Add(message);
+        Log(message);
+    }
+
+    private bool? AddressedCellsEmpty(SpriteSM body, SpriteSM gun)
+    {
+        if (body == null) return null;
+
+        try
+        {
+            if (OpaqueInCell(body) > 0) return false;
+            if (gun != null && gun.gameObject.activeInHierarchy && OpaqueInCell(gun) > 0) return false;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            if (!sheetReadLogged)
+            {
+                sheetReadLogged = true;
+                Log("Could not read a sprite sheet to classify an uncontributed frame: " + ex.Message);
+            }
+            return null;
+        }
+    }
+
+    private int OpaqueInCell(SpriteSM sprite)
+    {
+        Material material = MaterialOf(sprite);
+        Texture texture = material == null ? null : material.mainTexture;
+        if (texture == null) throw new Exception(sprite.name + " has no sheet texture");
+
+        int x = Mathf.RoundToInt(sprite.lowerLeftPixel.x);
+        // lowerLeftPixel counts y down from the sheet's top; the readback counts up from its bottom
+        int y = texture.height - Mathf.RoundToInt(sprite.lowerLeftPixel.y);
+        int w = Mathf.RoundToInt(sprite.pixelDimensions.x);
+        int h = Mathf.RoundToInt(sprite.pixelDimensions.y);
+
+        string key = texture.GetInstanceID() + ":" + x + ":" + y + ":" + w + ":" + h;
+        int cached;
+        if (opaqueByCell.TryGetValue(key, out cached)) return cached;
+
+        int left = Mathf.Clamp(x, 0, texture.width);
+        int bottom = Mathf.Clamp(y, 0, texture.height);
+        int width = Mathf.Clamp(x + w, 0, texture.width) - left;
+        int height = Mathf.Clamp(y + h, 0, texture.height) - bottom;
+        if (width <= 0 || height <= 0)
+        {
+            throw new Exception("cell " + w + "x" + h + " at " + x + "," + y + " lies outside the "
+                + texture.width + "x" + texture.height + " sheet '" + texture.name + "'");
+        }
+
+        // Blit leaves its target active, so the caller's active texture is put back here
+        RenderTexture previousActive = RenderTexture.active;
+        RenderTexture sheet = new RenderTexture(texture.width, texture.height, 0, RenderTextureFormat.ARGB32);
+        int opaque = 0;
+
+        try
+        {
+            sheet.Create();
+            // The sheet is not CPU-readable, so it is read back through a render texture
+            Graphics.Blit(texture, sheet);
+            Color32[] pixels = ReadRegion(sheet, left, bottom, width, height);
+            for (int i = 0; i < pixels.Length; i++)
+            {
+                if (pixels[i].a != 0) opaque++;
+            }
+        }
+        finally
+        {
+            RenderTexture.active = previousActive;
+            ReleaseTexture(sheet);
+        }
+
+        opaqueByCell[key] = opaque;
+        return opaque;
+    }
+
     private void EndState()
     {
         JObject record = null;
@@ -676,6 +880,7 @@ public class AnimationCapture : MonoBehaviour
         try
         {
             NoteBlankCapture();
+            NoteContribution();
             RestoreSnapshot();
             if (character != null) character.ForceChangeFrame();
 
@@ -718,6 +923,20 @@ public class AnimationCapture : MonoBehaviour
         blankLogged = true;
         Log("Blank capture on '" + currentName + "': the crop is inside the screen but the pixels read "
             + "back are zeroed memory. The cameras rendered nothing into the capture texture.");
+    }
+
+    private void NoteContribution()
+    {
+        if (stateOnscreenCells == 0) return;
+
+        Log("state '" + currentName + "': " + stateContributedCells + "/" + stateOnscreenCells
+            + " on-screen frames contributed");
+        if (stateEmptyCells > 0)
+        {
+            Log("state '" + currentName + "': " + stateEmptyCells + " frames address empty sheet cells");
+        }
+        if (!stateSawWritten) return;
+        for (int i = 0; i < stateContributionFailures.Count; i++) AddStateError(stateContributionFailures[i]);
     }
 
     // BeginState failed before the frame loop: keep its snapshot restored and log the state as errored
@@ -912,11 +1131,12 @@ public class AnimationCapture : MonoBehaviour
 
     #region Capture
 
-    private Texture2D Crop(out bool offscreen)
+    private Texture2D Crop(out bool offscreen, out string contributionFailure)
     {
         Texture2D cell = new Texture2D(cellPx, cellPx, TextureFormat.RGBA32, false);
         Color32[] pixels = new Color32[cellPx * cellPx];
         offscreen = true;
+        contributionFailure = null;
 
         Camera cam = Camera.main;
         if (cam == null) cam = Camera.current;
@@ -941,24 +1161,10 @@ public class AnimationCapture : MonoBehaviour
             {
                 offscreen = false;
 
-                RenderTexture target = RenderScene();
-                RenderTexture previousActive = RenderTexture.active;
-                Texture2D raw = new Texture2D(readW, readH, TextureFormat.RGBA32, false);
-                Color32[] source = null;
-
-                // GetPixels32 hands back a copy, so the staging texture is finished with here
-                try
-                {
-                    RenderTexture.active = target;
-                    raw.ReadPixels(new Rect(readX, readY, readW, readH), 0, 0);
-                    raw.Apply();
-                    source = raw.GetPixels32();
-                }
-                finally
-                {
-                    RenderTexture.active = previousActive;
-                    UnityEngine.Object.Destroy(raw);
-                }
+                captureTexture = ScreenSizedTexture(captureTexture);
+                RenderScene(captureTexture);
+                Color32[] source = ReadRegion(captureTexture, readX, readY, readW, readH);
+                contributionFailure = CheckContribution(source, readX, readY, readW, readH);
 
                 // Screen space and Texture2D space are both bottom-left origin, so the strip comes out upright
                 for (int y = 0; y < cellPx; y++)
@@ -983,6 +1189,73 @@ public class AnimationCapture : MonoBehaviour
         return cell;
     }
 
+    private static Color32[] ReadRegion(RenderTexture target, int x, int y, int width, int height)
+    {
+        RenderTexture previousActive = RenderTexture.active;
+        Texture2D raw = new Texture2D(width, height, TextureFormat.RGBA32, false);
+
+        try
+        {
+            RenderTexture.active = target;
+            raw.ReadPixels(new Rect(x, y, width, height), 0, 0);
+            raw.Apply();
+            // GetPixels32 returns a copy, so raw can be destroyed after it
+            return raw.GetPixels32();
+        }
+        finally
+        {
+            RenderTexture.active = previousActive;
+            UnityEngine.Object.Destroy(raw);
+        }
+    }
+
+    private string CheckContribution(Color32[] withCharacter, int x, int y, int width, int height)
+    {
+        Renderer[] renderers = character.GetComponentsInChildren<Renderer>(false);
+        List<Renderer> disabled = new List<Renderer>();
+        Color32[] withoutCharacter = null;
+
+        try
+        {
+            for (int i = 0; i < renderers.Length; i++)
+            {
+                Renderer r = renderers[i];
+                if (r == null || !r.enabled) continue;
+                Vector3 scale = r.transform.lossyScale;
+                if (scale.x == 0f || scale.y == 0f) continue;
+                r.enabled = false;
+                disabled.Add(r);
+            }
+
+            if (disabled.Count == 0) return "the character has no enabled renderer";
+
+            contributionTexture = ScreenSizedTexture(contributionTexture);
+            RenderScene(contributionTexture);
+            withoutCharacter = ReadRegion(contributionTexture, x, y, width, height);
+        }
+        finally
+        {
+            for (int i = 0; i < disabled.Count; i++)
+            {
+                if (disabled[i] != null) disabled[i].enabled = true;
+            }
+        }
+
+        if (AnyDifferent(withCharacter, withoutCharacter)) return null;
+        return NoPixelFailure;
+    }
+
+    private static bool AnyDifferent(Color32[] a, Color32[] b)
+    {
+        for (int i = 0; i < a.Length; i++)
+        {
+            Color32 p = a[i];
+            Color32 q = b[i];
+            if (p.r != q.r || p.g != q.g || p.b != q.b || p.a != q.a) return true;
+        }
+        return false;
+    }
+
     // The question is whether the read buffer is anything other than zeroed memory, so all four
     // channels count: neither the backbuffer nor a render texture is guaranteed to carry alpha, and
     // a scene that draws only opaque black would read the same as one that never drew. The loop
@@ -1001,31 +1274,17 @@ public class AnimationCapture : MonoBehaviour
     // whenever the window is not being presented at all, while the cameras themselves render fine.
     // So the sweep drives the render itself: every camera that draws to the screen is pointed at one
     // texture, in depth order, and each clears or composites into it exactly as it would on screen.
-    private RenderTexture RenderScene()
+    private void RenderScene(RenderTexture target)
     {
-        if (captureTexture != null && (captureTexture.width != Screen.width || captureTexture.height != Screen.height))
+        RenderTexture previousActive = RenderTexture.active;
+        try
         {
-            ReleaseCaptureTexture();
+            RenderTexture.active = target;
+            GL.Clear(true, true, Color.clear);
         }
-
-        if (captureTexture == null)
+        finally
         {
-            captureTexture = new RenderTexture(Mathf.Max(1, Screen.width), Mathf.Max(1, Screen.height), 24);
-            captureTexture.Create();
-
-            // A fresh render texture is uninitialised memory until something draws into it, and a
-            // camera that clears only part of it would leave the rest of the first cell as garbage.
-            // Cleared to zero, which is also what the blank-capture guard reads as "nothing drew".
-            RenderTexture blank = RenderTexture.active;
-            try
-            {
-                RenderTexture.active = captureTexture;
-                GL.Clear(true, true, new Color(0f, 0f, 0f, 0f));
-            }
-            finally
-            {
-                RenderTexture.active = blank;
-            }
+            RenderTexture.active = previousActive;
         }
 
         List<Camera> cameras = ScreenCameras();
@@ -1040,7 +1299,7 @@ public class AnimationCapture : MonoBehaviour
             Camera cam = cameras[i];
             try
             {
-                cam.targetTexture = captureTexture;
+                cam.targetTexture = target;
                 cam.Render();
             }
             catch (Exception ex)
@@ -1053,8 +1312,16 @@ public class AnimationCapture : MonoBehaviour
                 cam.targetTexture = null;
             }
         }
+    }
 
-        return captureTexture;
+    private static RenderTexture ScreenSizedTexture(RenderTexture texture)
+    {
+        if (texture != null && texture.width == Screen.width && texture.height == Screen.height) return texture;
+        ReleaseTexture(texture);
+
+        RenderTexture created = new RenderTexture(Mathf.Max(1, Screen.width), Mathf.Max(1, Screen.height), 24);
+        created.Create();
+        return created;
     }
 
     // Camera.allCameras is the enabled ones. A camera that already has a targetTexture is part of
@@ -1081,12 +1348,19 @@ public class AnimationCapture : MonoBehaviour
 
     private void ReleaseCaptureTexture()
     {
-        if (captureTexture == null) return;
-
-        if (RenderTexture.active == captureTexture) RenderTexture.active = null;
-        captureTexture.Release();
-        UnityEngine.Object.Destroy(captureTexture);
+        ReleaseTexture(captureTexture);
         captureTexture = null;
+        ReleaseTexture(contributionTexture);
+        contributionTexture = null;
+    }
+
+    private static void ReleaseTexture(RenderTexture texture)
+    {
+        if (texture == null) return;
+
+        if (RenderTexture.active == texture) RenderTexture.active = null;
+        texture.Release();
+        UnityEngine.Object.Destroy(texture);
     }
 
     // The sprite quad sits at the character transform plus the sprite's own offset and anchor, so

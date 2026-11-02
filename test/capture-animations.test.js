@@ -1953,6 +1953,204 @@ test('buildReport counts a blank capture as errored rather than captured', () =>
   assert.doesNotMatch(report, /\| running \| 2 \|/, 'and it is out of the captured table');
 });
 
+const noContribution = "state 'running' frame 1: the character's renderers contributed no pixel to the crop";
+const contributionStates = [
+  { name: 'running', step: { field: 'frame', values: [0, 1] }, expect: { sheet: 'main', row: 2, cols: [0, 1] } },
+  { name: 'idle', step: { field: 'frame', values: [0, 1] }, expect: { sheet: 'main', row: 1, cols: [0, 1] } },
+];
+const contributionCapture = {
+  bro: { type: 'Rambro' },
+  errors: [noContribution],
+  states: [
+    {
+      name: 'running',
+      skipped: `error: ${noContribution}`,
+      frames: [
+        { step: 0, contributed: true, body: { row: 2, col: 0 } },
+        { step: 1, contributed: false, cellEmpty: false, body: { row: 2, col: 1 } },
+      ],
+    },
+    {
+      name: 'idle',
+      skipped: null,
+      frames: [
+        { step: 0, contributed: true, body: { row: 1, col: 0 } },
+        { step: 1, offscreen: true, body: { row: 1, col: 1 } },
+      ],
+    },
+  ],
+};
+
+test('buildReport counts the frames the character contributed nothing to', () => {
+  const { text: report, summary } = buildReport({
+    capture: contributionCapture,
+    states: contributionStates,
+    outDir: '/tmp/shots',
+    options: {},
+  });
+
+  assert.equal(summary.contributionFailures, 1);
+  assert.equal(summary.errors, 1);
+  assert.match(report, /- Frames the character contributed no pixel to: 1/);
+  assert.match(report, /errored mid-sweep: 1/);
+  assert.match(report, /## Errors \(1\)\n\n- state 'running' frame 1: the character's renderers contributed no pixel to the crop/);
+  assert.match(report, /- \*\*running\*\* — error: state 'running' frame 1:/, 'the failing state is errored, not captured');
+  assert.match(report, /\| State \| Frames \| Contributed \| Body cells \|/);
+  assert.match(report, /\| idle \(offscreen frames\) \| 2 \| 1\/1 \| main row 1 cols 0-1 \|/, 'an offscreen frame has no verdict');
+});
+
+test('buildReport leaves the report as it was when no frame carries a contribution verdict', () => {
+  const { text: report, summary } = buildReport({
+    capture: fixtureCapture,
+    states: fixtureStates,
+    outDir: '/tmp/shots',
+    options: {},
+  });
+
+  assert.equal(summary.contributionFailures, 0);
+  assert.equal(summary.emptyCellFrames, 0);
+  assert.doesNotMatch(report, /contributed|empty sheet cells/i);
+  assert.match(report, /\| State \| Frames \| Body cells \| Gun cells \| Expected \| Strip \|/);
+});
+
+test('buildReport counts a frame addressing an empty sheet cell as neither contributed nor failed', () => {
+  const states = [
+    { name: 'dancing', step: { field: 'frame', values: [0, 1, 2] }, expect: { sheet: 'main', row: 5, cols: [0, 2] } },
+  ];
+  const capture = {
+    bro: { type: 'Rambro' },
+    errors: [],
+    states: [
+      {
+        name: 'dancing',
+        skipped: null,
+        frames: [
+          { step: 0, contributed: false, cellEmpty: true, body: { row: 5, col: 0 } },
+          { step: 1, contributed: true, body: { row: 5, col: 1 } },
+          { step: 2, contributed: false, cellEmpty: true, body: { row: 5, col: 2 } },
+        ],
+      },
+    ],
+  };
+
+  const { text: report, summary } = buildReport({ capture, states, outDir: '/tmp/shots', options: {} });
+
+  assert.equal(summary.emptyCellFrames, 2);
+  assert.equal(summary.contributionFailures, 0);
+  assert.equal(summary.errors, 0);
+  assert.match(report, /- Frames addressing empty sheet cells: 2/);
+  assert.match(report, /- Frames the character contributed no pixel to: 0/);
+  assert.match(report, /\| dancing \| 3 \| 1\/3 \(2 empty\) \| main row 5 cols 0-2 \|/);
+  assert.doesNotMatch(report, /## Errors/);
+});
+
+test('buildReport shows the contribution figure of a state errored by its own frames', () => {
+  const failure = "state 'running' frame 1: the character's renderers contributed no pixel to the crop";
+  const states = [
+    { name: 'running', step: { field: 'frame', values: [0, 1, 2] }, expect: { sheet: 'main', row: 2, cols: [0, 2] } },
+  ];
+  const capture = {
+    bro: { type: 'Rambro' },
+    errors: [failure],
+    states: [
+      {
+        name: 'running',
+        skipped: `error: ${failure}`,
+        frames: [
+          { step: 0, contributed: true, body: { row: 2, col: 0 } },
+          { step: 1, contributed: false, cellEmpty: false, body: { row: 2, col: 1 } },
+          { step: 2, contributed: false, cellEmpty: true, body: { row: 2, col: 2 } },
+        ],
+      },
+      { name: 'zipline', skipped: 'unsupported: needs a live ZipLine reference', frames: [] },
+    ],
+  };
+
+  const { text: report } = buildReport({ capture, states, outDir: '/tmp/shots', options: {} });
+
+  assert.match(report, /- \*\*running\*\* — error: state 'running' frame 1: .* — contributed 1\/3 \(1 empty\)\n/);
+  assert.match(report, /- \*\*zipline\*\* — unsupported: needs a live ZipLine reference\n/, 'a state with no verdicts gets no figure');
+});
+
+test('capture_animations passes an empty-cell frame without failing the sweep', { timeout: 30000 }, async (t) => {
+  const dir = await tempDir(t);
+  const outDir = path.join(dir, 'out');
+  const statesPath = path.join(dir, 'input-states.json');
+  const states = [{ name: 'dancing', step: { field: 'frame', values: [0, 1] }, expect: { sheet: 'main', row: 5, cols: [0, 1] } }];
+  await fs.writeFile(statesPath, JSON.stringify({ states }));
+  const capture = {
+    bro: { type: 'Rambro' },
+    errors: [],
+    states: [
+      {
+        name: 'dancing',
+        skipped: null,
+        frames: [
+          { step: 0, contributed: false, cellEmpty: true, body: { row: 5, col: 0 } },
+          { step: 1, contributed: true, body: { row: 5, col: 1 } },
+        ],
+      },
+    ],
+  };
+
+  await toolStub(t, (request) => {
+    if (request.method === 'execute_script') {
+      writeNow(path.join(outDir, 'capture.json'), JSON.stringify(capture));
+      writeNow(path.join(outDir, 'done'), '');
+    }
+    return false;
+  });
+
+  const payload = JSON.parse(textOf(await callCapture({ out: outDir, states: [statesPath], timeout: 5 })));
+
+  assert.equal(payload.success, true);
+  assert.equal(payload.summary.emptyCellFrames, 1);
+  assert.equal(payload.summary.contributionFailures, 0);
+});
+
+test('capture_animations passes on the refusal of a sweep with a stale hero in the crop', { timeout: 30000 }, async (t) => {
+  const dir = await tempDir(t);
+  const outDir = path.join(dir, 'out');
+  const statesPath = path.join(dir, 'input-states.json');
+  await fs.writeFile(statesPath, JSON.stringify({ states: contributionStates }));
+  const refusal = "another hero 'Rambo(Clone) [local]' that no player slot holds is drawn in the capture crop and the "
+    + 'sweep would strip it: raise swapSettle or wait for the old character to be destroyed';
+
+  await toolStub(t, (request) => {
+    if (request.method === 'execute_script') writeNow(path.join(outDir, 'error'), refusal);
+    return false;
+  });
+
+  const payload = JSON.parse(textOf(await callCapture({ out: outDir, states: [statesPath], timeout: 5 })));
+
+  assert.equal(payload.success, false);
+  assert.equal(payload.status, 'error');
+  assert.equal(payload.message, refusal);
+});
+
+test('capture_animations fails a sweep with a frame the character contributed nothing to', { timeout: 30000 }, async (t) => {
+  const dir = await tempDir(t);
+  const outDir = path.join(dir, 'out');
+  const statesPath = path.join(dir, 'input-states.json');
+  await fs.writeFile(statesPath, JSON.stringify({ states: contributionStates }));
+
+  await toolStub(t, (request) => {
+    if (request.method === 'execute_script') {
+      writeNow(path.join(outDir, 'capture.json'), JSON.stringify(contributionCapture));
+      writeNow(path.join(outDir, 'done'), '');
+    }
+    return false;
+  });
+
+  const payload = JSON.parse(textOf(await callCapture({ out: outDir, states: [statesPath], timeout: 5 })));
+
+  assert.equal(payload.success, false);
+  assert.equal(payload.status, 'done');
+  assert.equal(payload.summary.contributionFailures, 1);
+  assert.deepEqual(payload.stateErrors, [noContribution]);
+  assert.match(payload.report, /## Errors \(1\)[\s\S]*frame 1: the character's renderers contributed no pixel/);
+});
+
 test('runCapture turns the script suppression off only when side effects are allowed', { timeout: 20000 }, async (t) => {
   const dir = await tempDir(t);
   const statesPath = path.join(dir, 'input-states.json');
@@ -2346,7 +2544,9 @@ test('capture_animations sweeps the stub game and answers with the report and it
     capture: path.join(outDir, 'capture.json'),
     states: path.join(outDir, STATES_COPY_NAME),
   });
-  assert.deepEqual(payload.summary, { captured: 2, skipped: 1, excluded: 0, mismatches: 1, errors: 0 });
+  assert.deepEqual(payload.summary, {
+    captured: 2, skipped: 1, excluded: 0, mismatches: 1, errors: 0, contributionFailures: 0, emptyCellFrames: 0,
+  });
   assert.deepEqual(payload.stateErrors, []);
   assert.equal(payload.swap.requested, 'Rambro');
   assert.equal(payload.swap.alreadyHeld, false);
