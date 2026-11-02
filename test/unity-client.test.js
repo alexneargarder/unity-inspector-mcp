@@ -170,3 +170,21 @@ test('simulate_input budgets cover every press it asks the game to hold', () => 
   assert.equal(commandTimeout('simulate_input', { sequence: [] }), DEFAULT_COMMAND_TIMEOUT_MS);
   assert.equal(commandTimeout('simulate_input', { action: 'fire' }), DEFAULT_COMMAND_TIMEOUT_MS);
 });
+
+test('pointAt a different port drops the socket, and the same port keeps it', { timeout: 10000 }, async (t) => {
+  const first = await startStubServer((request, socket) => reply(socket, request.id, { from: 'first' }));
+  const second = await startStubServer((request, socket) => reply(socket, request.id, { from: 'second' }));
+  const client = connectedClient(first.port);
+  t.after(async () => { client.disconnect(); await first.close(); await second.close(); });
+
+  await client.connect();
+  assert.equal(client.pointAt({ port: first.port }), false);
+  assert.equal(client.isConnected(), true, 'the same port keeps the socket');
+
+  assert.equal(client.pointAt({ port: second.port }), true);
+  assert.equal(client.isConnected(), false, 'a new port drops the old socket');
+
+  assert.deepEqual(await client.sendCommand('ping', {}, 3000), { from: 'second' });
+  assert.equal(first.connectionCount, 1);
+  assert.equal(second.connectionCount, 1);
+});

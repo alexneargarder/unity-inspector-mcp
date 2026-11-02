@@ -200,6 +200,48 @@ test('spawn_entity says where the prefab comes from and how it fails', async () 
   assert.doesNotMatch(tool.description, /every level/, 'not every unit works on every level');
 });
 
+test('spawn_entity takes an optional ignoreSuppression flag that the reply answers', async () => {
+  const tool = await toolNamed('spawn_entity');
+  const flag = tool.inputSchema.properties.ignoreSuppression;
+  assert.equal(flag?.type, 'boolean');
+  assert.match(flag.description, /disableEnemySpawn/);
+  assert.match(flag.description, /suppressionFound/);
+  assert.ok(!tool.inputSchema.required.includes('ignoreSuppression'), 'the flag stays optional');
+});
+
+test('swap_bro takes an optional ignoreUnlocks flag that the reply answers', async () => {
+  const tool = await toolNamed('swap_bro');
+  const flag = tool.inputSchema.properties.ignoreUnlocks;
+  assert.equal(flag?.type, 'boolean');
+  assert.match(flag.description, /locked bros/);
+  assert.match(flag.description, /every installed custom bro/);
+  assert.match(flag.description, /ignoredUnlocks/);
+  assert.deepEqual(tool.inputSchema.required, ['broName'], 'the flag stays optional');
+});
+
+test('trace_spawns advertises its actions, targets and the read cursor', async () => {
+  const tool = await toolNamed('trace_spawns');
+  const { action, targets, since } = tool.inputSchema.properties;
+
+  assert.deepEqual(action?.enum, ['start', 'read', 'stop']);
+  assert.deepEqual(tool.inputSchema.required, ['action'], 'targets and since stay optional');
+  assert.equal(targets?.type, 'array');
+  assert.deepEqual(targets.items.enum, [
+    'MapController.SpawnMook_Networked',
+    'MapController.SpawnMook_Local',
+    'ProjectileController.SpawnProjectileOverNetwork',
+    'Map.PlaceDoodad',
+  ]);
+  assert.match(targets.description, /all but Map\.PlaceDoodad/, 'PlaceDoodad is opt-in');
+  assert.equal(since?.type, 'number');
+
+  for (const word of ['`start`', '`read`', '`stop`', '`seq`', '`since`', '`dropped`', '512']) {
+    assert.ok(tool.description.includes(word), `trace_spawns' description does not mention ${word}`);
+  }
+  assert.match(tool.description, /server reconnects/, 'a reconnect ends the trace');
+  assert.match(tool.description, /`restart_server` always does/);
+});
+
 test('capture_animations is listed, and is server-side orchestration rather than a game command', async () => {
   const tool = await toolNamed('capture_animations');
   assert.deepEqual(tool.inputSchema.required, ['out']);

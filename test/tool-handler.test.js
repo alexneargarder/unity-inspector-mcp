@@ -130,3 +130,35 @@ test('take_screenshot sends a highlight only when one was asked for', async () =
   assert.ok(!byRect.isError, textOf(byRect));
   assert.deepEqual(lastRequest('take_screenshot').params, { highlight: rectangle });
 });
+
+test('spawn_entity forwards ignoreSuppression to the game', async () => {
+  const response = await handleToolCall({
+    params: { name: 'spawn_entity', arguments: { type: 'Mook', x: 10, y: 20, ignoreSuppression: true } },
+  });
+  assert.ok(!response.isError, textOf(response));
+  const sent = lastRequest('spawn_entity');
+  assert.equal(sent.params.ignoreSuppression, true);
+  assert.equal(sent.params.type, 'Mook');
+});
+
+test('swap_bro forwards ignoreUnlocks to the game', async () => {
+  const response = await handleToolCall({
+    params: { name: 'swap_bro', arguments: { broName: 'Rambro', ignoreUnlocks: true } },
+  });
+  assert.ok(!response.isError, textOf(response));
+  assert.deepEqual(lastRequest('swap_bro').params, { broName: 'Rambro', playerNum: 0, ignoreUnlocks: true });
+});
+
+test('trace_spawns forwards action, targets and since to the game', async () => {
+  const start = await handleToolCall({
+    params: { name: 'trace_spawns', arguments: { action: 'start', targets: ['Map.PlaceDoodad'] } },
+  });
+  assert.ok(!start.isError, textOf(start));
+  assert.deepEqual(lastRequest('trace_spawns').params, { action: 'start', targets: ['Map.PlaceDoodad'] });
+
+  const read = await handleToolCall({
+    params: { name: 'trace_spawns', arguments: { action: 'read', since: 42 } },
+  });
+  assert.ok(!read.isError, textOf(read));
+  assert.deepEqual(lastRequest('trace_spawns').params, { action: 'read', since: 42 });
+});

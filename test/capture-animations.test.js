@@ -2403,7 +2403,7 @@ test('a sweep in progress refuses a second sweep and a launch, and releases them
     params: { name: 'launch_game', arguments: { steam: true, vanilla: true } },
   }));
   assert.match(launch, /capture_animations sweep into/);
-  assert.doesNotMatch(launch, /it disconnects the client/, 'a sweep does not drop the socket; it holds the game');
+  assert.doesNotMatch(launch, /disconnect the client/, 'a sweep does not drop the socket; it holds the game');
 
   const wait = textOf(await handleToolCall({ params: { name: 'wait_for_game', arguments: { timeout: 1 } } }));
   assert.match(wait, /capture_animations sweep into/);

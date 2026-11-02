@@ -1134,8 +1134,37 @@ export async function buildToolList() {
               description: "Initial vertical velocity, up is positive",
               default: 0,
             },
+            ignoreSuppression: {
+              type: "boolean",
+              description: "Lift Utility Mod's disableEnemySpawn for this spawn; reply adds suppressionFound",
+            },
           },
           required: ["type", "x", "y"],
+        },
+      },
+      {
+        name: "trace_spawns",
+        description: "Record the game's spawn calls. `start` patches `targets`, `read` returns records with `seq` > `since` and per-target `dropped`, `stop` unpatches and clears. 512 records per target. Ends when the server reconnects, which `restart_server` always does.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: { type: "string", enum: ["start", "read", "stop"] },
+            targets: {
+              type: "array",
+              items: {
+                type: "string",
+                enum: [
+                  "MapController.SpawnMook_Networked",
+                  "MapController.SpawnMook_Local",
+                  "ProjectileController.SpawnProjectileOverNetwork",
+                  "Map.PlaceDoodad",
+                ],
+              },
+              description: "Default: all but Map.PlaceDoodad",
+            },
+            since: { type: "number" },
+          },
+          required: ["action"],
         },
       },
       {
@@ -1193,6 +1222,10 @@ export async function buildToolList() {
             playerNum: {
               type: "number",
               description: "Player number 0-3 (default: 0)",
+            },
+            ignoreUnlocks: {
+              type: "boolean",
+              description: "Allow locked bros for this swap, including every installed custom bro, locked or disabled; reply adds ignoredUnlocks",
             },
           },
           required: ["broName"],
@@ -1302,7 +1335,7 @@ export async function buildToolList() {
       },
       {
         name: "wait_for_game",
-        description: "Wait for the game to start up and the Unity Inspector TCP server to become responsive. Polls the connection until a ping succeeds or timeout is reached. On timeout the result carries a 'state' saying how it failed: 'no-process' (no game process is running), 'connection-refused' (the process is there but nothing is listening on the port), 'connected-unresponsive' (the port accepts connections but ping got no reply), 'connection-dropped' (the port accepted a connection that was then closed), 'unknown' (process detection is unavailable), or 'no-port' (this session's instance has no allocated port and no running game of its own, so there is nothing to connect to). The wait can overrun the timeout by up to one connect timeout (5s), since an attempt already in flight is allowed to finish.",
+        description: "Poll until the game's inspector answers a ping or the timeout is reached. On timeout the result carries a 'state' saying how it failed: 'no-process' (no game process is running), 'connection-refused' (the process is there but nothing is listening on the port), 'connected-unresponsive' (the port accepts connections but ping got no reply), 'connection-dropped' (the port accepted a connection that was then closed), 'unknown' (process detection is unavailable), or 'no-port' (this session's instance has no allocated port and no running game of its own, so there is nothing to connect to). An attempt in flight may overrun the timeout by up to 5s.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1501,7 +1534,7 @@ export async function buildToolList() {
       },
       {
         name: "launch_game",
-        description: "Launch Broforce and wait for it to become responsive. By default it launches this session's own game instance through the configured instance launcher — a separate copy of the game with its own profile, saves, logs and port — and points this server at it. With steam: true it launches the user's own game instead (BROFORCE_LAUNCH_CMD when that is set, otherwise Steam app 274190) and points the server there; a configured launch command is run exactly as configured, with launchArgs appended. Sessions without an instance (no session id, no configured instance launcher, or a launcher without instance mode) always launch the user's game. Switching targets leaves the other game running and says so. Acts only on the target it launches: an instance counts as already running only when a game of its own is running, never because something answered on its port, and a second one is refused when the instance's pidfile names a live game, waits for a free slot when the launcher caps instances and is at that cap and then reports which instances hold them, and shows the tail of the instance's launch.log when a launch fails. Returns a warning if the game is already running unless restart is true, which stops only the target's game first." + (await launchArgumentHelp()),
+        description: "Launch Broforce and wait for it to become responsive. By default it launches this session's own game instance through the configured instance launcher — a separate copy of the game with its own profile, saves, logs and port — and points this server at it. With steam: true it launches the user's own game instead (BROFORCE_LAUNCH_CMD when that is set, otherwise Steam app 274190) and points the server there; a configured launch command is run exactly as configured, with launchArgs appended. Sessions without an instance (no session id, no configured instance launcher, or a launcher without instance mode) always launch the user's game. Switching targets leaves the other game running and says so. Acts only on the target it launches: a live game in the instance's pidfile refuses a second launch, a launcher at its instance cap is waited on, and a failed launch shows the launch.log tail. Returns a warning if the game is already running unless restart is true, which stops only the target's game first." + (await launchArgumentHelp()),
         inputSchema: {
           type: "object",
           properties: {
@@ -1700,7 +1733,6 @@ export async function pollUntilResponsive(timeoutMs, intervalMs, watcher = null,
   for (;;) {
     attempts++;
     try {
-      unityClient.disconnect();
       // The instance's port is re-resolved every attempt: a game that comes up mid-wait is what
       // makes its recorded port ours, and one attempt's answer does not settle the next
       lastPort = await pointClientAtTarget();
@@ -1716,6 +1748,7 @@ export async function pollUntilResponsive(timeoutMs, intervalMs, watcher = null,
         lastStage = "port";
         throw new Error(noPortMessage(activeConfig()));
       }
+      if (!unityClient.isConnected()) unityClient.disconnect();
       lastStage = "connect";
       await unityClient.connect();
       lastStage = "ping";
@@ -1831,7 +1864,7 @@ function refuseWhileInFlight(action) {
   if (inFlight.length === 0) return;
   throw new Error(
     `Cannot ${action} while ${inFlight.join(', ')} is still in flight on the ${activeTarget()} target — ` +
-    `it disconnects the client. Wait for it to finish and try again.`
+    `it may disconnect the client. Wait for it to finish and try again.`
   );
 }
 
@@ -2129,6 +2162,15 @@ export async function handleToolCall(request) {
           y: args.y,
           xI: args.xI,
           yI: args.yI,
+          ignoreSuppression: args.ignoreSuppression,
+        });
+        break;
+
+      case "trace_spawns":
+        result = await unityClient.sendCommand("trace_spawns", {
+          action: args.action,
+          targets: args.targets,
+          since: args.since,
         });
         break;
 
@@ -2169,6 +2211,7 @@ export async function handleToolCall(request) {
         result = await unityClient.sendCommand("swap_bro", {
           broName: args.broName,
           playerNum: args.playerNum ?? 0,
+          ignoreUnlocks: args.ignoreUnlocks,
         });
         break;
 
@@ -2416,7 +2459,6 @@ export async function handleToolCall(request) {
         // same words game_state gives for it
         const instanceReason = !args.steam && !hasInstance ? (await instanceField()).instanceReason : null;
 
-        // Launching disconnects the client, whatever the target, so nothing may be in flight on it
         refuseWhileInFlight('launch');
 
         let switchNote = null;
@@ -2462,8 +2504,10 @@ export async function handleToolCall(request) {
         let gameRunning = false;
         if (ownsGame) {
           try {
-            unityClient.disconnect();
-            await unityClient.connect();
+            if (!unityClient.isConnected()) {
+              unityClient.disconnect();
+              await unityClient.connect();
+            }
             await unityClient.sendCommand("ping", {});
             gameRunning = true;
           } catch {

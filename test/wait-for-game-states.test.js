@@ -2,7 +2,7 @@ import './support/session.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { startStubServer } from './support/stub-server.js';
+import { startStubServer, reply } from './support/stub-server.js';
 import { isGameRunning } from '../lib/game-process.js';
 
 // The port must be set before index.js is imported: the module-level client reads it at construction
@@ -53,4 +53,32 @@ test('a port that closes the connection is connection-dropped', { timeout: 30000
     payload.message,
     expected === 'no-process' ? /connection dropped and no Broforce process/ : /accepted a connection that was then closed/,
   );
+});
+
+test('a connected client keeps its socket through wait_for_game', { timeout: 30000 }, async () => {
+  onPing = (request, socket) => reply(socket, request.id, { message: 'pong' });
+
+  const ping = await handleToolCall({ params: { name: 'ping', arguments: {} } });
+  assert.match(textOf(ping), /pong/);
+  const connectionsBefore = stub.connectionCount;
+
+  const { payload } = await waitForGame({ timeout: 5, interval: 0.05 });
+
+  assert.equal(payload.success, true, payload.message);
+  assert.match(payload.message, /Game is ready \(1 attempts/);
+  assert.equal(stub.connectionCount, connectionsBefore, 'wait_for_game reconnected instead of reusing the live socket');
+});
+
+test('launch_game finding the game already running keeps the live socket', { timeout: 30000 }, async () => {
+  onPing = (request, socket) => reply(socket, request.id, { message: 'pong' });
+
+  const ping = await handleToolCall({ params: { name: 'ping', arguments: {} } });
+  assert.match(textOf(ping), /pong/);
+  const connectionsBefore = stub.connectionCount;
+
+  const response = await handleToolCall({ params: { name: 'launch_game', arguments: {} } });
+  const payload = JSON.parse(textOf(response));
+
+  assert.equal(payload.alreadyRunning, true, payload.message);
+  assert.equal(stub.connectionCount, connectionsBefore, 'launch_game reconnected instead of pinging over the live socket');
 });

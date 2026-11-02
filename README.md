@@ -124,7 +124,7 @@ Writing a launcher of your own: [docs/launcher-contract.md](docs/launcher-contra
 
 ## Tools
 
-There are 35, 34 from the server and `restart_server` from the wrapper.
+There are 36, 35 from the server and `restart_server` from the wrapper.
 
 | Tool | Description |
 |---|---|
@@ -140,9 +140,10 @@ There are 35, 34 from the server and `restart_server` from the wrapper.
 | `set_player_health` | Set a player's health. |
 | `list_bros` | List usable bros and which one each player has. Requires Swap Bros Mod. |
 | `set_bro` | Choose the bro a player spawns as next. Does not change the current one. Requires Swap Bros Mod. |
-| `swap_bro` | Swap a player's bro immediately, in place, mid-level. Requires Swap Bros Mod. |
+| `swap_bro` | Swap a player's bro immediately, in place, mid-level. `ignoreUnlocks` allows bros not yet unlocked for that one swap, every installed custom bro, locked or disabled included. Requires Swap Bros Mod. |
 | `list_enemies` | List the live enemies in the loaded level, from the game's own unit registry plus a scene sweep, classified by the game's own enemy test, so aliens, hell units, vehicles and bosses are covered as well as mooks. An empty list says whether a level is loaded at all. If one is, `enemySpawnSuppressed` says a suppressor is active right now (Utility Mod with `disableEnemySpawn` on) and `enemySpawnPrefixOwners` lists every mod that could suppress spawning. |
-| `spawn_entity` | Spawn a unit at a coordinate in the loaded level, with optional initial velocity. The type is any RocketLib `UnitType`, given as its enum name or its display name. The prefab comes from the level's theme or the shared assets, and most units are the theme's, so a type this level's theme holds no prefab for fails naming that. Try a level whose theme has it. An unknown name comes back with the list of the names that exist. |
+| `spawn_entity` | Spawn a unit at a coordinate in the loaded level, with optional initial velocity. The type is any RocketLib `UnitType`, given as its enum name or its display name. The prefab comes from the level's theme or the shared assets, and most units are the theme's, so a type this level's theme holds no prefab for fails naming that. Try a level whose theme has it. An unknown name comes back with the list of the names that exist. `ignoreSuppression` lifts Utility Mod's `disableEnemySpawn` for that one spawn. |
+| `trace_spawns` | Record the game's mook, projectile and (on request) doodad spawn calls, then read them back by sequence number, until stopped or the server reconnects, which `restart_server` always does. |
 | `modify_component` | Write fields and properties on a component, instance or static. Each property that could not be written comes back with a reason: not found, read-only, or a conversion error. |
 | `set_game_speed` | Set the time scale (1.0 is normal). |
 | `simulate_input` | Press or hold a game action for a player, with an optional hold duration or repeat count, or run an ordered sequence of held steps and pauses in one call. |

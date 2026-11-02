@@ -285,14 +285,12 @@ test('a target switch is refused while a command is in flight', { timeout: 30000
   assert.match(text, /in flight/);
   assert.equal(activeTarget(), 'instance', 'the target moved under a command in flight');
 
-  // The wait's own poll disconnects the client, so it is refused on the same ground
   const waiting = await handleToolCall({ params: { name: 'wait_for_game', arguments: { timeout: 1 } } });
   const waitText = waiting.content.map((c) => c.text).join('\n');
   assert.equal(waiting.isError, true, waitText);
   assert.match(waitText, /ping/);
   assert.match(waitText, /in flight/);
 
-  // Launching disconnects the client whatever the target, so the same-target launch is refused too
   const sameTarget = await handleToolCall({ params: { name: 'launch_game', arguments: {} } });
   const sameText = sameTarget.content.map((c) => c.text).join('\n');
   assert.equal(sameTarget.isError, true, sameText);
