@@ -27,6 +27,8 @@ public class AnimationCapture : MonoBehaviour
     private static string outDir;
 
     private TestVanDammeAnim character;
+    private string sweptName;
+    private string respawnError;
     private int playerIndex;
     private JArray states;
     private float box;
@@ -57,6 +59,8 @@ public class AnimationCapture : MonoBehaviour
     private string fatal;
     private float savedTimeScale = 1f;
     private bool timeScaleHeld;
+    private TestVanDammeAnim facingHeldOn;
+    private float savedFacing;
 
     private int stateIndex = -1;
     private int frameIndex;
@@ -73,6 +77,22 @@ public class AnimationCapture : MonoBehaviour
     private bool sheetReadLogged;
     private bool blankLogged;
     private bool noCameraLogged;
+
+    private readonly HashSet<int> sweepStartObjects = new HashSet<int>();
+    private readonly HashSet<int> stateStartObjects = new HashSet<int>();
+    private readonly List<Renderer> carriedOver = new List<Renderer>();
+    private readonly Dictionary<int, string> spawnedBy = new Dictionary<int, string>();
+    private readonly List<string> stateLeaks = new List<string>();
+    private readonly List<Effects.IPoolableEffect> requestedEffects = new List<Effects.IPoolableEffect>();
+    private bool retirePending;
+    private JObject retireRecord;
+    private bool stateBaselined;
+    private bool leakCheckPending;
+    private bool stateCropSeen;
+    private Vector2 stateCropMin;
+    private Vector2 stateCropMax;
+    private bool lastCropKnown;
+    private Vector3 lastCropCenter;
 
     private RenderTexture captureTexture;
     private RenderTexture contributionTexture;
@@ -129,11 +149,13 @@ public class AnimationCapture : MonoBehaviour
             instance = go.AddComponent<AnimationCapture>();
             created = instance;
             instance.character = hero;
+            instance.sweptName = hero.gameObject.name;
             instance.playerIndex = player;
             instance.states = stateList;
             instance.box = boxSize;
             instance.cellPx = Mathf.Max(1, Mathf.RoundToInt(boxSize * 2f));
             SuppressBubbles();
+            TrackEffectRequests();
             if (suppress) SuppressSideEffects(hero);
             else Log("Side-effect suppression is off: the swept animations will fire for real");
             instance.Begin();
@@ -152,6 +174,7 @@ public class AnimationCapture : MonoBehaviour
     {
         finished = true;
         ReleaseTimeScale();
+        ReleaseFacing();
         RestoreOverlays();
         ReleaseBubbles();
     }
@@ -170,6 +193,37 @@ public class AnimationCapture : MonoBehaviour
         Patch(AccessTools.DeclaredMethod(typeof(ReactionBubble), "LateUpdate"), skip, "ReactionBubble.LateUpdate");
     }
 
+    private static readonly string[] MapHarm =
+    {
+        "HitUnits", "HitAllLivingUnits", "HitClosestUnit", "HitDeadUnits", "HitHellUnits", "HitLivingHeroes",
+        "HitLivingUnits", "HitUnitsWithArrow", "WhipUnits", "KnockUnits", "KnockMooks", "KnockAndDamageUnit",
+        "ExplodeUnits", "FivePointPalmExplodingHeartTechnique", "DecapitateUnits", "HeadShotUnit", "InseminateUnits",
+        "StunUnits", "StunMooks", "BlindUnits", "TearGasUnits", "FreezeUnits", "PanicUnits", "BurnUnitsAround_Local",
+        "CrushUnitsAgainstWalls", "CrushUnitsAgainstWallsHorizontal", "CrushUnitsAgainstWallsVertical",
+        "RollOntoUnits", "HurtWildLife", "BurnBlocksAround", "BurnDamageBlock", "BurnLargeObjects",
+        "DamageBackground", "DamageDoodads", "DamageStaticDoodads", "DamageDoodadByTag", "DisturbAlienEggs"
+    };
+
+    private static readonly string[] MapControllerHarm =
+    {
+        "DamageGround", "DamageGroundLocal", "DamageBlock", "Damage_Local", "Damage_Networked",
+        "BurnUnitsAround_NotNetworked", "BurnGround_Local"
+    };
+
+    private static void TrackEffectRequests()
+    {
+        Patch(AccessTools.Method(typeof(Effects.EffectsControllerPool), "Request"), null,
+            new HarmonyMethod(AccessTools.Method(typeof(AnimationCapture), "NoteRequest")),
+            "EffectsControllerPool.Request");
+    }
+
+    private static void NoteRequest(UnityEngine.Object __result)
+    {
+        if (!SweepLive()) return;
+        Effects.IPoolableEffect effect = __result as Effects.IPoolableEffect;
+        if (effect != null) instance.requestedEffects.Add(effect);
+    }
+
     private static void SuppressSideEffects(TestVanDammeAnim hero)
     {
         MethodInfo skip = AccessTools.Method(typeof(AnimationCapture), "SkipDuringSweep");
@@ -181,8 +235,8 @@ public class AnimationCapture : MonoBehaviour
         Patch(Declared(AccessTools.Method(type, "PerformKnifeMeleeAttack", twoBools), twoBools), skip, "PerformKnifeMeleeAttack");
         Patch(Declared(AccessTools.Method(type, "PerformPunchAttack", twoBools), twoBools), skip, "PerformPunchAttack");
 
-        PatchOverloads(typeof(Map), "HitUnits", skip);
-        PatchOverloads(typeof(MapController), "DamageGround", skip);
+        for (int i = 0; i < MapHarm.Length; i++) PatchOverloads(typeof(Map), MapHarm[i], skip);
+        for (int i = 0; i < MapControllerHarm.Length; i++) PatchOverloads(typeof(MapController), MapControllerHarm[i], skip);
 
         // Land dereferences the returned wave, so CreateShockWave cannot be skipped and the wave is retired instead
         Type[] threeFloats = new Type[] { typeof(float), typeof(float), typeof(float) };
@@ -262,6 +316,7 @@ public class AnimationCapture : MonoBehaviour
 
         instance.finished = true;
         instance.ReleaseTimeScale();
+        instance.ReleaseFacing();
         instance.RestoreSnapshot();
         instance.RunAfter(null);
         instance.RestoreOverlays();
@@ -286,6 +341,7 @@ public class AnimationCapture : MonoBehaviour
         Time.timeScale = 0f;
         HideOverlays();
         HoldBubbles();
+        HoldFacing();
 
         SpriteSM body = GetSprite();
         Vector3 center = CropCenterOf(body);
@@ -296,6 +352,8 @@ public class AnimationCapture : MonoBehaviour
             throw new Exception("another hero '" + intruder + "' that no player slot holds is drawn in the capture "
                 + "crop and the sweep would strip it: raise swapSettle or wait for the old character to be destroyed");
         }
+
+        RecordObjects(sweepStartObjects);
     }
 
     // The player-number bubble (Rambo(Clone)/Player1Bubble) hangs 16 units above the bro, inside the
@@ -473,6 +531,13 @@ public class AnimationCapture : MonoBehaviour
 
         if (!inState)
         {
+            if (retirePending)
+            {
+                retirePending = false;
+                RetireStateObjects(retireRecord);
+                retireRecord = null;
+            }
+
             stateIndex++;
             if (stateIndex >= states.Count)
             {
@@ -482,6 +547,9 @@ public class AnimationCapture : MonoBehaviour
             }
 
             stateError = null;
+            stateBaselined = false;
+            leakCheckPending = false;
+            stateLeaks.Clear();
             // Both are idempotent, and a respawn mid-sweep brings a fresh HUDHeadGear
             // (Player.SetUpDeathMatchHUD) and can spawn new bubbles
             HideOverlays();
@@ -503,6 +571,7 @@ public class AnimationCapture : MonoBehaviour
 
             inState = true;
             frameIndex = 0;
+            BaselineState();
             EnterState();
         }
 
@@ -539,11 +608,27 @@ public class AnimationCapture : MonoBehaviour
     // reference is a destroyed Unity object by the time the next state starts.
     private bool RefreshCharacter()
     {
+        if (respawnError != null)
+        {
+            stateError = respawnError;
+            return false;
+        }
         if (character != null) return true;
 
         try
         {
-            character = ResolveCharacter(playerIndex);
+            TestVanDammeAnim resolved = ResolveCharacter(playerIndex);
+            string resolvedName = resolved.gameObject.name;
+            if (resolvedName != sweptName)
+            {
+                respawnError = "player " + playerIndex + " respawned as '" + resolvedName + "', not the swept '"
+                    + sweptName + "', so the remaining states were not swept";
+                Log(respawnError);
+                stateError = respawnError;
+                return false;
+            }
+
+            character = resolved;
             Log("Re-resolved the character after it was destroyed");
             return true;
         }
@@ -734,9 +819,17 @@ public class AnimationCapture : MonoBehaviour
             JObject frame = new JObject();
             frame["step"] = currentValues[index].DeepClone();
 
+            Vector3 center = CropCenterOf(GetSprite());
+            NoteCrop(center);
+            if (leakCheckPending)
+            {
+                leakCheckPending = false;
+                CheckLeaks(center);
+            }
+
             bool offscreen;
             string contributionFailure;
-            cells.Add(Crop(out offscreen, out contributionFailure));
+            cells.Add(Crop(center, out offscreen, out contributionFailure));
             if (offscreen) frame["offscreen"] = true;
             else stateOnscreenCells++;
 
@@ -881,6 +974,7 @@ public class AnimationCapture : MonoBehaviour
         {
             NoteBlankCapture();
             NoteContribution();
+            for (int i = 0; i < stateLeaks.Count; i++) AddStateError(stateLeaks[i]);
             RestoreSnapshot();
             if (character != null) character.ForceChangeFrame();
 
@@ -908,6 +1002,9 @@ public class AnimationCapture : MonoBehaviour
         // Last, on the filed record: a reverse method that throws is a teardown problem, not a
         // reason to unmake a state whose frames are already captured and compared
         RunAfter(record);
+
+        retirePending = true;
+        retireRecord = record;
     }
 
     // A crop that was inside the screen and still read back as zeroed memory captured nothing, so it
@@ -967,6 +1064,7 @@ public class AnimationCapture : MonoBehaviour
         // First, and before anything that could throw: a later restore failing must never be able
         // to leave the game frozen
         ReleaseTimeScale();
+        ReleaseFacing();
         RestoreOverlays();
         ReleaseBubbles();
         ReleaseCaptureTexture();
@@ -1002,6 +1100,264 @@ public class AnimationCapture : MonoBehaviour
     }
 
     #endregion
+
+    private static void RecordObjects(HashSet<int> into)
+    {
+        into.Clear();
+        Renderer[] all = UnityEngine.Object.FindObjectsOfType<Renderer>();
+        for (int i = 0; i < all.Length; i++)
+        {
+            if (all[i] != null) into.Add(all[i].gameObject.GetInstanceID());
+        }
+    }
+
+    private void BaselineState()
+    {
+        stateCropSeen = false;
+        carriedOver.Clear();
+
+        try
+        {
+            stateStartObjects.Clear();
+            Renderer[] all = UnityEngine.Object.FindObjectsOfType<Renderer>();
+            for (int i = 0; i < all.Length; i++)
+            {
+                Renderer r = all[i];
+                if (r == null) continue;
+
+                int id = r.gameObject.GetInstanceID();
+                stateStartObjects.Add(id);
+                if (!sweepStartObjects.Contains(id) && !IsKept(r.transform)) carriedOver.Add(r);
+            }
+            stateBaselined = true;
+            leakCheckPending = true;
+        }
+        catch (Exception ex)
+        {
+            Log("Could not record the objects present at the start of state '" + currentName + "': " + ex.Message);
+        }
+    }
+
+    private void NoteCrop(Vector3 center)
+    {
+        lastCropKnown = true;
+        lastCropCenter = center;
+
+        if (!stateCropSeen)
+        {
+            stateCropSeen = true;
+            stateCropMin = center;
+            stateCropMax = center;
+            return;
+        }
+        stateCropMin = Vector2.Min(stateCropMin, center);
+        stateCropMax = Vector2.Max(stateCropMax, center);
+    }
+
+    private void CheckLeaks(Vector3 center)
+    {
+        try
+        {
+            HashSet<int> seen = new HashSet<int>();
+            for (int i = 0; i < carriedOver.Count; i++)
+            {
+                Renderer r = carriedOver[i];
+                if (!Draws(r) || !Overlaps(r.bounds, center, center)) continue;
+
+                GameObject go = r.gameObject;
+                int id = go.GetInstanceID();
+                if (!seen.Add(id)) continue;
+
+                string spawner;
+                string message = spawnedBy.TryGetValue(id, out spawner)
+                    ? "state '" + currentName + "': '" + go.name + "' left over from state '" + spawner
+                        + "' is drawn in the crop"
+                    : "state '" + currentName + "': '" + go.name + "', which was not there at sweep start, is drawn "
+                        + "in the crop";
+                stateLeaks.Add(message);
+                Log(message);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log("Could not check state '" + currentName + "' for leftover objects: " + ex.Message);
+        }
+    }
+
+    private void RetireStateObjects(JObject record)
+    {
+        List<string> names = new List<string>();
+        Dictionary<string, int> counts = new Dictionary<string, int>();
+        HashSet<int> handled = new HashSet<int>();
+        int pooled = 0;
+        int deactivated = 0;
+
+        try
+        {
+            for (int i = 0; i < requestedEffects.Count; i++)
+            {
+                Effects.IPoolableEffect effect = requestedEffects[i];
+                Component component = effect as Component;
+                if (component == null) continue;
+
+                GameObject go = component.gameObject;
+                if (!go.activeSelf || effect.ParentPool == null || effect.PoolIndex == -1) continue;
+                if (IsKept(go.transform) || !handled.Add(go.GetInstanceID())) continue;
+
+                string name = go.name;
+                if (Retire(go, effect)) pooled++;
+                else deactivated++;
+                CountRetired(name, names, counts);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log("Could not retire the effects state '" + currentName + "' requested: " + ex.Message);
+        }
+        requestedEffects.Clear();
+
+        Vector2 min;
+        Vector2 max;
+        if (CropRegion(out min, out max))
+        {
+            try
+            {
+                Renderer[] all = UnityEngine.Object.FindObjectsOfType<Renderer>();
+                for (int i = 0; i < all.Length; i++)
+                {
+                    Renderer r = all[i];
+                    if (r == null) continue;
+
+                    int id = r.gameObject.GetInstanceID();
+                    if (sweepStartObjects.Contains(id) || IsKept(r.transform)) continue;
+                    if (stateBaselined && !stateStartObjects.Contains(id)) spawnedBy[id] = currentName;
+                    if (!Draws(r) || !Overlaps(r.bounds, min, max)) continue;
+
+                    Effects.IPoolableEffect effect;
+                    GameObject target = RetireTargetOf(r.transform, out effect);
+                    if (!handled.Add(target.GetInstanceID())) continue;
+
+                    string name = target.name;
+                    if (Retire(target, effect)) pooled++;
+                    else deactivated++;
+                    CountRetired(name, names, counts);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log("Could not retire the objects state '" + currentName + "' left in the crop: " + ex.Message);
+            }
+        }
+
+        if (names.Count == 0) return;
+
+        JArray retired = new JArray();
+        string listed = "";
+        for (int i = 0; i < names.Count; i++)
+        {
+            JObject entry = new JObject();
+            entry["name"] = names[i];
+            entry["count"] = counts[names[i]];
+            retired.Add(entry);
+            listed += (i == 0 ? "" : ", ") + names[i] + " x" + counts[names[i]];
+        }
+        if (record != null) record["retired"] = retired;
+
+        Log("state '" + currentName + "': retired " + (pooled + deactivated) + " objects ("
+            + pooled + " to their pools, " + deactivated + " deactivated): " + listed);
+    }
+
+    private bool CropRegion(out Vector2 min, out Vector2 max)
+    {
+        if (stateCropSeen)
+        {
+            min = stateCropMin;
+            max = stateCropMax;
+            return true;
+        }
+
+        if (character != null) min = CropCenterOf(GetSprite());
+        else if (lastCropKnown) min = lastCropCenter;
+        else
+        {
+            min = Vector2.zero;
+            max = min;
+            return false;
+        }
+        max = min;
+        return true;
+    }
+
+    private static void CountRetired(string name, List<string> names, Dictionary<string, int> counts)
+    {
+        int count;
+        if (counts.TryGetValue(name, out count))
+        {
+            counts[name] = count + 1;
+            return;
+        }
+        counts[name] = 1;
+        names.Add(name);
+    }
+
+    private static bool IsKept(Transform t)
+    {
+        for (Transform node = t; node != null; node = node.parent)
+        {
+            if (node.GetComponent<NetworkedUnit>() != null || node.GetComponent<Camera>() != null
+                || node.GetComponent<ReactionBubble>() != null || node.GetComponent<AnimationCapture>() != null)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static bool Draws(Renderer r)
+    {
+        if (r == null || !r.enabled || !r.gameObject.activeInHierarchy) return false;
+        Vector3 scale = r.transform.lossyScale;
+        return scale.x != 0f && scale.y != 0f;
+    }
+
+    private bool Overlaps(Bounds bounds, Vector2 min, Vector2 max)
+    {
+        return bounds.max.x >= min.x - box && bounds.min.x <= max.x + box
+            && bounds.max.y >= min.y - box && bounds.min.y <= max.y + box;
+    }
+
+    private static GameObject RetireTargetOf(Transform t, out Effects.IPoolableEffect effect)
+    {
+        for (Transform node = t; node != null; node = node.parent)
+        {
+            MonoBehaviour[] behaviours = node.GetComponents<MonoBehaviour>();
+            for (int i = 0; i < behaviours.Length; i++)
+            {
+                effect = behaviours[i] as Effects.IPoolableEffect;
+                if (effect != null) return node.gameObject;
+            }
+        }
+        effect = null;
+        return t.gameObject;
+    }
+
+    private static bool Retire(GameObject target, Effects.IPoolableEffect effect)
+    {
+        // EffectDie destroys an unpooled effect, which something may still hold, so only a pooled one is given it
+        if (effect != null && effect.ParentPool != null && effect.PoolIndex != -1)
+        {
+            // Wind and return zones unregister themselves in Update before EffectDie, not in EffectDie itself
+            WindObject wind = effect as WindObject;
+            if (wind != null) WindController.RemoveWind(wind);
+            ProjectileReturnZone zone = effect as ProjectileReturnZone;
+            if (zone != null) ProjectileController.RemoveReturnZone(zone);
+
+            effect.EffectDie();
+            if (!target.activeSelf) return true;
+        }
+        target.SetActive(false);
+        return false;
+    }
 
     #region Field pinning
 
@@ -1131,7 +1487,7 @@ public class AnimationCapture : MonoBehaviour
 
     #region Capture
 
-    private Texture2D Crop(out bool offscreen, out string contributionFailure)
+    private Texture2D Crop(Vector3 center, out bool offscreen, out string contributionFailure)
     {
         Texture2D cell = new Texture2D(cellPx, cellPx, TextureFormat.RGBA32, false);
         Color32[] pixels = new Color32[cellPx * cellPx];
@@ -1143,7 +1499,6 @@ public class AnimationCapture : MonoBehaviour
 
         if (cam != null)
         {
-            Vector3 center = CropCenterOf(GetSprite());
             Vector3 a = cam.WorldToScreenPoint(new Vector3(center.x - box, center.y - box, center.z));
             Vector3 b = cam.WorldToScreenPoint(new Vector3(center.x + box, center.y + box, center.z));
 
@@ -1527,6 +1882,27 @@ public class AnimationCapture : MonoBehaviour
         if (slot == null) throw new Exception("no player in slot " + player);
         if (slot.character == null) throw new Exception("player " + player + " has no character");
         return slot.character;
+    }
+
+    private void HoldFacing()
+    {
+        Vector3 scale = character.transform.localScale;
+        facingHeldOn = character;
+        savedFacing = scale.x;
+        // The game turns the bro only from xI and left/right input, so it keeps this facing until a state pins one
+        scale.x = Mathf.Abs(scale.x);
+        character.transform.localScale = scale;
+    }
+
+    private void ReleaseFacing()
+    {
+        if (facingHeldOn != null)
+        {
+            Vector3 scale = facingHeldOn.transform.localScale;
+            scale.x = savedFacing;
+            facingHeldOn.transform.localScale = scale;
+        }
+        facingHeldOn = null;
     }
 
     private void ReleaseTimeScale()

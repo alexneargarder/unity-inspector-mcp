@@ -595,7 +595,7 @@ test('runCapture drives the documented command sequence against a stub game', { 
     'ping', 'game_state', 'swap_bro', 'game_state', 'execute_script', 'unload_script', 'set_game_speed',
   ]);
   assert.deepEqual(seen[1].params, {}, 'the slot is read before the swap, to compare against');
-  assert.deepEqual(seen[2].params, { broName: 'Rambro', playerNum: 1 });
+  assert.deepEqual(seen[2].params, { broName: 'Rambro', playerNum: 1 }, 'a swap the roster allows needs no bypass');
   assert.deepEqual(seen[5].params, { name: SCRIPT_NAME });
   assert.deepEqual(seen[6].params, { speed: 1 }, 'the driver never sends speed 0; the script freezes itself');
 
@@ -922,6 +922,59 @@ test('runCapture skips the poll when swap_bro reports the bro that was already t
   ], 'the pre-swap snapshot is the only game_state');
 });
 
+test('runCapture sweeps a locked custom bro the slot already holds', { timeout: 20000 }, async (t) => {
+  const dir = await tempDir(t);
+  const statesPath = path.join(dir, 'input-states.json');
+  const outDir = path.join(dir, 'out');
+  await fs.writeFile(statesPath, JSON.stringify({ states: fixtureStates }));
+
+  const jasonObject = 'BM_Jason Brohees(Clone) [local]';
+  const seen = [];
+  const stub = await startStubServer((request, socket) => {
+    seen.push({ method: request.method, params: request.params });
+
+    if (request.method === 'swap_bro') {
+      if (request.params.ignoreUnlocks === true) {
+        reply(socket, request.id, { success: true, broName: jasonObject, heroType: 'Rambro' });
+      } else {
+        reply(socket, request.id, { success: false, error: "Bro 'Jason Brohees' not found or swap failed" });
+      }
+      return;
+    }
+    if (request.method === 'game_state') {
+      reply(socket, request.id, slotState(jasonObject));
+      return;
+    }
+    if (request.method === 'execute_script') {
+      writeNow(path.join(outDir, 'capture.json'), JSON.stringify(fixtureCapture));
+      writeNow(path.join(outDir, 'done'), '');
+    }
+    reply(socket, request.id, { success: true });
+  });
+
+  const client = new UnityInspectorClient({ host: '127.0.0.1', port: stub.port });
+  t.after(async () => { client.disconnect(); await stub.close(); });
+
+  const result = await runCapture({
+      bro: 'Jason Brohees',
+      level: null,
+      swapSettleMs: 0,
+      swapTimeoutMs: 5000,
+      statesPaths: [statesPath],
+      out: outDir,
+      gameOut: outDir,
+      timeoutMs: 5000,
+      player: 0,
+    }, client, { pollMs: 5 });
+
+  assert.deepEqual(result.outcome, { status: 'done' });
+  assert.equal(result.swap.alreadyHeld, true);
+  assert.deepEqual(seen.filter((entry) => entry.method === 'swap_bro').map((entry) => entry.params), [
+    { broName: 'Jason Brohees', playerNum: 0 },
+    { broName: 'Jason Brohees', playerNum: 0, ignoreUnlocks: true },
+  ], 'the refused plain swap is retried once with the unlock bypass');
+});
+
 test('runCapture refuses to sweep when the slot never reports a different character', { timeout: 20000 }, async (t) => {
   const dir = await tempDir(t);
   const statesPath = path.join(dir, 'input-states.json');
@@ -1194,8 +1247,10 @@ test('runCapture surfaces a refused bro swap', { timeout: 20000 }, async (t) => 
   const statesPath = path.join(dir, 'input-states.json');
   await fs.writeFile(statesPath, JSON.stringify({ states: fixtureStates }));
 
+  const swaps = [];
   const stub = await startStubServer((request, socket) => {
     if (request.method === 'swap_bro') {
+      swaps.push(request.params);
       reply(socket, request.id, { success: false, error: "Bro 'Nobody' not found or swap failed" });
       return;
     }
@@ -1212,6 +1267,10 @@ test('runCapture surfaces a refused bro swap', { timeout: 20000 }, async (t) => 
       }, client, { pollMs: 5 }),
     /swap_bro failed: Bro 'Nobody' not found/,
   );
+  assert.deepEqual(swaps, [
+    { broName: 'Nobody', playerNum: 0 },
+    { broName: 'Nobody', playerNum: 0, ignoreUnlocks: true },
+  ], 'an unknown name fails with the unlock bypass on too');
 });
 
 test('describeFailure carries the compiler errors and the script output', () => {
@@ -2179,6 +2238,77 @@ test('capture_animations fails a sweep with a frame the character contributed no
   assert.match(payload.report, /## Errors \(1\)[\s\S]*frame 1: the character's renderers contributed no pixel/);
 });
 
+const leak = "state 'air_flex': 'Foot Poof 2(Clone)' left over from state 'wall_drag_hand_a' is drawn in the crop";
+const leakStates = [
+  { name: 'wall_drag_hand_a', step: { field: 'frame', values: [0, 1] }, expect: { sheet: 'main', row: 3, cols: [12, 13] } },
+  { name: 'air_flex', step: { field: 'frame', values: [0] }, expect: { sheet: 'main', row: 6, cols: [0, 0] } },
+];
+const leakCapture = {
+  bro: { type: 'Rambro' },
+  errors: [leak],
+  states: [
+    {
+      name: 'wall_drag_hand_a',
+      skipped: null,
+      frames: [
+        { step: 0, contributed: true, body: { row: 3, col: 12 } },
+        { step: 1, contributed: true, body: { row: 3, col: 13 } },
+      ],
+      retired: [
+        { name: 'Foot Poof 1(Clone)', count: 2 },
+        { name: 'Foot Poof 3(Clone)', count: 1 },
+      ],
+    },
+    {
+      name: 'air_flex',
+      skipped: `error: ${leak}`,
+      frames: [{ step: 0, contributed: true, body: { row: 6, col: 0 } }],
+      retired: [{ name: 'Foot Poof 2(Clone)', count: 1 }],
+    },
+  ],
+};
+
+test('buildReport lists what each state left in the crop and the game retired', () => {
+  const { text: report, summary } = buildReport({ capture: leakCapture, states: leakStates, outDir: '/tmp/shots', options: {} });
+
+  assert.equal(summary.retiredObjects, 4);
+  assert.match(report, /- Objects retired between states: 4\n/);
+  assert.match(
+    report,
+    /## Retired between states \(2\)\n\n- \*\*wall_drag_hand_a\*\* — Foot Poof 1\(Clone\) ×2, Foot Poof 3\(Clone\) ×1\n- \*\*air_flex\*\* — Foot Poof 2\(Clone\) ×1\n/,
+  );
+  assert.match(report, /\| wall_drag_hand_a \| 2 \|/, 'a state that left something behind is still captured');
+
+  const clean = buildReport({ capture: fixtureCapture, states: fixtureStates, outDir: '/tmp/shots', options: {} });
+  assert.equal(clean.summary.retiredObjects, 0);
+  assert.doesNotMatch(clean.text, /retired/i, 'a sweep that retired nothing says nothing about it');
+});
+
+test('capture_animations fails a sweep whose crop still draws an earlier state\'s effect', { timeout: 30000 }, async (t) => {
+  const dir = await tempDir(t);
+  const outDir = path.join(dir, 'out');
+  const statesPath = path.join(dir, 'input-states.json');
+  await fs.writeFile(statesPath, JSON.stringify({ states: leakStates }));
+
+  await toolStub(t, (request) => {
+    if (request.method === 'execute_script') {
+      writeNow(path.join(outDir, 'capture.json'), JSON.stringify(leakCapture));
+      writeNow(path.join(outDir, 'done'), '');
+    }
+    return false;
+  });
+
+  const payload = JSON.parse(textOf(await callCapture({ out: outDir, states: [statesPath], timeout: 5 })));
+
+  assert.equal(payload.success, false);
+  assert.equal(payload.status, 'done');
+  assert.deepEqual(payload.stateErrors, [leak]);
+  assert.equal(payload.summary.errors, 1);
+  assert.equal(payload.summary.retiredObjects, 4);
+  assert.match(payload.report, /## Errors \(1\)\n\n- state 'air_flex': 'Foot Poof 2\(Clone\)' left over from state 'wall_drag_hand_a'/);
+  assert.match(payload.report, /- \*\*air_flex\*\* — error: state 'air_flex': 'Foot Poof 2\(Clone\)'/, 'the state it shows up in is errored');
+});
+
 test('runCapture turns the script suppression off only when side effects are allowed', { timeout: 20000 }, async (t) => {
   const dir = await tempDir(t);
   const statesPath = path.join(dir, 'input-states.json');
@@ -2574,6 +2704,7 @@ test('capture_animations sweeps the stub game and answers with the report and it
   });
   assert.deepEqual(payload.summary, {
     captured: 2, skipped: 1, excluded: 0, mismatches: 1, errors: 0, contributionFailures: 0, emptyCellFrames: 0,
+    retiredObjects: 0,
   });
   assert.deepEqual(payload.stateErrors, []);
   assert.equal(payload.swap.requested, 'Rambro');

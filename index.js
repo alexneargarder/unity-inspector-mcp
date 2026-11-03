@@ -1672,7 +1672,7 @@ export async function buildToolList() {
             },
             bro: {
               type: "string",
-              description: "Bro to swap to first (Swap Bros Mod display name)",
+              description: "Bro to swap to first, unlocks ignored (Swap Bros Mod display name)",
             },
             level: {
               type: "string",
