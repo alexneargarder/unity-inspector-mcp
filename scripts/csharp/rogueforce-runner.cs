@@ -37,6 +37,9 @@ public class RogueforceRunner : MonoBehaviour
     private int totalLevels;
     private bool gameOverMode;
     private bool parkOnly;
+    private bool launchOnly;
+    private bool joinScreenSeen;
+    private bool joined;
 
     private static void Log(string message)
     {
@@ -49,7 +52,7 @@ public class RogueforceRunner : MonoBehaviour
 
         string action = ScriptContext.GetArg("action", "status");
 
-        if (action == "start") StartRun();
+        if (action == "start") StartLaunched();
         else if (action == "park") StartParked();
         else if (action == "skip") SkipLevel();
         else if (action == "status") LogStatus();
@@ -60,13 +63,26 @@ public class RogueforceRunner : MonoBehaviour
         else Log("Unknown action: " + action + ". Use start | park | skip | status | layout | seed | autorun | gameover");
     }
 
-    private static void StartRun()
+    private static void StartLaunched()
+    {
+        if (!StartRun())
+            return;
+        var go = new GameObject("RogueforceRunner");
+        UnityEngine.Object.DontDestroyOnLoad(go);
+        ScriptContext.GameObjects.Add(go);
+        var runner = go.AddComponent<RogueforceRunner>();
+        runner.launchOnly = true;
+        runner.state = StateWaitForAdvantage;
+        runner.timer = 0.5f;
+    }
+
+    private static bool StartRun()
     {
         var scene = SceneManager.GetActiveScene().name;
         if (scene != "MainMenu" && scene != "Test Evan2")
         {
             Log("ERROR: Must be at main menu. Current scene: " + scene);
-            return;
+            return false;
         }
 
         var asm = System.Reflection.Assembly.Load("Rogueforce");
@@ -74,6 +90,26 @@ public class RogueforceRunner : MonoBehaviour
         var launchMethod = modeType.GetMethod("Launch", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
         launchMethod.Invoke(null, null);
         Log("Rogueforce run launched. Select a starting advantage to begin.");
+        return true;
+    }
+
+    private void TryJoinScreen()
+    {
+        if (UnityEngine.Object.FindObjectOfType<JoinScreen>() == null)
+            return;
+
+        // JoinScreen.Start clears every joined player, so a join before it has run would be wiped
+        if (!joinScreenSeen)
+        {
+            joinScreenSeen = true;
+            return;
+        }
+        if (!joined)
+        {
+            Log("Join screen up — joining keyboard player...");
+            JoinScreen.RequestJoin(0, PID.MyID, "Runner");
+            joined = true;
+        }
     }
 
     private static void SkipLevel()
@@ -310,7 +346,12 @@ public class RogueforceRunner : MonoBehaviour
         else if (state == StateWaitForAdvantage)
         {
             var advantage = UnityEngine.Object.FindObjectOfType<SelectStartingAdvantage>();
-            if (advantage != null)
+            if (advantage != null && launchOnly)
+            {
+                Log("Starting advantage screen is up.");
+                state = StateDone;
+            }
+            else if (advantage != null)
             {
                 Log("Auto-selecting Dollars advantage...");
                 ProcGenGameMode.chosenAdvantageType = SelectStartingAdvantage.AdvantageType.Dollars;
@@ -321,12 +362,13 @@ public class RogueforceRunner : MonoBehaviour
             }
             else if (ProcGenGameMode.isEnabled && GameModeController.Instance != null)
             {
-                state = StateWaitForLevel;
+                state = launchOnly ? StateDone : StateWaitForLevel;
                 levelWait = 0f;
                 timer = 1f;
             }
             else
             {
+                TryJoinScreen();
                 advantageWait += 0.5f;
                 if (advantageWait >= AdvantageTimeoutSeconds)
                 {
