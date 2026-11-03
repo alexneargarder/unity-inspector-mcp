@@ -47,6 +47,8 @@ import { UnityInspectorClient } from '../lib/unity-client.js';
 import { CSHARP_SCRIPTS_DIR, SCRIPTS_DIR, listCSharpScripts } from '../lib/script-library.js';
 import { startStubServer, reply } from './support/stub-server.js';
 
+const UNPLAYED_STATES_PATH = path.join(path.dirname(DEFAULT_STATES_PATH), 'unplayed-states.json');
+
 // session.js leaves UNITY_INSPECTOR_PORT on a port with no listener: a live game would leave the
 // module-level client's socket open and hang the run. Every handleToolCall test points it at its own
 // stub before the call, since the module client re-reads the variable on every pointClientAtTarget().
@@ -323,8 +325,10 @@ test('the bundled base state list validates', async () => {
 });
 
 test('every bundled state steps exactly as many frames as its expected column span', async () => {
-  const doc = JSON.parse(await fs.readFile(DEFAULT_STATES_PATH, 'utf-8'));
-  const { states } = validateStates(doc);
+  const states = [];
+  for (const statesPath of [DEFAULT_STATES_PATH, UNPLAYED_STATES_PATH]) {
+    states.push(...validateStates(JSON.parse(await fs.readFile(statesPath, 'utf-8'))).states);
+  }
 
   for (const state of states) {
     if (state.unsupported) continue;
@@ -1748,6 +1752,30 @@ test('buildReport demotes a knownMismatch state that is really broken', () => {
   assert.match(report, /## Known mismatches \(0\)/);
   assert.match(report, /## Mismatches \(1\)[\s\S]*more than the known terminal-step mismatch/);
   assert.match(report, /special_new \| 3 \|.*✗ \|/, 'the table shows it as a real mismatch');
+});
+
+test('the states the game never plays for a player are a layer of their own, not part of the default sweep', async () => {
+  const unplayed = [
+    'gesture_salute',
+    'gesture_wave',
+    'gesture_point',
+    'gesture_thrust',
+    'gesture_kneedrop',
+    'gesture_shhh',
+    'dancing',
+  ];
+  const baseNames = validateStates(JSON.parse(await fs.readFile(DEFAULT_STATES_PATH, 'utf-8'))).states.map(
+    (state) => state.name,
+  );
+  const { states, errors } = validateStates(JSON.parse(await fs.readFile(UNPLAYED_STATES_PATH, 'utf-8')));
+
+  assert.ok(baseNames.includes('gesture_flex'), 'Flex has an input path, so the default sweep keeps it');
+  assert.deepEqual(baseNames.filter((name) => unplayed.includes(name)), []);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(states.map((state) => state.name), unplayed);
+
+  const merged = await loadStates([DEFAULT_STATES_PATH, UNPLAYED_STATES_PATH]);
+  assert.deepEqual(merged.slice(-unplayed.length).map((state) => state.name), unplayed, 'layered, they append');
 });
 
 test('the bundled list marks the states that kill the player', async () => {

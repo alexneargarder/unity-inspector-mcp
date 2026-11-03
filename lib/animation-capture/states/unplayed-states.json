@@ -1,0 +1,345 @@
+{
+  "schema": 1,
+  "name": "States the game never plays for a player's bro",
+  "source": "Broforce-Source/TestVanDammeAnim.cs, Broforce-Source/BroBase.cs, Broforce-Source/Map.cs, Broforce-Source/ImprovedGestureSystem.cs",
+  "note": "The six gestures other than Flex have no input path in the game: the only caller passing one is ImprovedGestureSystem.DisplayGesture (ImprovedGestureSystem.cs:33-40), which plays only a selection made while open is true (:73-126), and nothing writes open (:186); RocketLib's optional gesture key bindings can trigger them. The dance plays only for units with playerNum < 0 (Map.MakeMooksDance, Map.cs:3233-3255, the one caller of Dance). The sweep can only force these by pinning fields, so base-states.json leaves them out; layer this list after it to sweep them. Bare :NNNN line references in the entries are TestVanDammeAnim.cs; BroBase.cs is named explicitly.",
+  "states": [
+    {
+      "name": "gesture_salute",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "Salute",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false,
+        "blockMovementForGesture": true,
+        "buttonGesture": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 9,
+        "cols": [
+          0,
+          4
+        ]
+      },
+      "note": "AnimateIdle :3445-3448 (currentGesture != None) -> AnimateGesture :4707-4786, overridden by BroBase.AnimateGesture (BroBase.cs:537-552) which calls the base first. The cell is Min(frame, span - 1) * 32 at (9 + gestureIndex) * 32 (:4785), giving row 9 for Salute. blockMovementForGesture true keeps Update :1164 from clearing the gesture whenever actionState is not Idle or fire or special is set, and AnimateGesture's own end-of-span clear at :4780-4783 from firing."
+    },
+    {
+      "name": "gesture_wave",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "Wave",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false,
+        "blockMovementForGesture": true,
+        "buttonGesture": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 10,
+        "cols": [
+          0,
+          10
+        ]
+      },
+      "note": "AnimateIdle :3445-3448 (currentGesture != None) -> AnimateGesture :4707-4786, overridden by BroBase.AnimateGesture (BroBase.cs:537-552) which calls the base first. The cell is Min(frame, span - 1) * 32 at (9 + gestureIndex) * 32 (:4785), giving row 10 for Wave. blockMovementForGesture true keeps Update :1164 from clearing the gesture whenever actionState is not Idle or fire or special is set. This gesture loops by rewinding frame at :4776-4779 once frame exceeds its span; the stepped values stay inside the span so the rewind never fires."
+    },
+    {
+      "name": "gesture_point",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "Point",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false,
+        "blockMovementForGesture": true,
+        "buttonGesture": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 11,
+        "cols": [
+          0,
+          5
+        ]
+      },
+      "note": "AnimateIdle :3445-3448 (currentGesture != None) -> AnimateGesture :4707-4786, overridden by BroBase.AnimateGesture (BroBase.cs:537-552) which calls the base first. The cell is Min(frame, span - 1) * 32 at (9 + gestureIndex) * 32 (:4785), giving row 11 for Point. blockMovementForGesture true keeps Update :1164 from clearing the gesture whenever actionState is not Idle or fire or special is set, and AnimateGesture's own end-of-span clear at :4780-4783 from firing."
+    },
+    {
+      "name": "gesture_thrust",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "Thrust",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false,
+        "blockMovementForGesture": true,
+        "buttonGesture": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 13,
+        "cols": [
+          0,
+          5
+        ]
+      },
+      "note": "AnimateIdle :3445-3448 (currentGesture != None) -> AnimateGesture :4707-4786, overridden by BroBase.AnimateGesture (BroBase.cs:537-552) which calls the base first. The cell is Min(frame, span - 1) * 32 at (9 + gestureIndex) * 32 (:4785), giving row 13 for Thrust. blockMovementForGesture true keeps Update :1164 from clearing the gesture whenever actionState is not Idle or fire or special is set. This gesture loops by rewinding frame at :4776-4779 once frame exceeds its span; the stepped values stay inside the span so the rewind never fires."
+    },
+    {
+      "name": "gesture_kneedrop",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "KneeDrop",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false,
+        "blockMovementForGesture": true,
+        "buttonGesture": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 14,
+        "cols": [
+          0,
+          11
+        ]
+      },
+      "note": "AnimateIdle :3445-3448 (currentGesture != None) -> AnimateGesture :4707-4786, overridden by BroBase.AnimateGesture (BroBase.cs:537-552) which calls the base first. The cell is Min(frame, span - 1) * 32 at (9 + gestureIndex) * 32 (:4785), giving row 14 for KneeDrop. blockMovementForGesture true keeps Update :1164 from clearing the gesture whenever actionState is not Idle or fire or special is set, and AnimateGesture's own end-of-span clear at :4780-4783 from firing."
+    },
+    {
+      "name": "gesture_shhh",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "Shhh",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false,
+        "blockMovementForGesture": true,
+        "buttonGesture": false
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 16,
+        "cols": [
+          0,
+          12
+        ]
+      },
+      "note": "AnimateIdle :3445-3448 (currentGesture != None) -> AnimateGesture :4707-4786, overridden by BroBase.AnimateGesture (BroBase.cs:537-552) which calls the base first. The cell is Min(frame, span - 1) * 32 at (9 + gestureIndex) * 32 (:4785), giving row 16 for Shhh. blockMovementForGesture true keeps Update :1164 from clearing the gesture whenever actionState is not Idle or fire or special is set, and AnimateGesture's own end-of-span clear at :4780-4783 from firing."
+    },
+    {
+      "name": "dancing",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "None",
+        "stunTime": 1.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false,
+        "dancingTime": 1.0
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 14,
+        "cols": [
+          15,
+          26
+        ]
+      },
+      "note": "AnimateIdle :3449-3452 needs health > 0 && stunTime > 0 && dancingTime > 0 (and currentGesture None) -> AnimateDancingFrames :4798-4803: dancingFramesSheetPosition.x + frame % dancingFrames on row dancingFramesSheetPosition.y. The base defaults are (15, 14) and 12 frames (:11106, :11110), so a bro that overrides them will address a different block than the expect below."
+    }
+  ]
+}

@@ -43,7 +43,7 @@ A state that errors mid-sweep does not abort the run. Its pinned fields are rest
 
 ## State lists
 
-A state list names the animations to sweep, how to reach each one, and how many frames it has. `base-states.json` covers the animations `TestVanDammeAnim` and `BroBase` share — every animation a stock or BroMaker bro inherits. A per-bro list (`drunken-broster.json` is the worked example) carries only what differs: its own states plus any base entry it must restate.
+A state list names the animations to sweep, how to reach each one, and how many frames it has. `base-states.json` covers the animations `TestVanDammeAnim` and `BroBase` share — every animation a stock or BroMaker bro inherits, apart from the gestures other than Flex and the dance, which the game never plays for a player's bro. Those are in `unplayed-states.json`, swept by layering it after the base list: `states: ["base-states.json", "unplayed-states.json"]`. A per-bro list (`drunken-broster.json` is the worked example) carries only what differs: its own states plus any base entry it must restate.
 
 The file is either a bare array of entries or an object with a `states` array. The object's other keys (`schema`, `name`, `source`, `note`) are documentation; nothing reads them.
 
