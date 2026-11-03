@@ -1,0 +1,39 @@
+{
+  "name": "Scenario: level run",
+  "description": "Loads a level and drives player 1 through it with the scenario-level-run driver: movement, jump, fire, special, melee, one forced death and a respawn, the level's own mechanics, and the exit, or a timeout with a progress figure. Utility Mod's disableEnemySpawn is off for the run. survey=true scans the level instead of driving it. The default level, Intro level 1, finishes in about 25 s with five enemies, a door, a ladder and a cage.",
+  "args": {
+    "campaign": { "default": 0, "description": "Campaign index, as go_to_level takes it" },
+    "level": { "default": 0, "description": "Level index within the campaign" },
+    "timeoutSec": { "default": 240, "description": "Driving budget in seconds; the poll waits 600 s in all, so keep it under about 480" },
+    "requireMechanics": { "default": "", "description": "Comma list of mechanic kinds the run must exercise, e.g. wormTunnel,zipline" },
+    "survey": { "default": false, "description": "true to scan and report the level's layout and mechanics without driving" }
+  },
+  "steps": [
+    {
+      "command": "execute_script",
+      "params": {
+        "path": "scenario-level-run",
+        "args": { "timeoutSec": "{{timeoutSec}}", "requireMechanics": "{{requireMechanics}}", "survey": "{{survey}}" }
+      },
+      "expect": { "success": true }
+    },
+    {
+      "command": "go_to_level",
+      "params": { "campaignIndex": "{{campaign}}", "levelIndex": "{{level}}" }
+    },
+    {
+      "command": "execute_code",
+      "params": { "code": "return ScenarioLevelRun.Done;" },
+      "until": { "timeout": 600, "interval": 2 },
+      "expect": { "contains": ["\"result\": true"] }
+    },
+    {
+      "command": "execute_code",
+      "params": { "code": "return ScenarioLevelRun.ReportJson;" },
+      "report": true
+    }
+  ],
+  "cleanup": [
+    { "command": "unload_script", "params": { "name": "scenario-level-run" } }
+  ]
+}

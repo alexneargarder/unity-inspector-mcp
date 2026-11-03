@@ -1,0 +1,89 @@
+{
+  "name": "Scenario: menu pass",
+  "description": "In a level, opens and closes the pause menu with simulated input, opens UnityModManager's window and draws each chosen mod's settings, takes a screenshot with the window open, closes it, returns to the main menu through the pause menu and loads the level again. Runs on its own: the main-menu trip resets player state.",
+  "args": {
+    "campaign": { "default": 1, "description": "Campaign index, as go_to_level takes it" },
+    "level": { "default": 0, "description": "Level index within the campaign" },
+    "mod": { "default": "*", "description": "UnityModManager mod id whose settings are drawn, or * for every active mod with settings" },
+    "frames": { "default": 30, "description": "Frames each mod's settings must draw" }
+  },
+  "continueOnFailure": true,
+  "steps": [
+    {
+      "command": "go_to_level",
+      "params": { "campaignIndex": "{{campaign}}", "levelIndex": "{{level}}" }
+    },
+    {
+      "command": "execute_code",
+      "params": { "code": "var p = HeroController.players[0]; return p != null && p.IsAliveAndSpawnedHero();" },
+      "until": { "timeout": 60, "interval": 1 },
+      "expect": { "contains": ["\"result\": true"] }
+    },
+    {
+      "command": "execute_script",
+      "params": { "path": "scenario-menus", "args": { "mod": "{{mod}}", "frames": "{{frames}}" } },
+      "expect": { "success": true }
+    },
+    {
+      "command": "simulate_input",
+      "params": { "action": "start" }
+    },
+    {
+      "command": "execute_code",
+      "params": { "code": "return PauseController.pauseStatus.ToString();" },
+      "until": { "timeout": 10, "interval": 0.5 },
+      "expect": { "contains": ["\"MenuPause\""] }
+    },
+    {
+      "command": "simulate_input",
+      "params": { "action": "escape" }
+    },
+    {
+      "command": "execute_code",
+      "params": { "code": "return PauseController.pauseStatus.ToString();" },
+      "until": { "timeout": 10, "interval": 0.5 },
+      "expect": { "contains": ["\"UnPaused\""] }
+    },
+    {
+      "command": "execute_code",
+      "params": { "code": "return ScenarioMenus.Next();" }
+    },
+    {
+      "command": "execute_code",
+      "params": { "code": "return ScenarioMenus.Phase;" },
+      "until": { "timeout": 180, "interval": 1 },
+      "expect": { "contains": ["\"umm-open\""] }
+    },
+    {
+      "command": "take_screenshot"
+    },
+    {
+      "command": "execute_code",
+      "params": { "code": "return ScenarioMenus.Next();" }
+    },
+    {
+      "command": "execute_code",
+      "params": { "code": "return ScenarioMenus.Phase;" },
+      "until": { "timeout": 45, "interval": 1 },
+      "expect": { "contains": ["\"main-menu\""] }
+    },
+    {
+      "command": "go_to_level",
+      "params": { "campaignIndex": "{{campaign}}", "levelIndex": "{{level}}" }
+    },
+    {
+      "command": "execute_code",
+      "params": { "code": "var p = HeroController.players[0]; return p != null && p.IsAliveAndSpawnedHero();" },
+      "until": { "timeout": 60, "interval": 1 },
+      "expect": { "contains": ["\"result\": true"] }
+    },
+    {
+      "command": "execute_code",
+      "params": { "code": "return ScenarioMenus.Finish();" },
+      "report": true
+    }
+  ],
+  "cleanup": [
+    { "command": "unload_script", "params": { "name": "scenario-menus" } }
+  ]
+}

@@ -20,11 +20,14 @@ import { tokenizeCommand } from './lib/command-line.js';
 import { CAPTURE_FILE, CAPTURE_STATES_DIR, DEFAULT_SETTLE_MS, DEFAULT_STATES_PATH, DEFAULT_SWAP_SETTLE_MS, DEFAULT_SWAP_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, REPORT_FILE, STATES_COPY_NAME, formatLogTail, parseLevel, runCapture, teardownGame } from './lib/animation-capture.js';
 import {
   buildScriptCatalog,
+  compactTestScriptReply,
+  isScenarioScript,
   listCSharpScripts,
   listTestScripts,
   readScriptSource,
   runTestScript,
 } from './lib/script-library.js';
+import { isPlayerLogName } from './lib/log-delta.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -352,6 +355,13 @@ export async function targetLogPaths(config = activeConfig()) {
     umm: profile ? (await newestExisting(profileLogPaths(profile)))?.path ?? null : null,
     player: (await newestExisting(playerLogPaths()))?.path ?? null,
   };
+}
+
+export async function testScriptLogPaths() {
+  const paths = await targetLogPaths();
+  const override = logOverride();
+  if (override && paths.umm === override && isPlayerLogName(override)) return { umm: null, player: override };
+  return paths;
 }
 
 export async function findLogPath(detectProfile = detectActiveProfile, startTime = gameStartTime) {
@@ -1076,8 +1086,9 @@ export async function buildToolList() {
   let scriptCatalog = "";
   try {
     const scripts = await listCSharpScripts();
-    if (scripts.count > 0) {
-      scriptCatalog = "\n\nAvailable library scripts:\n" + scripts.scripts.map(s => {
+    const listed = scripts.scripts.filter((s) => !isScenarioScript(s));
+    if (listed.length > 0) {
+      scriptCatalog = "\n\nAvailable library scripts:\n" + listed.map(s => {
         let line = `- ${s.name}: ${s.description}`;
         if (s.args.length > 0) {
           line += ` [args: ${s.args.map(a => a.split(':')[0].trim()).join(', ')}]`;
@@ -1521,7 +1532,7 @@ export async function buildToolList() {
       },
       {
         name: "list_test_scripts",
-        description: "List all available test scripts in scripts/tests/",
+        description: "List the test scripts in scripts/tests/ with the args each declares",
         inputSchema: {
           type: "object",
           properties: {},
@@ -1585,13 +1596,17 @@ export async function buildToolList() {
       },
       {
         name: "run_test_script",
-        description: "Execute a test script containing a sequence of commands. Scripts are JSON files with command sequences that can include wait delays. Steps run directly against the game, so only game-side commands work — server-side tools (read_log, watch_log, list_scripts, launch_game, stop_game, wait_for_game, ...) cannot be used as steps. A step may also carry an 'expect' object with 'success', 'contains' and 'notContains' checks against its result; a step with 'expect' passes when its expectations are met even if the command itself failed, so a step written to fail does not stop the script. Each such result record reports 'expect' and 'expectations' (the met and unmet checks).",
+        description: "Run a JSON test script of game commands; server-side tools (read_log, launch_game, ...) cannot be steps. A step may carry 'expect' (success/contains/notContains; a met expect passes even a failed command), 'until' to repeat it until its expect holds, and 'report' to lift its JSON result into the reply; 'cleanup' steps run however the steps ended, unless the game died. The reply has 'passed', any 'report', 'logs' (new log errors and floods, by source), a short preview per step, and 'resultsFile', every step's full result in the user's state dir (newest 100 kept). Format: scripts/README.md.",
         inputSchema: {
           type: "object",
           properties: {
             script: {
               type: "string",
               description: "Script name (from scripts/tests/) or absolute file path",
+            },
+            args: {
+              type: "object",
+              description: "Values for the script's {{name}} placeholders; its declared defaults fill the rest",
             },
           },
           required: ["script"],
@@ -2581,7 +2596,13 @@ export async function handleToolCall(request) {
         if (!args.script) {
           throw new Error("Script name or path is required");
         }
-        result = await runTestScript(args.script, unityClient);
+        result = await compactTestScriptReply(
+          await runTestScript(args.script, unityClient, {
+            args: args.args ?? {},
+            logPaths: () => testScriptLogPaths(),
+          }),
+          { script: args.script },
+        );
         break;
 
       case "execute_script": {

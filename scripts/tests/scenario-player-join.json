@@ -1,0 +1,59 @@
+{
+  "name": "Scenario: second local player joins",
+  "description": "Loads a level, checks a simulated fire for player 1 reaches its bro and joins nobody, joins a second local player on a controller with no device, waits for its bro to spawn, drives it with the game's follower bot (or holds its input off), drops it out and checks each step and that player 1 was not affected.",
+  "args": {
+    "campaign": { "default": 1, "description": "Campaign index, as go_to_level takes it" },
+    "level": { "default": 0, "description": "Level index within the campaign" },
+    "controllerId": { "default": 2, "description": "Controller id the player joins on; 2 and 3 are keyboards with no keys bound" },
+    "durationSec": { "default": 20, "description": "Seconds the joined player is driven" },
+    "driver": { "default": "bot", "description": "bot (the game's follower bot) or idle (input held off)" }
+  },
+  "steps": [
+    {
+      "command": "go_to_level",
+      "params": { "campaignIndex": "{{campaign}}", "levelIndex": "{{level}}" }
+    },
+    {
+      "command": "execute_code",
+      "params": { "code": "var p = HeroController.players[0]; return p != null && p.IsAliveAndSpawnedHero();" },
+      "until": { "timeout": 60, "interval": 1 },
+      "expect": { "contains": ["\"result\": true"] }
+    },
+    {
+      "command": "simulate_input",
+      "params": { "action": "fire", "player": 0, "duration": 1500 },
+      "expect": { "success": true },
+      "wait": 500
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var p = HeroController.players[0]; return \"players \" + HeroController.GetPlayersPlayingCount() + \", player 1 on controller \" + HeroController.playerControllerIDs[0] + \", its bro firing \" + (p.character != null && p.character.fire);"
+      },
+      "until": { "timeout": 3, "interval": 0.25 },
+      "expect": { "contains": ["players 1,", "firing True"] }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "path": "scenario-player-join",
+        "args": { "controllerId": "{{controllerId}}", "durationSec": "{{durationSec}}", "driver": "{{driver}}" }
+      },
+      "expect": { "success": true }
+    },
+    {
+      "command": "execute_code",
+      "params": { "code": "return ScenarioPlayerJoin.Done;" },
+      "until": { "timeout": 180, "interval": 1 },
+      "expect": { "contains": ["\"result\": true"] }
+    },
+    {
+      "command": "execute_code",
+      "params": { "code": "return ScenarioPlayerJoin.ReportJson;" },
+      "report": true
+    }
+  ],
+  "cleanup": [
+    { "command": "unload_script", "params": { "name": "scenario-player-join" } }
+  ]
+}

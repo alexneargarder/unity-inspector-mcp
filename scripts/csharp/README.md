@@ -27,6 +27,8 @@ public static class MyScript
 }
 ```
 
+A script tagged `scenario` is left out of the catalog in the `execute_script` tool description; `list_scripts` still lists it.
+
 ## Lifecycle
 
 - **`Main()`** — Called when the script is executed. Optional — scripts without Main() just register their types.
@@ -69,6 +71,13 @@ logger under a plain `[Script]` prefix. `Harmony`, `GameObjects` and `Args` are 
 `ex.StackTrace` and `ex.ToString()` on a caught exception both return a normal managed trace
 naming your script's own methods. No file names or line numbers in it, since the script
 assembly is compiled in memory.
+
+## The Pause Menu
+
+Opening the pause menu offline deactivates every active GameObject not tagged `Unpausable`,
+`DontDestroyOnLoad` ones included, so their MonoBehaviours stop updating until it closes. A
+script whose MonoBehaviour must keep running under the pause menu tags its GameObject
+`go.tag = "Unpausable";`, as `scenario-menus.cs` does.
 
 ## .NET 3.5 Constraints
 

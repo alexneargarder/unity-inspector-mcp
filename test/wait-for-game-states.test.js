@@ -3,7 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { startStubServer, reply } from './support/stub-server.js';
-import { isGameRunning } from '../lib/game-process.js';
+import { fakeProcReader } from './support/fake-proc.js';
+import { LINUX_GAME_COMM, isGameRunning, setProcReader } from '../lib/game-process.js';
 
 // The port must be set before index.js is imported: the module-level client reads it at construction
 let onPing = () => {};
@@ -39,20 +40,28 @@ test('a port that accepts but never answers is connected-unresponsive', { timeou
   assert.ok(stub.connectionCount >= 1);
 });
 
-test('a port that closes the connection is connection-dropped', { timeout: 30000 }, async () => {
+test('a port that closes the connection is connection-dropped', { timeout: 30000 }, async (t) => {
   onPing = (_request, socket) => socket.destroy();
-  const expected = (await isGameRunning()) === false ? 'no-process' : 'connection-dropped';
+  const tables = process.platform === 'linux'
+    ? [{ 900: { comm: LINUX_GAME_COMM, cwd: '/tmp' } }, {}]
+    : [null];
+  t.after(() => setProcReader(null));
 
-  const { payload } = await waitForGame({ timeout: 0.3, interval: 0.05 });
+  for (const table of tables) {
+    if (table) setProcReader(fakeProcReader(table));
+    const expected = (await isGameRunning()) === false ? 'no-process' : 'connection-dropped';
 
-  assert.equal(payload.success, false);
-  assert.equal(payload.state, expected, payload.message);
-  assert.ok(payload.attempts >= 1);
-  assert.doesNotMatch(payload.lastError, /Command timeout/, 'a dropped socket is not a silent one');
-  assert.match(
-    payload.message,
-    expected === 'no-process' ? /connection dropped and no Broforce process/ : /accepted a connection that was then closed/,
-  );
+    const { payload } = await waitForGame({ timeout: 0.3, interval: 0.05 });
+
+    assert.equal(payload.success, false);
+    assert.equal(payload.state, expected, payload.message);
+    assert.ok(payload.attempts >= 1);
+    assert.doesNotMatch(payload.lastError, /Command timeout/, 'a dropped socket is not a silent one');
+    assert.match(
+      payload.message,
+      expected === 'no-process' ? /connection dropped and no Broforce process/ : /accepted a connection that was then closed/,
+    );
+  }
 });
 
 test('a connected client keeps its socket through wait_for_game', { timeout: 30000 }, async () => {

@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import path from 'path';
+
 // Every test entry point imports this before index.js or anything under lib/: a session id and an
 // instance launcher inherited from the session running the tests would give those modules an agent
 // instance, and the tests would then act on a game they never asked for. A file that wants one sets
@@ -24,3 +28,6 @@ delete process.env.STUB_STAGE_ROOT;
 // The wrapper hands its child this path to record the owner.pid it wrote; inherited, it would have
 // the tests writing a claim into a live session's wrapper file
 delete process.env.UNITY_INSPECTOR_MCP_CLAIM_FILE;
+export const TEST_RESULTS_SCRATCH = mkdtempSync(path.join(tmpdir(), 'unity-inspector-test-results-'));
+process.env.UNITY_INSPECTOR_TEST_RESULTS_DIR = TEST_RESULTS_SCRATCH;
+process.on('exit', () => rmSync(TEST_RESULTS_SCRATCH, { recursive: true, force: true }));

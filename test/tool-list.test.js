@@ -3,7 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 const { SERVER_CAPABILITIES, buildToolList, handleToolCall, resolvePollBudget } = await import('../index.js');
-const { isGameRunning } = await import('../lib/game-process.js');
+const { isGameRunning, setProcReader } = await import('../lib/game-process.js');
+const { fakeProcReader } = await import('./support/fake-proc.js');
 const { NODE_ONLY_TOOLS, validateTestScriptSteps } = await import('../lib/script-library.js');
 
 const MAX_TOOL_CHARS = 2800;
@@ -267,7 +268,11 @@ test('launch_game says which launch launchArgs reach', async () => {
   assert.match(launchArgs.description, /The Steam protocol launch takes no arguments/);
 });
 
-test('wait_for_game reports which failure mode a timeout hit', { timeout: 30000 }, async () => {
+test('wait_for_game reports which failure mode a timeout hit', { timeout: 30000 }, async (t) => {
+  if (process.platform === 'linux') {
+    setProcReader(fakeProcReader({}));
+    t.after(() => setProcReader(null));
+  }
   const running = await isGameRunning();
   const expected = { true: 'connection-refused', false: 'no-process', null: 'unknown' }[String(running)];
 
@@ -328,6 +333,25 @@ test('unusable poll budgets fall back instead of producing NaN deadlines', () =>
 
 test('the server announces a tool list that changes', () => {
   assert.deepEqual(SERVER_CAPABILITIES.tools, { listChanged: true });
+});
+
+test('execute_script leaves scenario-tagged scripts out of its catalog and lists the rest', async () => {
+  const { listCSharpScripts, isScenarioScript } = await import('../lib/script-library.js');
+  const { description } = await toolNamed('execute_script');
+  const { scripts } = await listCSharpScripts();
+  const scenarios = scripts.filter(isScenarioScript);
+  const others = scripts.filter((s) => !isScenarioScript(s));
+
+  assert.ok(scenarios.length > 0, 'the library ships scenario scripts');
+  for (const script of scenarios) {
+    assert.ok(!description.includes(`- ${script.name}:`), `${script.name} is in the execute_script catalog`);
+  }
+  for (const script of others) {
+    assert.ok(description.includes(`- ${script.name}:`), `${script.name} is missing from the execute_script catalog`);
+  }
+  assert.equal(isScenarioScript({ tags: 'debugging, Scenario' }), true);
+  assert.equal(isScenarioScript({ tags: 'scenarios' }), false);
+  assert.equal(isScenarioScript({ tags: '' }), false);
 });
 
 test('the tool list stays within its size limits', async () => {

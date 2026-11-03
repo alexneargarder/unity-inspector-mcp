@@ -1,0 +1,129 @@
+{
+  "name": "Scenario: bro swap mid-level",
+  "description": "While the level-run driver drives player 1, swaps to a vanilla bro and to an unlocked custom bro, then locks that custom bro in memory with BroMakerLib's saves blocked: a plain swap to it must be refused as unreachable and an ignoreUnlocks swap must land. After every swap the driver must steer the new bro before it dies. Each swap to the custom bro is made with rescues held off, and the driver then holds that bro until fire was pressed for it and its own UseSpecial and StartMelee ran: the report's customBroUsedKit and lockedCustomBroUsedKit checks. Needs Swap Bros Mod with BroMaker bros enabled, and BroMakerLib. Cleanup unlocks the bro and unloads both scripts.",
+  "args": {
+    "campaign": { "default": 0, "description": "Campaign index, as go_to_level takes it" },
+    "level": { "default": 0, "description": "Level index within the campaign" },
+    "vanillaBro": { "default": "Rambro", "description": "A vanilla bro's Swap Bros Mod name" },
+    "customBro": { "default": "Bronobi", "description": "An installed, unlocked custom bro's BroMakerLib name" },
+    "kitHoldSec": { "default": 15, "description": "Seconds each kit hold may take before its check fails" },
+    "driveSec": { "default": 45, "description": "Seconds the driver drives; the swaps and kit holds happen in its first seconds" },
+    "lives": { "default": 5, "description": "Lives set when driving starts, so a death cannot end the level" }
+  },
+  "steps": [
+    {
+      "command": "execute_script",
+      "params": {
+        "path": "scenario-level-run",
+        "args": { "durationSec": "{{driveSec}}", "livesAtStart": "{{lives}}", "forceDeath": "off" }
+      },
+      "expect": { "success": true }
+    },
+    { "command": "go_to_level", "params": { "campaignIndex": "{{campaign}}", "levelIndex": "{{level}}" } },
+    {
+      "command": "execute_code",
+      "params": { "code": "return ScenarioLevelRun.Phase;" },
+      "until": { "timeout": 120, "interval": 1 },
+      "expect": { "contains": ["\"driving\""] }
+    },
+    { "command": "swap_bro", "params": { "broName": "{{vanillaBro}}" }, "expect": { "success": true } },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var r = UnityEngine.Object.FindObjectOfType<ScenarioLevelRunner>(); var f = BindingFlags.NonPublic | BindingFlags.Instance; var ev = ((System.Collections.IList)typeof(ScenarioLevelRunner).GetField(\"events\", f).GetValue(r)).Cast<System.Collections.IDictionary>().ToList(); int swaps = ev.Count(e => (string)e[\"type\"] == \"swap\"); int last = ev.FindLastIndex(e => (string)e[\"type\"] == \"swap\"); bool died = last >= 0 && ev.Skip(last + 1).Any(e => (string)e[\"type\"] == \"death\"); int presses = (int)typeof(ScenarioLevelRunner).GetField(\"actionsSinceSwap\", f).GetValue(r); var p = HeroController.players[0]; var b = p != null && p.IsAliveAndSpawnedHero() ? p.character : null; bool steered = b != null && (b.left || b.right); return \"driven \" + (swaps >= 1 && !died && presses >= 1 && steered) + \": swaps seen \" + swaps + \", died since the last \" + died + \", presses since it \" + presses + \", bro \" + (b == null ? \"none\" : b.GetType().Name + \" steered \" + steered + \" at \" + Mathf.Round(b.X) + \",\" + Mathf.Round(b.Y));"
+      },
+      "until": { "timeout": 10, "interval": 0.25 },
+      "expect": { "contains": ["driven True"] }
+    },
+    {
+      "command": "execute_code",
+      "params": { "code": "return ScenarioLevelRun.HoldRescues(0);" },
+      "expect": { "contains": ["\"rescues held"] }
+    },
+    { "command": "swap_bro", "params": { "broName": "{{customBro}}" }, "expect": { "success": true } },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var r = UnityEngine.Object.FindObjectOfType<ScenarioLevelRunner>(); var f = BindingFlags.NonPublic | BindingFlags.Instance; var ev = ((System.Collections.IList)typeof(ScenarioLevelRunner).GetField(\"events\", f).GetValue(r)).Cast<System.Collections.IDictionary>().ToList(); int swaps = ev.Count(e => (string)e[\"type\"] == \"swap\"); int last = ev.FindLastIndex(e => (string)e[\"type\"] == \"swap\"); bool died = last >= 0 && ev.Skip(last + 1).Any(e => (string)e[\"type\"] == \"death\"); int presses = (int)typeof(ScenarioLevelRunner).GetField(\"actionsSinceSwap\", f).GetValue(r); var p = HeroController.players[0]; var b = p != null && p.IsAliveAndSpawnedHero() ? p.character : null; bool steered = b != null && (b.left || b.right); string live = ScenarioLevelRun.LiveBro(0); bool isBro = string.Equals(live, \"{{customBro}}\", StringComparison.OrdinalIgnoreCase); return \"driven \" + (swaps >= 2 && isBro && !died && presses >= 1 && steered) + \": swaps seen \" + swaps + \", live bro \" + (live ?? \"unseen\") + \", died since the last \" + died + \", presses since it \" + presses + \", bro \" + (b == null ? \"none\" : b.GetType().Name + \" steered \" + steered + \" at \" + Mathf.Round(b.X) + \",\" + Mathf.Round(b.Y));"
+      },
+      "until": { "timeout": 10, "interval": 0.25 },
+      "expect": { "contains": ["driven True"] }
+    },
+    {
+      "command": "execute_code",
+      "params": { "code": "return ScenarioLevelRun.HoldKit(\"customBroUsedKit\", 0, \"{{customBro}}\", {{kitHoldSec}});" },
+      "expect": { "contains": ["\"holding"] }
+    },
+    {
+      "command": "execute_code",
+      "params": { "code": "return ScenarioLevelRun.HoldStatus;" },
+      "until": { "timeout": 120, "interval": 0.5 },
+      "expect": { "contains": ["\"ended"] }
+    },
+    {
+      "command": "execute_script",
+      "params": { "path": "scenario-bro-lock", "args": { "bro": "{{customBro}}" } },
+      "expect": { "success": true }
+    },
+    {
+      "command": "execute_code",
+      "params": { "code": "return ScenarioBroLock.Status;" },
+      "expect": { "contains": ["\"result\": \"locked\""] }
+    },
+    { "command": "swap_bro", "params": { "broName": "{{vanillaBro}}" }, "expect": { "success": true } },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var r = UnityEngine.Object.FindObjectOfType<ScenarioLevelRunner>(); var f = BindingFlags.NonPublic | BindingFlags.Instance; var ev = ((System.Collections.IList)typeof(ScenarioLevelRunner).GetField(\"events\", f).GetValue(r)).Cast<System.Collections.IDictionary>().ToList(); int swaps = ev.Count(e => (string)e[\"type\"] == \"swap\"); int last = ev.FindLastIndex(e => (string)e[\"type\"] == \"swap\"); bool died = last >= 0 && ev.Skip(last + 1).Any(e => (string)e[\"type\"] == \"death\"); int presses = (int)typeof(ScenarioLevelRunner).GetField(\"actionsSinceSwap\", f).GetValue(r); var p = HeroController.players[0]; var b = p != null && p.IsAliveAndSpawnedHero() ? p.character : null; bool steered = b != null && (b.left || b.right); return \"driven \" + (swaps >= 3 && !died && presses >= 1 && steered) + \": swaps seen \" + swaps + \", died since the last \" + died + \", presses since it \" + presses + \", bro \" + (b == null ? \"none\" : b.GetType().Name + \" steered \" + steered + \" at \" + Mathf.Round(b.X) + \",\" + Mathf.Round(b.Y));"
+      },
+      "until": { "timeout": 10, "interval": 0.25 },
+      "expect": { "contains": ["driven True"] }
+    },
+    {
+      "command": "swap_bro",
+      "params": { "broName": "{{customBro}}" },
+      "expect": { "success": false, "contains": ["\"reason\": \"unreachable\""] }
+    },
+    {
+      "command": "execute_code",
+      "params": { "code": "return ScenarioLevelRun.HoldRescues(0);" },
+      "expect": { "contains": ["\"rescues held"] }
+    },
+    {
+      "command": "swap_bro",
+      "params": { "broName": "{{customBro}}", "ignoreUnlocks": true },
+      "expect": { "success": true, "contains": ["\"broFrom\": \"custom\""] }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var r = UnityEngine.Object.FindObjectOfType<ScenarioLevelRunner>(); var f = BindingFlags.NonPublic | BindingFlags.Instance; var ev = ((System.Collections.IList)typeof(ScenarioLevelRunner).GetField(\"events\", f).GetValue(r)).Cast<System.Collections.IDictionary>().ToList(); int swaps = ev.Count(e => (string)e[\"type\"] == \"swap\"); int last = ev.FindLastIndex(e => (string)e[\"type\"] == \"swap\"); bool died = last >= 0 && ev.Skip(last + 1).Any(e => (string)e[\"type\"] == \"death\"); int presses = (int)typeof(ScenarioLevelRunner).GetField(\"actionsSinceSwap\", f).GetValue(r); var p = HeroController.players[0]; var b = p != null && p.IsAliveAndSpawnedHero() ? p.character : null; bool steered = b != null && (b.left || b.right); string live = ScenarioLevelRun.LiveBro(0); bool isBro = string.Equals(live, \"{{customBro}}\", StringComparison.OrdinalIgnoreCase); return \"driven \" + (swaps >= 4 && isBro && !died && presses >= 1 && steered) + \": swaps seen \" + swaps + \", live bro \" + (live ?? \"unseen\") + \", died since the last \" + died + \", presses since it \" + presses + \", bro \" + (b == null ? \"none\" : b.GetType().Name + \" steered \" + steered + \" at \" + Mathf.Round(b.X) + \",\" + Mathf.Round(b.Y));"
+      },
+      "until": { "timeout": 10, "interval": 0.25 },
+      "expect": { "contains": ["driven True"] }
+    },
+    {
+      "command": "execute_code",
+      "params": { "code": "return ScenarioLevelRun.HoldKit(\"lockedCustomBroUsedKit\", 0, \"{{customBro}}\", {{kitHoldSec}});" },
+      "expect": { "contains": ["\"holding"] }
+    },
+    {
+      "command": "execute_code",
+      "params": { "code": "return ScenarioLevelRun.HoldStatus;" },
+      "until": { "timeout": 120, "interval": 0.5 },
+      "expect": { "contains": ["\"ended"] }
+    },
+    {
+      "command": "execute_code",
+      "params": { "code": "return ScenarioLevelRun.Done;" },
+      "until": { "timeout": 300, "interval": 2 },
+      "expect": { "contains": ["\"result\": true"] }
+    },
+    { "command": "execute_code", "params": { "code": "return ScenarioLevelRun.ReportJson;" }, "report": true },
+    { "command": "execute_code", "params": { "code": "return ScenarioBroLock.Unlock();" }, "report": true }
+  ],
+  "cleanup": [
+    { "command": "unload_script", "params": { "name": "scenario-bro-lock" } },
+    { "command": "unload_script", "params": { "name": "scenario-level-run" } }
+  ]
+}

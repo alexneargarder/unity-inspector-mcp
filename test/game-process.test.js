@@ -12,16 +12,19 @@ import {
   startFromLstart,
   composeExtraLaunchArgs,
   extractProfileName,
+  invalidateGameProcessScan,
   isGameRunning,
   killGame,
   parseWmicCreationDate,
   resolveLaunchCommand,
   runChild,
+  setProcReader,
   spawnDetached,
   STEAM_LAUNCH_URL,
 } from '../lib/game-process.js';
 import { instanceConfig } from '../lib/instance.js';
 import { tokenizeCommand } from '../lib/command-line.js';
+import { fakeProcReader } from './support/fake-proc.js';
 
 // The instance launcher is a setting, so the tests name their own program for both settings
 const LAUNCHER = 'game-launcher';
@@ -111,6 +114,7 @@ test('the process check does not match its own shell', { skip: !isPosix }, async
   if (await skipUnlessNothingNamesTheGame(t)) return;
 
   const { code, error } = await runChild('sh', ['-c', POSIX_GAME_CHECK_CMD], { capture: false });
+  if (await skipUnlessNothingNamesTheGame(t)) return;
   assert.equal(error, null);
   assert.notEqual(code, 0, 'the check must exit non-zero when no game process exists');
 });
@@ -123,6 +127,7 @@ test('the pid lookups do not match their own shell', { skip: !isPosix }, async (
     ['POSIX_GAME_CMDLINE_PID_CMD', POSIX_GAME_CMDLINE_PID_CMD],
   ]) {
     const { code, stdout, error } = await runChild('sh', ['-c', command]);
+    if (await skipUnlessNothingNamesTheGame(t)) return;
     assert.equal(error, null, `${name} could not run`);
     assert.notEqual(code, 0, `${name} must exit non-zero when no game process exists`);
     assert.equal(stdout.trim(), '', `${name} matched something: ${stdout}`);
@@ -159,10 +164,12 @@ test('startFromLstart survives the shapes ps actually emits', () => {
 });
 
 test('isGameRunning reports false (never throws) with no game running', async (t) => {
+  const before = isPosix && (await broforceIsActuallyRunning());
+  invalidateGameProcessScan();
   const answer = await isGameRunning();
   assert.ok(answer === true || answer === false || answer === null);
 
-  if (isPosix && !(await broforceIsActuallyRunning())) {
+  if (isPosix && !before && !(await broforceIsActuallyRunning())) {
     assert.equal(answer, false);
   } else {
     t.diagnostic(`isGameRunning() -> ${answer}`);
@@ -170,7 +177,10 @@ test('isGameRunning reports false (never throws) with no game running', async (t
 });
 
 test('killGame reports honestly when nothing was killed', async (t) => {
-  if (isPosix && (await broforceIsActuallyRunning())) {
+  if (process.platform === 'linux') {
+    setProcReader(fakeProcReader({}));
+    t.after(() => setProcReader(null));
+  } else if (isPosix && (await broforceIsActuallyRunning())) {
     t.skip('a real Broforce process is running; refusing to kill it');
     return;
   }

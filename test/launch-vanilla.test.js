@@ -6,11 +6,17 @@ import os from 'os';
 import path from 'path';
 
 const { commandIsRunnable, configureLaunchTiming, handleToolCall, vanillaTookEffect } = await import('../index.js');
-const { isGameRunning, lastSpawnOptions, resolveLaunchCommand } = await import('../lib/game-process.js');
+const { isGameRunning, lastSpawnOptions, resolveLaunchCommand, setProcReader } = await import('../lib/game-process.js');
+const { fakeProcReader } = await import('./support/fake-proc.js');
 const { tokenizeCommand } = await import('../lib/command-line.js');
 
 const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'vanilla-'));
 test.after(() => fs.rm(scratch, { recursive: true, force: true }));
+
+if (process.platform === 'linux') {
+  setProcReader(fakeProcReader({}));
+  test.after(() => setProcReader(null));
+}
 
 function textOf(response) {
   return response.content.map((c) => c.text).join('\n');

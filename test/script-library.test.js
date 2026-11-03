@@ -7,6 +7,7 @@ import {
   parseScriptMetadata,
   readScriptSource,
   listTestScripts,
+  prepareTestScript,
   resolveTestScriptPath,
   runTestScript,
   validateTestScriptSteps,
@@ -56,6 +57,10 @@ const SHIPPED_TEST_SCRIPTS = [
   'example-movement-test.json',
   'execute-code-errors.json',
   'input-sequence.json',
+  'scenario-bro-swap.json',
+  'scenario-level-run.json',
+  'scenario-menus.json',
+  'scenario-player-join.json',
 ];
 
 test('list_test_scripts finds every script shipped in scripts/tests', async () => {
@@ -95,7 +100,7 @@ test('test scripts reject steps that only the MCP server can run', () => {
     { command: 'ping' },
     { command: 'read_log' },
     { command: 'launch_game' },
-    { command: 'execute_script', params: { path: 'watch-field' } },
+    { command: 'execute_script', params: { args: {} } },
     { command: 'execute_script', params: { source: 'class X {}' } },
     {},
   ]);
@@ -103,8 +108,95 @@ test('test scripts reject steps that only the MCP server can run', () => {
   assert.equal(problems.length, 4);
   assert.match(problems[0], /step 2: "read_log"/);
   assert.match(problems[1], /step 3: "launch_game"/);
-  assert.match(problems[2], /step 4: "execute_script" needs params\.source/);
+  assert.match(problems[2], /step 4: "execute_script" needs params\.path \(a library script\) or params\.source/);
   assert.match(problems[3], /step 6: missing "command"/);
+});
+
+test('a script step names a library script or inlines source, never both', () => {
+  const problems = validateTestScriptSteps([
+    { command: 'execute_script', params: { path: 'watch-field' } },
+    { command: 'compile_script', params: { path: 'watch-field.cs' } },
+    { command: 'execute_script', params: { path: 'watch-field', source: 'class X {}' } },
+    { command: 'compile_script', params: {} },
+  ]);
+
+  assert.equal(problems.length, 2);
+  assert.match(problems[0], /step 3: "execute_script" takes params\.path or params\.source, not both/);
+  assert.match(problems[1], /step 4: "compile_script" needs params\.path/);
+});
+
+test('until needs an expect and a timeout in seconds; report is a boolean', () => {
+  const problems = validateTestScriptSteps([
+    { command: 'ping', until: { timeout: 5 }, expect: { success: true } },
+    { command: 'ping', until: { timeout: 5, interval: 0.5 }, expect: { contains: ['x'] }, report: true },
+    { command: 'ping', until: { timeout: 5 } },
+    { command: 'ping', until: { interval: 1 }, expect: { success: true } },
+    { command: 'ping', until: { timeout: -1, interval: 0 }, expect: { success: true } },
+    { command: 'ping', until: { timeoutMs: 5000, timeout: 5 }, expect: { success: true } },
+    { command: 'ping', until: 30, expect: { success: true } },
+    { command: 'ping', report: 'yes' },
+  ], 'cleanup step');
+
+  assert.deepEqual(problems, [
+    'cleanup step 3: "until" needs an "expect" to poll for',
+    'cleanup step 4: "until.timeout" must be a number of seconds, 0 or more',
+    'cleanup step 5: "until.timeout" must be a number of seconds, 0 or more',
+    'cleanup step 5: "until.interval" must be a positive number of seconds',
+    'cleanup step 6: unknown "until" key "timeoutMs" (allowed: timeout, interval)',
+    'cleanup step 7: "until" must be an object',
+    'cleanup step 8: "report" must be a boolean',
+  ]);
+});
+
+test('readScriptSource resolves a catalog display name to its file', async () => {
+  const byDisplay = await readScriptSource('Watch Field');
+  const byName = await readScriptSource('watch-field');
+  assert.equal(byDisplay.name, 'watch-field');
+  assert.equal(byDisplay.source, byName.source);
+  await assert.rejects(readScriptSource('No Such Display Name'), { code: 'ENOENT' });
+});
+
+test('prepareTestScript checks the declared args and the cleanup array', async (t) => {
+  const { mkdtemp, writeFile, rm } = await import('fs/promises');
+  const { tmpdir } = await import('os');
+  const dir = await mkdtemp(path.join(tmpdir(), 'test-script-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+
+  const declared = path.join(dir, 'declared.json');
+  await writeFile(declared, JSON.stringify({
+    args: { level: 3, bro: { default: 'Rambro', hint: 'x' }, speed: { description: 2 } },
+    steps: [{ command: 'ping' }],
+  }));
+  await assert.rejects(prepareTestScript(declared), (err) => {
+    assert.match(err.message, /args\.level: must be an object with "default" and\/or "description"/);
+    assert.match(err.message, /args\.bro: unknown key "hint"/);
+    assert.match(err.message, /args\.speed: "description" must be a string/);
+    return true;
+  });
+
+  const badCleanup = path.join(dir, 'cleanup.json');
+  await writeFile(badCleanup, JSON.stringify({ steps: [], cleanup: { command: 'ping' } }));
+  await assert.rejects(prepareTestScript(badCleanup), /"cleanup" must be an array of steps/);
+
+  const nodeOnlyCleanup = path.join(dir, 'node-only.json');
+  await writeFile(nodeOnlyCleanup, JSON.stringify({ steps: [], cleanup: [{ command: 'stop_game' }] }));
+  await assert.rejects(prepareTestScript(nodeOnlyCleanup), /cleanup step 1: "stop_game" is implemented by the MCP server/);
+});
+
+test('list_test_scripts shows the args a script declares', async (t) => {
+  const { mkdtemp, writeFile, rm } = await import('fs/promises');
+  const { tmpdir } = await import('os');
+  const dir = await mkdtemp(path.join(tmpdir(), 'test-scripts-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+
+  const args = { level: { default: 0, description: 'level index' } };
+  await writeFile(path.join(dir, 'with-args.json'), JSON.stringify({ name: 'With', args, steps: [] }));
+  await writeFile(path.join(dir, 'without.json'), JSON.stringify({ name: 'Without', steps: [] }));
+
+  const listing = await listTestScripts(dir);
+  const byName = Object.fromEntries(listing.scripts.map((s) => [s.name, s]));
+  assert.deepEqual(byName['with-args.json'].args, args);
+  assert.equal(byName['without.json'].args, undefined);
 });
 
 test('the shipped test scripts only use game-side commands', async () => {
@@ -112,6 +204,13 @@ test('the shipped test scripts only use game-side commands', async () => {
   for (const name of SHIPPED_TEST_SCRIPTS) {
     const script = JSON.parse(await readFile(path.join(TEST_SCRIPTS_DIR, name), 'utf-8'));
     assert.deepEqual(validateTestScriptSteps(script.steps), [], `${name} has unsupported steps`);
+    assert.deepEqual(validateTestScriptSteps(script.cleanup || [], 'cleanup step'), [], `${name} has unsupported cleanup steps`);
+  }
+});
+
+test('every shipped test script prepares with its declared defaults, library paths included', async () => {
+  for (const name of SHIPPED_TEST_SCRIPTS) {
+    await assert.doesNotReject(prepareTestScript(name), `${name} does not prepare`);
   }
 });
 
@@ -287,5 +386,6 @@ test('the shipped test scripts are well formed', async () => {
   for (const entry of listing.scripts) {
     const script = JSON.parse(await readFile(entry.path, 'utf-8'));
     assert.deepEqual(validateTestScriptSteps(script.steps), [], `${entry.name} has unsupported steps`);
+    await prepareTestScript(entry.path);
   }
 });
