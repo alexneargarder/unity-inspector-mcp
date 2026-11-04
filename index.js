@@ -13,7 +13,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import { UnityInspectorClient, defaultPort } from './lib/unity-client.js';
+import { UnityInspectorClient, defaultPort, toolCommand } from './lib/unity-client.js';
 import { captureCommandHelp, composeExtraLaunchArgs, detectActiveProfile, forgetCommandHelp, gameStartTime, instanceModeChecked, invalidateGameProcessScan, isGameRunning, killGame, listInstances, ownedGameProcesses, probeInstanceMode, readValidatedPidfile, removeInstance, resolveLaunchCommand, runCommandCapture, spawnDetached } from './lib/game-process.js';
 import { NO_INSTANCE_REASONS, instanceConfig, launcherConfig, steamConfig, withRoot } from './lib/instance.js';
 import { tokenizeCommand } from './lib/command-line.js';
@@ -21,7 +21,6 @@ import { CAPTURE_FILE, CAPTURE_STATES_DIR, DEFAULT_SETTLE_MS, DEFAULT_STATES_PAT
 import {
   buildScriptCatalog,
   compactTestScriptReply,
-  isScenarioScript,
   listCSharpScripts,
   listTestScripts,
   readScriptSource,
@@ -32,7 +31,7 @@ import { isPlayerLogName } from './lib/log-delta.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const WATCH_LOG_MAX_BYTES = 64 * 1024;
+const NEW_LINES_MAX_BYTES = 64 * 1024;
 const LAUNCH_LOG_TAIL_LINES = 20;
 const LAUNCH_STDERR_LIMIT_BYTES = 4096;
 // The launcher prefixes its own lines with a timestamp; the game's stdout lands in the same file
@@ -227,10 +226,10 @@ async function ummLogSearch() {
   return { paths: [...new Set(paths)], displays: [...new Set(displays)], override: false };
 }
 
-let watchLogOffset = 0;
-let watchLogPath = null;
+let newLinesOffset = 0;
+let newLinesPath = null;
 // Unity rotates Player.log at launch, so the path alone cannot tell one run's log from the next
-let watchLogFileId = null;
+let newLinesFileId = null;
 
 const fileIdOf = (stat) => `${stat.dev}:${stat.ino}`;
 
@@ -308,6 +307,107 @@ export async function resolveLogFile(detectProfile = detectActiveProfile, startT
   }
 
   return { ...chosen, modifiedAt, stale: false };
+}
+
+async function readLogTail(resolved, args) {
+  const logContent = await fs.readFile(resolved.path, 'utf-8');
+  const allLines = logContent.split('\n');
+  let lines = allLines;
+
+  if (args.filter) {
+    const filterLower = args.filter.toLowerCase();
+    lines = lines.filter(l => l.toLowerCase().includes(filterLower));
+  }
+
+  const requested = Number(args.lines ?? 50);
+  const count = Number.isFinite(requested) ? Math.max(1, Math.floor(requested)) : 50;
+  lines = lines.slice(-count);
+
+  return {
+    ...logFileInfo(resolved),
+    totalLines: allLines.length,
+    returnedLines: lines.length,
+    content: lines.join('\n'),
+  };
+}
+
+async function readNewLogLines(resolved, reset) {
+  const logPath = resolved.path;
+  const stat = await fs.stat(logPath);
+  const fileSize = stat.size;
+  const fileId = fileIdOf(stat);
+
+  if (reset) {
+    newLinesOffset = fileSize;
+    newLinesPath = logPath;
+    newLinesFileId = fileId;
+    return {
+      ...logFileInfo(resolved),
+      isBaseline: true,
+      message: "Position reset to the end of the log",
+      fileSize,
+    };
+  }
+
+  if (newLinesPath !== logPath || newLinesFileId !== fileId || newLinesOffset > fileSize) {
+    const logContent = await fs.readFile(logPath, 'utf-8');
+    const lines = logContent.split('\n').slice(-20);
+    newLinesOffset = fileSize;
+    newLinesPath = logPath;
+    newLinesFileId = fileId;
+    return {
+      ...logFileInfo(resolved),
+      isBaseline: true,
+      newLines: lines.length,
+      content: lines.join('\n'),
+    };
+  }
+
+  if (newLinesOffset === fileSize) {
+    return {
+      ...logFileInfo(resolved),
+      isBaseline: false,
+      newLines: 0,
+      content: "",
+      message: "No new log entries",
+    };
+  }
+
+  let readFrom = newLinesOffset;
+  let skippedBytes = 0;
+  if (fileSize - readFrom > NEW_LINES_MAX_BYTES) {
+    skippedBytes = fileSize - readFrom - NEW_LINES_MAX_BYTES;
+    readFrom = fileSize - NEW_LINES_MAX_BYTES;
+  }
+  const bytesToRead = fileSize - readFrom;
+
+  let newContent;
+  const fh = await fs.open(logPath, 'r');
+  try {
+    const buffer = Buffer.alloc(bytesToRead);
+    const { bytesRead } = await fh.read(buffer, 0, bytesToRead, readFrom);
+    newContent = buffer.subarray(0, bytesRead).toString('utf-8');
+  } finally {
+    await fh.close();
+  }
+  newLinesOffset = fileSize;
+  newLinesPath = logPath;
+  newLinesFileId = fileId;
+
+  const newLines = newContent.split('\n').filter(l => l.length > 0);
+  return {
+    ...logFileInfo(resolved),
+    isBaseline: false,
+    newLines: newLines.length,
+    content: newContent.trimEnd(),
+    ...(skippedBytes > 0
+      ? {
+          truncated: true,
+          skippedBytes,
+          message: `Output truncated: skipped ${skippedBytes} earlier bytes, showing the last ${NEW_LINES_MAX_BYTES} bytes. Use read_log without onlyNew for the full log.`,
+        }
+      : {}),
+  };
 }
 
 // Unity rotates Player.log at launch, so a stat or read can land on a path that just vanished
@@ -1083,21 +1183,6 @@ const server = new Server(
 
 // Define available tools
 export async function buildToolList() {
-  let scriptCatalog = "";
-  try {
-    const scripts = await listCSharpScripts();
-    const listed = scripts.scripts.filter((s) => !isScenarioScript(s));
-    if (listed.length > 0) {
-      scriptCatalog = "\n\nAvailable library scripts:\n" + listed.map(s => {
-        let line = `- ${s.name}: ${s.description}`;
-        if (s.args.length > 0) {
-          line += ` [args: ${s.args.map(a => a.split(':')[0].trim()).join(', ')}]`;
-        }
-        return line;
-      }).join("\n");
-    }
-  } catch {}
-
   return [
       {
         name: "ping",
@@ -1113,16 +1198,8 @@ export async function buildToolList() {
         inputSchema: {
           type: "object",
           properties: {
-            includeInactive: {
-              type: "boolean",
-              description: "Include inactive GameObjects",
-              default: true,
-            },
-            maxResults: {
-              type: "number",
-              description: "Maximum number of GameObjects to return",
-              default: 100,
-            },
+            includeInactive: { type: "boolean", default: true },
+            maxResults: { type: "number", default: 100 },
           },
         },
       },
@@ -1132,15 +1209,8 @@ export async function buildToolList() {
         inputSchema: {
           type: "object",
           properties: {
-            path: {
-              type: "string",
-              description: "Path to the GameObject (e.g., '/Player')",
-            },
-            detailed: {
-              type: "boolean",
-              description: "Include full component details (default: false for lightweight response)",
-              default: false,
-            },
+            path: { type: "string", description: "e.g. '/Player'" },
+            detailed: { type: "boolean", description: "Include full component details", default: false },
           },
           required: ["path"],
         },
@@ -1151,14 +1221,8 @@ export async function buildToolList() {
         inputSchema: {
           type: "object",
           properties: {
-            path: {
-              type: "string",
-              description: "Path to the GameObject",
-            },
-            componentType: {
-              type: "string",
-              description: "Component type name",
-            },
+            path: { type: "string", description: "GameObject path" },
+            componentType: { type: "string" },
             memberPath: {
               type: "string",
               description: "One member instead of the whole component, e.g. 'weapon.damage'",
@@ -1169,28 +1233,14 @@ export async function buildToolList() {
       },
       {
         name: "query_gameobjects",
-        description: "Search for GameObjects by name pattern, component type, or both. A component-only query with no name pattern works. componentType matches base types and interfaces, so a query for 'Projectile' finds instances of its subclasses. The response reports resolvedType, scanned and scanTruncated alongside count, totalFound and results.",
+        description: "Search for GameObjects by name pattern, component type, or both. componentType matches base types and interfaces, so 'Projectile' finds its subclasses. The reply has count, totalFound, results, resolvedType, scanned and scanTruncated.",
         inputSchema: {
           type: "object",
           properties: {
-            namePattern: {
-              type: "string",
-              description: "Name pattern to search for. Optional — omit it to match on componentType alone",
-            },
-            componentType: {
-              type: "string",
-              description: "Component type to filter by. Matches base types and interfaces, so subclass instances are included",
-            },
-            includeInactive: {
-              type: "boolean",
-              description: "Include inactive GameObjects",
-              default: true,
-            },
-            maxResults: {
-              type: "number",
-              description: "Maximum number of results",
-              default: 100,
-            },
+            namePattern: { type: "string" },
+            componentType: { type: "string" },
+            includeInactive: { type: "boolean", default: true },
+            maxResults: { type: "number", default: 100 },
           },
         },
       },
@@ -1204,7 +1254,7 @@ export async function buildToolList() {
       },
       {
         name: "list_enemies",
-        description: "Live enemies in the loaded level by the game's own classification: vehicles, tank weapons, boss pieces included. Entries: name, type, isMook, position, health, isAlive, plus RocketLib's unitType (its finer type) and category (its group) — null off a Unit, unitType 'None' and category 'none' when unclassifiable, category 'unknown' when in no group. mapLoaded says a level is loaded; when empty, enemySpawnSuppressed/suppressedBy report a live suppressor and enemySpawnPrefixOwners mods that could.",
+        description: "Live enemies in the loaded level by the game's own classification: vehicles, tank weapons, boss pieces included. Entries: name, type, isMook, position, health, isAlive, plus RocketLib's unitType and category. mapLoaded says a level is loaded; when empty, enemySpawnSuppressed/suppressedBy report a live suppressor and enemySpawnPrefixOwners mods that could.",
         inputSchema: {
           type: "object",
           properties: {},
@@ -1225,43 +1275,34 @@ export async function buildToolList() {
                 height: { type: "number" },
               },
               description:
-                "A GameObject path, or a rectangle {x, y, width, height} in world units, x/y its bottom-left corner. An inactive, boundless or off-camera target is a highlightError.",
+                "A GameObject path, or a rectangle in world units, x/y its bottom-left corner. An inactive, boundless or off-camera target is a highlightError.",
             },
           },
         },
       },
       {
         name: "execute_code",
-        description: "Run C# in the Unity context. Accepts statements, local declarations, and a trailing 'return expr;' (a return before the final statement does not compile); input ending in an expression returns that expression's value. No lambda or Select wrapping trick is needed. Locals are call-scoped and do not persist to the next call — use static members or game objects for cross-call state. Types defined by a script loaded with execute_script are in scope here, by direct name and by reflection over the script assembly (field reads, member enumeration); MethodBase.GetMethodBody() on a script-compiled method kills the game process. The result's top-level 'success' field has three states: a value was produced (resultSet:true, with the value in 'result'), the code ran but returned nothing (success:true, resultSet:false, no error), or it failed (success:false with 'error'). When the submitted code throws, the failure also carries 'stackTrace', 'position' ({line, column} of the top-level statement that was executing) and 'statement' (that statement's text); all three are null for plain compiler diagnostics and for timeouts.",
+        description: "Run C# in the Unity context: statements, local declarations, and a trailing 'return expr;' (a return before the final statement does not compile) or expression, whose value comes back. Locals do not persist between calls; use static members for that. Types from a script loaded with execute_script are in scope. The result is resultSet:true with the value in 'result'; success:true, resultSet:false when it ran and returned nothing; or success:false with 'error', plus 'stackTrace', 'position' and 'statement' when the code threw.",
         inputSchema: {
           type: "object",
           properties: {
-            code: {
-              type: "string",
-              description: "C# to run: statements, local declarations, a trailing 'return expr;', or a bare expression whose value is returned",
-            },
+            code: { type: "string" },
           },
           required: ["code"],
         },
       },
       {
         name: "modify_component",
-        description: "Write a component's fields and properties, public or private, instance or static. 'modifiedProperties' lists what was written, 'errors' each failure with a 'reason': 'not-found' (with 'suggestions'), 'read-only' or 'error'. 'success' is false when nothing was written. Keys may be dotted paths into nested members.",
+        description: "Write a component's fields and properties, public or private, instance or static. 'modifiedProperties' lists what was written, 'errors' each failure with a 'reason': 'not-found' (with 'suggestions'), 'read-only' or 'error'. 'success' is false when nothing was written.",
         inputSchema: {
           type: "object",
           properties: {
-            path: {
-              type: "string",
-              description: "GameObject path",
-            },
-            component: {
-              type: "string",
-              description: "Component type",
-            },
+            path: { type: "string", description: "GameObject path" },
+            component: { type: "string", description: "Component type" },
             properties: {
               type: "object",
               minProperties: 1,
-              description: "Properties to write; keys may be dotted paths, e.g. 'gun.damage'",
+              description: "Properties to write; keys may be dotted paths into nested members, e.g. 'gun.damage'",
             },
           },
           required: ["path", "component", "properties"],
@@ -1273,18 +1314,9 @@ export async function buildToolList() {
         inputSchema: {
           type: "object",
           properties: {
-            x: {
-              type: "number",
-              description: "X coordinate",
-            },
-            y: {
-              type: "number",
-              description: "Y coordinate",
-            },
-            z: {
-              type: "number",
-              description: "Z coordinate (optional)",
-            },
+            x: { type: "number" },
+            y: { type: "number" },
+            z: { type: "number" },
             playerNum: {
               type: "number",
               description: "Player index 0-3, or -1 for all active players (default: 0)",
@@ -1299,10 +1331,7 @@ export async function buildToolList() {
         inputSchema: {
           type: "object",
           properties: {
-            health: {
-              type: "number",
-              description: "Health value",
-            },
+            health: { type: "number" },
             playerNum: {
               type: "number",
               description: "Player index 0-3, or -1 for all active players (default: 0)",
@@ -1313,7 +1342,7 @@ export async function buildToolList() {
       },
       {
         name: "spawn_entity",
-        description: "Spawn a unit at a world position; a level must be loaded. `type` is any RocketLib `UnitType`, by enum name (`SuicideMook`) or display name (`Suicide Mook`). The prefab comes from the level's theme or the shared assets: a type this theme has no prefab for fails saying so — try a level whose theme has it. `Baneling` is the theme's mosquito and `Screecher` its baneling; `Bro` is refused — use set_bro or swap_bro. Success returns `type`, `unitType`, `prefab`, `name`, `instanceId`, `networked`; a failure returns `error`, with `availableTypes` on an unknown name and `unitType` on a missing prefab.",
+        description: "Spawn a unit at a world position; a level must be loaded. The prefab comes from the level's theme or the shared assets: a type this theme has no prefab for fails saying so — try a level whose theme has it. `Baneling` is the theme's mosquito and `Screecher` its baneling; `Bro` is refused — use swap_bro. Success returns `type`, `unitType`, `prefab`, `name`, `instanceId`, `networked`; a failure returns `error`, with `availableTypes` on an unknown name.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1321,24 +1350,10 @@ export async function buildToolList() {
               type: "string",
               description: "A RocketLib UnitType, by enum name (SuicideMook) or display name (Suicide Mook); case, spaces and punctuation are ignored",
             },
-            x: {
-              type: "number",
-              description: "X coordinate",
-            },
-            y: {
-              type: "number",
-              description: "Y coordinate",
-            },
-            xI: {
-              type: "number",
-              description: "Initial horizontal velocity",
-              default: 0,
-            },
-            yI: {
-              type: "number",
-              description: "Initial vertical velocity, up is positive",
-              default: 0,
-            },
+            x: { type: "number" },
+            y: { type: "number" },
+            xI: { type: "number", description: "Initial horizontal velocity", default: 0 },
+            yI: { type: "number", description: "Initial vertical velocity, up is positive", default: 0 },
             ignoreSuppression: {
               type: "boolean",
               description: "Lift Utility Mod's disableEnemySpawn for this spawn; reply adds suppressionFound",
@@ -1378,10 +1393,7 @@ export async function buildToolList() {
         inputSchema: {
           type: "object",
           properties: {
-            speed: {
-              type: "number",
-              description: "Speed multiplier (1.0 = normal, 0.5 = half speed, 2.0 = double speed)",
-            },
+            speed: { type: "number", description: "1.0 is normal" },
           },
           required: ["speed"],
         },
@@ -1400,14 +1412,8 @@ export async function buildToolList() {
         inputSchema: {
           type: "object",
           properties: {
-            campaignIndex: {
-              type: "number",
-              description: "Campaign index (0-27)",
-            },
-            levelIndex: {
-              type: "number",
-              description: "Level index in the campaign (0-based)",
-            },
+            campaignIndex: { type: "number", description: "0-27" },
+            levelIndex: { type: "number", description: "0-based" },
           },
           required: ["campaignIndex", "levelIndex"],
         },
@@ -1415,42 +1421,19 @@ export async function buildToolList() {
       {
         name: "swap_bro",
         description:
-          "Swap the current player's bro mid-level: kills the current bro and spawns the new one at the same position. Requires Swap Bros Mod, and is refused when it is not active. A name that matches nothing answers `availableBros` plus the full `allNormal`, `allExpendabros` and `allUnfinished` rosters.",
+          "Swap a player's bro mid-level: kills the current bro and spawns the new one at the same position. Requires Swap Bros Mod, and is refused when it is not active. A name that matches nothing answers `availableBros` plus the full `allNormal`, `allExpendabros` and `allUnfinished` rosters.",
         inputSchema: {
           type: "object",
           properties: {
-            broName: {
-              type: "string",
-              description:
-                "Bro name, e.g. 'Rambro'; see list_bros.",
-            },
-            playerNum: {
-              type: "number",
-              description: "Player number 0-3 (default: 0)",
-            },
+            broName: { type: "string", description: "e.g. 'Rambro'; see list_bros" },
+            playerNum: { type: "number", description: "Player number 0-3 (default: 0)" },
             ignoreUnlocks: {
               type: "boolean",
               description: "Allow locked bros for this swap, including every installed custom bro, locked or disabled; reply adds ignoredUnlocks",
             },
-          },
-          required: ["broName"],
-        },
-      },
-      {
-        name: "set_bro",
-        description:
-          "Set the bro a player spawns as next (on death, respawn or the next level), not the current one. Requires Swap Bros Mod, and is refused when it is not active. A miss answers `availableBros` and the `allNormal`/`allExpendabros`/`allUnfinished` rosters.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            broName: {
-              type: "string",
-              description:
-                "Bro name, e.g. 'Rambro'; see list_bros.",
-            },
-            playerNum: {
-              type: "number",
-              description: "Player number 0-3 (default: 0)",
+            nextSpawn: {
+              type: "boolean",
+              description: "Set the bro the player spawns as next (on death, respawn or the next level) and leave the current one; not with ignoreUnlocks",
             },
           },
           required: ["broName"],
@@ -1459,14 +1442,11 @@ export async function buildToolList() {
       {
         name: "list_bros",
         description:
-          "List all available bros that can be used with swap_bro and set_bro. Requires Swap Bros Mod, and is refused when it is not active. Reports the selected bro for the given player (currentBro) and for all active players (currentBros array).",
+          "List the bros swap_bro can use, with the selected bro for the given player (currentBro) and for all active players (currentBros). Requires Swap Bros Mod, and is refused when it is not active.",
         inputSchema: {
           type: "object",
           properties: {
-            playerNum: {
-              type: "number",
-              description: "Player number 0-3 for the currentBro readout (default: 0)",
-            },
+            playerNum: { type: "number", description: "Player number 0-3 (default: 0)" },
           },
         },
       },
@@ -1481,51 +1461,29 @@ export async function buildToolList() {
       },
       {
         name: "simulate_input",
-        description: "Simulate keyboard/controller input for a player. Exactly one of 'action' (one press or hold) or 'sequence' (an ordered list of steps the game runs back to back) must be given. Actions: 'up', 'down', 'left' and 'right' move and aim the bro; 'fire' shoots the primary weapon; 'jump' jumps (held with 'down' it drops through a platform); 'special' uses the bro's special; 'sprint' runs; 'gesture' plays the taunt; 'start' opens the pause menu; 'escape' backs out of menus. 'highFive' is the interact button: it high-fives a rescued prisoner, melees, and activates the first registered switch within 16 units horizontally and 24 vertically — which covers switch-driven pickups and item boxes (Broforce MobileSwitch objects) — so teleporting next to an item and pressing highFive is how a pickup is driven; a live grenade within 20 units is thrown back instead, a teleport door in range is used instead, a citizen within 32 units takes the high-five, and a held grenade or mook or a running special blocks the press. Input reaches every player: 'player' is accepted and echoed but does not narrow it. With 'count' the action is pressed that many times, each press held for 'duration' ms and separated by 'interval' ms. A plan over 60 seconds is refused before anything is pressed — a hold's 'duration', 'count' presses with their 'duration' and 'interval', or a 'sequence' with its holds and waits totalled.",
+        description: "Simulate keyboard/controller input. Exactly one of 'action' (one press or hold) or 'sequence' (an ordered list of steps the game runs back to back) must be given. 'highFive' is the interact button: it high-fives a rescued prisoner, melees, and activates the first registered switch within 16 units horizontally and 24 vertically, which includes switch-driven pickups and item boxes (MobileSwitch objects), so teleport next to one and press highFive. A teleport door in range, a live grenade within 20 units or a citizen within 32 units takes the press first, and a held grenade or mook or a running special blocks it. Input reaches every player: 'player' is accepted and echoed but does not narrow it. A plan over 60 seconds in total is refused before anything is pressed.",
         inputSchema: {
           type: "object",
           properties: {
             action: {
               type: "string",
-              description: "Input action (up, down, left, right, fire, jump, special, highFive, gesture, sprint, start, escape)",
+              description: "up, down, left, right, fire, jump, special, highFive, gesture, sprint, start or escape",
             },
             sequence: {
               type: "array",
-              description: "Steps run in order on the game side, for timed combos; mutually exclusive with 'action'",
               items: {
                 type: "object",
                 properties: {
-                  action: {
-                    type: "string",
-                    description: "Input action to hold for this step; omit it to make the step a pure pause",
-                  },
-                  duration: {
-                    type: "number",
-                    description: "Milliseconds to hold this step's action (default: 50)",
-                  },
-                  wait: {
-                    type: "number",
-                    description: "Milliseconds to pause after this step before the next one (default: 0)",
-                  },
+                  action: { type: "string", description: "Omit for a pure pause" },
+                  duration: { type: "number", description: "Ms held (default: 50)" },
+                  wait: { type: "number", description: "Ms paused afterwards (default: 0)" },
                 },
               },
             },
-            duration: {
-              type: "number",
-              description: "Hold duration in milliseconds; also the per-press hold when count is used (default: 50)",
-            },
-            count: {
-              type: "number",
-              description: "Number of times to press the action, each press held for duration",
-            },
-            interval: {
-              type: "number",
-              description: "Milliseconds between presses when count > 1 (default: 200)",
-            },
-            player: {
-              type: "number",
-              description: "Player number (0-3, default: 0)",
-            },
+            duration: { type: "number", description: "Ms held, per press with count (default: 50)" },
+            count: { type: "number", description: "Number of presses" },
+            interval: { type: "number", description: "Ms between presses (default: 200)" },
+            player: { type: "number" },
           },
           required: [],
         },
@@ -1540,24 +1498,18 @@ export async function buildToolList() {
       },
       {
         name: "wait_for_game",
-        description: "Poll until the game's inspector answers a ping or the timeout is reached. On timeout the result carries a 'state' saying how it failed: 'no-process' (no game process is running), 'connection-refused' (the process is there but nothing is listening on the port), 'connected-unresponsive' (the port accepts connections but ping got no reply), 'connection-dropped' (the port accepted a connection that was then closed), 'unknown' (process detection is unavailable), or 'no-port' (this session's instance has no allocated port and no running game of its own, so there is nothing to connect to). An attempt in flight may overrun the timeout by up to 5s.",
+        description: "Poll until the game's inspector answers a ping or the timeout is reached. On timeout 'state' names how it failed (no-process, connection-refused, connected-unresponsive, connection-dropped, unknown, no-port) and 'message' explains it.",
         inputSchema: {
           type: "object",
           properties: {
-            timeout: {
-              type: "number",
-              description: "Maximum time to wait in seconds (default: 60)",
-            },
-            interval: {
-              type: "number",
-              description: "Seconds between connection attempts (default: 3)",
-            },
+            timeout: { type: "number", description: "Seconds (default: 60)" },
+            interval: { type: "number", description: "Seconds between attempts (default: 3)" },
           },
         },
       },
       {
         name: "game_state",
-        description: "A high-level summary of the game state: loaded level, game mode, player status, bro type. Single call to orient yourself. 'scene' is the Unity scene: a loaded level is always the one gameplay scene, while the world map, the victory screen and cutscenes are scenes of their own — 'isCampaignScene' tells them apart. The level is 'campaignName' (list_campaigns' 'name'), 'campaignDisplay' (its 'displayName'), 'levelName' (from the campaign file, or null), 'levelIndex' (0-based) and 'levelNumber' (1-based). The main menu keeps a level loaded as its backdrop, so those fields and 'isInGame' stay populated there. Every reply also carries `target` (`instance` or `steam`), `port`, `instance` (id, port, directory, stage, else an `instanceReason`), the `logs` read_log and watch_log use, and `runningInstances`.",
+        description: "The loaded level, game mode, player status and bro type. 'scene' is the Unity scene: a level is always the one gameplay scene, the world map, victory screen and cutscenes scenes of their own, and 'isCampaignScene' tells them apart. The level is 'campaignName' (list_campaigns' 'name'), 'campaignDisplay' (its 'displayName'), 'levelName' (or null), 'levelIndex' (0-based) and 'levelNumber' (1-based). Every reply also carries `target` (`instance` or `steam`), `port`, `instance` (id, port, directory, stage, else an `instanceReason`), the `logs` read_log uses, and `runningInstances`.",
         inputSchema: {
           type: "object",
           properties: {},
@@ -1565,80 +1517,43 @@ export async function buildToolList() {
       },
       {
         name: "read_log",
-        description: "Read the mod log file — UMM's own log, or Unity's player log, which always exists and carries the same UMM and mod lines. Returns the last N lines by default, or filter by pattern. The response names the file it read and when it was last written, and flags `stale: true` with a warning when that file predates the running game.",
+        description: "Read the mod log file — UMM's own log, or Unity's player log, which always exists and carries the same UMM and mod lines. Returns the last lines, optionally filtered, or with onlyNew the lines written since the last such call. The reply names the file and when it was last written, and flags `stale: true` with a warning when that file predates the running game.",
         inputSchema: {
           type: "object",
           properties: {
-            lines: {
-              type: "number",
-              minimum: 1,
-              description: "Number of lines to return from the end of the log (default: 50)",
-            },
-            filter: {
-              type: "string",
-              description: "Only return lines containing this string (case-insensitive)",
-            },
-          },
-        },
-      },
-      {
-        name: "watch_log",
-        description: "Return log entries that appeared since the last call to watch_log. First call returns the last 20 lines as a baseline (`isBaseline: true`); later calls report `isBaseline: false` alongside the new lines. Use this for iterative debug loops. Like read_log it names the file and its last-written time, and flags `stale: true` when the running game is not the thing writing to it. The watch restarts as a baseline whenever the file underneath it changes — a rotation, or the resolved `path` switching once mid-run because UMM's own log appeared after startup.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            reset: {
+            lines: { type: "number", minimum: 1, description: "Lines from the end of the log (default: 50)" },
+            filter: { type: "string", description: "Only lines containing this string, case-insensitive" },
+            onlyNew: {
               type: "boolean",
-              description: "Reset the watch position to the end of the log (default: false)",
+              description: "Only the lines since the last such call; `isBaseline: true` marks the last 20 lines instead, on the first call or when the file changed. Not with lines or filter",
             },
+            reset: { type: "boolean", description: "With onlyNew: move the position to the end of the log" },
           },
         },
       },
       {
         name: "run_test_script",
-        description: "Run a JSON test script of game commands; server-side tools (read_log, launch_game, ...) cannot be steps. A step may carry 'expect' (success/contains/notContains; a met expect passes even a failed command), 'until' to repeat it until its expect holds, and 'report' to lift its JSON result into the reply; 'cleanup' steps run however the steps ended, unless the game died. The reply has 'passed', any 'report', 'logs' (new log errors and floods, by source), a short preview per step, and 'resultsFile', every step's full result in the user's state dir (newest 100 kept). Format: scripts/README.md.",
+        description: "Run a JSON test script of game commands; server-side tools (read_log, launch_game, ...) cannot be steps. Steps take 'expect' (a met expect passes even a failed command), 'until' and 'report'; 'cleanup' steps run unless the game died. The reply has 'passed', any 'report', 'logs' (new log errors and floods, by source), a short preview per step, and 'resultsFile' with every step's full result. Format: scripts/README.md.",
         inputSchema: {
           type: "object",
           properties: {
-            script: {
-              type: "string",
-              description: "Script name (from scripts/tests/) or absolute file path",
-            },
-            args: {
-              type: "object",
-              description: "Values for the script's {{name}} placeholders; its declared defaults fill the rest",
-            },
+            script: { type: "string", description: "Name from scripts/tests/ or absolute path" },
+            args: { type: "object", description: "Values for the script's {{name}} placeholders" },
           },
           required: ["script"],
         },
       },
       {
         name: "execute_script",
-        description: "Compile and run a C# script file in the Unity runtime. Supports full class definitions, MonoBehaviours, Harmony patches, and private member access. Scripts can define Main() for execution and Unload() for cleanup. Use ScriptContext for Harmony instances, logging, and arguments." + scriptCatalog,
+        description: "Compile and run a C# script file in the Unity runtime; list_scripts lists the library. Supports full class definitions, MonoBehaviours, Harmony patches, and private member access. Scripts can define Main() for execution and Unload() for cleanup. Use ScriptContext for Harmony instances, logging, and arguments.",
         inputSchema: {
           type: "object",
           properties: {
-            path: {
-              type: "string",
-              description: "Script name (from scripts/csharp/) or absolute file path to a .cs file",
-            },
-            args: {
-              type: "object",
-              description: "Optional key-value arguments passed to the script via ScriptContext.Args",
-            },
-          },
-          required: ["path"],
-        },
-      },
-      {
-        name: "compile_script",
-        description: "Compile a C# script without running it. Returns compilation success/failure and any compiler errors. Useful for validating scripts before execution.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            path: {
-              type: "string",
-              description: "Script name (from scripts/csharp/) or absolute file path to a .cs file",
+            path: { type: "string", description: "Library script name or absolute path to a .cs file" },
+            args: { type: "object", description: "Passed to the script via ScriptContext.Args" },
+            compileOnly: {
+              type: "boolean",
+              description: "Compile without running; a failure lists compilerErrors. Not with args",
             },
           },
           required: ["path"],
@@ -1646,7 +1561,7 @@ export async function buildToolList() {
       },
       {
         name: "list_scripts",
-        description: "List available C# scripts in the script library with their metadata (name, description, tags, arguments).",
+        description: "List the C# script library with each script's name, description, tags and arguments.",
         inputSchema: {
           type: "object",
           properties: {},
@@ -1658,10 +1573,7 @@ export async function buildToolList() {
         inputSchema: {
           type: "object",
           properties: {
-            name: {
-              type: "string",
-              description: "Name of the script to unload",
-            },
+            name: { type: "string" },
           },
           required: ["name"],
         },
@@ -1670,95 +1582,48 @@ export async function buildToolList() {
         name: "capture_animations",
         description:
           "Sweep a bro's animation states with the game clock held at zero, optionally loading a level and swapping the bro first: one " +
-          "PNG strip per state, a `capture.json` of the sprite-sheet cell every frame addressed, and a `report.md` comparing those " +
-          "against the state list, all into `out`. The reply carries `success`, `status` " +
-          "(`done`/`error`/`timeout`/`game-gone`), the report text and the paths written. Full reference: " +
-          "`.claude/rules/animation-capture.md` (state-list format, argument behaviour).",
+          "PNG strip per state, `capture.json` (the sprite-sheet cell every frame addressed) and `report.md` (those against the state list), " +
+          "all into `out`. The reply carries `success`, `status` (`done`/`error`/`timeout`/`game-gone`), the report text and the paths " +
+          "written. Reference: `.claude/rules/animation-capture.md`.",
         inputSchema: {
           type: "object",
           properties: {
-            out: {
-              type: "string",
-              description: "Absolute output directory",
-            },
-            gameOut: {
-              type: "string",
-              description: "out as the game's filesystem sees it (default: out)",
-            },
-            bro: {
-              type: "string",
-              description: "Bro to swap to first, unlocks ignored (Swap Bros Mod display name)",
-            },
-            level: {
-              type: "string",
-              description: "Level to load first, CAMPAIGN:LEVEL (e.g. 1:0)",
-            },
+            out: { type: "string", description: "Absolute output directory" },
+            gameOut: { type: "string", description: "out as the game's filesystem sees it (default: out)" },
+            bro: { type: "string", description: "Bro to swap to first, unlocks ignored (Swap Bros Mod display name)" },
+            level: { type: "string", description: "Level to load first, CAMPAIGN:LEVEL (e.g. 1:0)" },
             states: {
               type: ["array", "string"],
               items: { type: "string" },
               description: "Layered state lists, relative to lib/animation-capture/states/ (default: base-states.json)",
             },
-            settle: {
-              type: "number",
-              minimum: 0,
-              description: "Seconds after the level's player spawns (default: 3)",
-            },
-            swapSettle: {
-              type: "number",
-              minimum: 0,
-              description: "Seconds after the swap lands (default: 2)",
-            },
-            swapTimeout: {
-              type: "number",
-              minimum: 1,
-              description: "Seconds to wait for the swap (default: 15)",
-            },
-            timeout: {
-              type: "number",
-              minimum: 1,
-              description: "Seconds for the sweep and the level wait (default: 60)",
-            },
-            player: {
-              type: "integer",
-              minimum: 0,
-              maximum: 3,
-              description: "Player index to capture (default: 0)",
-            },
-            box: {
-              type: "number",
-              minimum: 1,
-              description: "Crop-box half-size in world units; cells are 2*box px (default: 24)",
-            },
-            includeLethal: {
-              type: "boolean",
-              description: "Also sweep states that kill the player (default: false)",
-            },
-            allowSideEffects: {
-              type: "boolean",
-              description: "Let animations fire real specials/attacks (default: false)",
-            },
+            settle: { type: "number", minimum: 0, description: "Seconds after the level's player spawns (default: 3)" },
+            swapSettle: { type: "number", minimum: 0, description: "Seconds after the swap lands (default: 2)" },
+            swapTimeout: { type: "number", minimum: 1, description: "Seconds to wait for the swap (default: 15)" },
+            timeout: { type: "number", minimum: 1, description: "Seconds for the sweep and the level wait (default: 60)" },
+            player: { type: "integer", minimum: 0, maximum: 3, description: "(default: 0)" },
+            box: { type: "number", minimum: 1, description: "Crop-box half-size in world units; cells are 2*box px (default: 24)" },
+            includeLethal: { type: "boolean", description: "Also sweep states that kill the player (default: false)" },
+            allowSideEffects: { type: "boolean", description: "Let animations fire real specials/attacks (default: false)" },
           },
           required: ["out"],
         },
       },
       {
         name: "launch_game",
-        description: "Launch Broforce and wait for it to become responsive. By default it launches this session's own game instance through the configured instance launcher — a separate copy with its own profile, saves, logs and port — and points this server at it. With steam: true it launches the user's own game instead (BROFORCE_LAUNCH_CMD when set, run exactly as configured, otherwise Steam app 274190) and points the server there; a window on the user's screen is that launch plus the placement option that command documents. launchArgs go to whichever launch the call runs: the instance launch by default, the configured launch command with steam: true. Sessions without an instance always launch the user's game; switching targets leaves the other game running and says so. Acts only on the target it launches: a live game in the instance's pidfile refuses a second launch, a launcher at its instance cap is waited on, and a failed launch shows the launch.log tail. Warns if the game is already running unless restart is true, which stops only the target's game first." + (await launchArgumentHelp()),
+        description: "Launch Broforce, wait for it to answer and point this server at it: by default this session's own game instance, a separate copy with its own profile, saves, logs and port, or the user's game in a session without one. steam: true launches the user's own game instead (the configured launch command, else Steam); a window on the user's screen is that launch plus the placement option that command documents. Switching targets leaves the other game running and says so. Warns if the game is already running unless restart is true, which stops only the target's game first." + (await launchArgumentHelp()),
         inputSchema: {
           type: "object",
           properties: {
             steam: {
               type: "boolean",
-              description: "Launch the user's own game instead of this session's instance, and point this server at it (default: false).",
+              description: "Launch the user's own game instead of this session's instance (default: false)",
             },
             vanilla: {
               type: "boolean",
-              description: "Launch without mods (default: false). No inspector loads and nothing answers on the TCP port, so the call does not wait for one: it returns once the launch command has started, or on an instance once that command has finished, with a failure if it exited non-zero.",
+              description: "Launch without mods (default: false). No inspector loads, so the call does not wait for one: it returns when the launch command exits, with a failure if non-zero",
             },
-            restart: {
-              type: "boolean",
-              description: "If true, stop the running game first then relaunch (default: false)",
-            },
+            restart: { type: "boolean", description: "Stop the running game first, then relaunch (default: false)" },
             launchArgs: {
               type: "string",
               description: "Arguments appended to the launch this call runs, tokenized with shell-style quoting: the instance launch by default, the configured launch command with steam: true. The Steam protocol launch takes no arguments and says so.",
@@ -1768,13 +1633,13 @@ export async function buildToolList() {
       },
       {
         name: "stop_game",
-        description: "Stop the game this server is pointed at, and nothing else: this session's own instance, or the user's game when the server is pointed there. An instance is stopped through the configured instance launcher, falling back to signalling the instance's own process when that command fails or leaves it running. The user's game is stopped with BROFORCE_STOP_CMD when that is set, and by signal otherwise, or when that command fails or leaves the game running. With no game running nothing is signalled and no command is run for the user's game, while an instance still goes through the launcher's stop, and the reply says it tidied the instance up. Never stops a game belonging to another session.",
+        description: "Stop the game this server is pointed at, and nothing else: this session's own instance, or the user's game when the server is pointed there. Never stops a game belonging to another session.",
         inputSchema: {
           type: "object",
           properties: {
             remove: {
               type: "boolean",
-              description: "After stopping, delete this session's instance directory through the configured launcher, so the next launch builds it fresh (default: false). Only valid while the server is pointed at an instance, and skipped with a reason when the stop could not confirm the game is gone.",
+              description: "After stopping, delete this session's instance directory, so the next launch builds it fresh (default: false). Instance target only; skipped with a reason when the stop could not confirm the game is gone",
             },
           },
         },
@@ -2413,26 +2278,19 @@ export async function handleToolCall(request) {
         }, 3000);
         break;
 
-      case "swap_bro":
+      case "swap_bro": {
         if (!args.broName) {
           throw new Error("Bro name is required");
         }
-        result = await unityClient.sendCommand("swap_bro", {
+        const swap = toolCommand("swap_bro", {
           broName: args.broName,
           playerNum: args.playerNum ?? 0,
           ignoreUnlocks: args.ignoreUnlocks,
+          nextSpawn: args.nextSpawn,
         });
+        result = await unityClient.sendCommand(swap.method, swap.params);
         break;
-
-      case "set_bro":
-        if (!args.broName) {
-          throw new Error("Bro name is required");
-        }
-        result = await unityClient.sendCommand("set_bro", {
-          broName: args.broName,
-          playerNum: args.playerNum ?? 0,
-        });
-        break;
+      }
 
       case "list_bros":
         result = await unityClient.sendCommand("list_bros", {
@@ -2486,109 +2344,14 @@ export async function handleToolCall(request) {
       }
 
       case "read_log": {
-        result = await withResolvedLog(async (resolved) => {
-          const logContent = await fs.readFile(resolved.path, 'utf-8');
-          const allLines = logContent.split('\n');
-          let lines = allLines;
-
-          if (args.filter) {
-            const filterLower = args.filter.toLowerCase();
-            lines = lines.filter(l => l.toLowerCase().includes(filterLower));
-          }
-
-          const requested = Number(args.lines ?? 50);
-          const count = Number.isFinite(requested) ? Math.max(1, Math.floor(requested)) : 50;
-          lines = lines.slice(-count);
-
-          return {
-            ...logFileInfo(resolved),
-            totalLines: allLines.length,
-            returnedLines: lines.length,
-            content: lines.join('\n'),
-          };
-        });
-        break;
-      }
-
-      case "watch_log": {
-        result = await withResolvedLog(async (resolved) => {
-          const logPath = resolved.path;
-          const stat = await fs.stat(logPath);
-          const fileSize = stat.size;
-          const fileId = fileIdOf(stat);
-
-          if (args.reset) {
-            watchLogOffset = fileSize;
-            watchLogPath = logPath;
-            watchLogFileId = fileId;
-            return {
-              ...logFileInfo(resolved),
-              isBaseline: true,
-              message: "Watch position reset to end of log",
-              fileSize,
-            };
-          }
-
-          if (watchLogPath !== logPath || watchLogFileId !== fileId || watchLogOffset > fileSize) {
-            const logContent = await fs.readFile(logPath, 'utf-8');
-            const lines = logContent.split('\n').slice(-20);
-            watchLogOffset = fileSize;
-            watchLogPath = logPath;
-            watchLogFileId = fileId;
-            return {
-              ...logFileInfo(resolved),
-              isBaseline: true,
-              newLines: lines.length,
-              content: lines.join('\n'),
-            };
-          }
-
-          if (watchLogOffset === fileSize) {
-            return {
-              ...logFileInfo(resolved),
-              isBaseline: false,
-              newLines: 0,
-              content: "",
-              message: "No new log entries",
-            };
-          }
-
-          let readFrom = watchLogOffset;
-          let skippedBytes = 0;
-          if (fileSize - readFrom > WATCH_LOG_MAX_BYTES) {
-            skippedBytes = fileSize - readFrom - WATCH_LOG_MAX_BYTES;
-            readFrom = fileSize - WATCH_LOG_MAX_BYTES;
-          }
-          const bytesToRead = fileSize - readFrom;
-
-          let newContent;
-          const fh = await fs.open(logPath, 'r');
-          try {
-            const buffer = Buffer.alloc(bytesToRead);
-            const { bytesRead } = await fh.read(buffer, 0, bytesToRead, readFrom);
-            newContent = buffer.subarray(0, bytesRead).toString('utf-8');
-          } finally {
-            await fh.close();
-          }
-          watchLogOffset = fileSize;
-          watchLogPath = logPath;
-          watchLogFileId = fileId;
-
-          const newLines = newContent.split('\n').filter(l => l.length > 0);
-          return {
-            ...logFileInfo(resolved),
-            isBaseline: false,
-            newLines: newLines.length,
-            content: newContent.trimEnd(),
-            ...(skippedBytes > 0
-              ? {
-                  truncated: true,
-                  skippedBytes,
-                  message: `Output truncated: skipped ${skippedBytes} earlier bytes, showing the last ${WATCH_LOG_MAX_BYTES} bytes. Use read_log for the full log.`,
-                }
-              : {}),
-          };
-        });
+        if (args.onlyNew && (args.lines != null || args.filter)) {
+          throw new Error("read_log's onlyNew returns every line written since the last such call, so it takes neither lines nor filter");
+        }
+        if (args.reset && !args.onlyNew) {
+          throw new Error("read_log's reset moves the position onlyNew reads from, so it needs onlyNew: true");
+        }
+        result = await withResolvedLog((resolved) =>
+          args.onlyNew ? readNewLogLines(resolved, args.reset) : readLogTail(resolved, args));
         break;
       }
 
@@ -2610,23 +2373,13 @@ export async function handleToolCall(request) {
           throw new Error("Script path is required");
         }
         const scriptData = await readScriptSource(args.path);
-        result = await unityClient.sendCommand("execute_script", {
+        const script = toolCommand("execute_script", {
           source: scriptData.source,
           name: scriptData.name,
           args: args.args || {},
+          compileOnly: args.compileOnly,
         });
-        break;
-      }
-
-      case "compile_script": {
-        if (!args.path) {
-          throw new Error("Script path is required");
-        }
-        const compileData = await readScriptSource(args.path);
-        result = await unityClient.sendCommand("compile_script", {
-          source: compileData.source,
-          name: compileData.name,
-        });
+        result = await unityClient.sendCommand(script.method, script.params);
         break;
       }
 

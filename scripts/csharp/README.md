@@ -27,8 +27,6 @@ public static class MyScript
 }
 ```
 
-A script tagged `scenario` is left out of the catalog in the `execute_script` tool description; `list_scripts` still lists it.
-
 ## Lifecycle
 
 - **`Main()`** — Called when the script is executed. Optional — scripts without Main() just register their types.
@@ -110,7 +108,7 @@ Every overload of the name is patched with the same pair of patch methods, and e
 carries the overload's parameter-type list, so entries stay attributable; `Main()` logs the
 signatures it patched. `captureCount` is the total across all of them. An overload that returns
 void gets the prefix only, since there is no `__result` to read. Everything lands in the UMM
-log — read it back with `read_log` / `watch_log`.
+log — read it back with `read_log`.
 
 Reaching `captureCount` only stops the logging. The patches stay applied, so every call of every
 patched overload still pays for Harmony's argument array and the boxing of its value arguments —

@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import {
   UnityInspectorClient,
   commandTimeout,
+  toolCommand,
   DEFAULT_COMMAND_TIMEOUT_MS,
   SCENE_COMMAND_TIMEOUT_MS,
 } from '../lib/unity-client.js';
@@ -128,6 +129,43 @@ test('command timeout budgets cover the game-side dispatcher budget', () => {
   assert.equal(commandTimeout('compile_script'), 30000);
   assert.equal(commandTimeout('unload_script'), 20000);
   assert.equal(commandTimeout('execute_code'), 10000);
+});
+
+test('toolCommand picks the mod command and strips the flag that chose it', () => {
+  assert.deepEqual(toolCommand('swap_bro', { broName: 'Rambro', ignoreUnlocks: true }), {
+    method: 'swap_bro', params: { broName: 'Rambro', ignoreUnlocks: true },
+  });
+  assert.deepEqual(toolCommand('swap_bro', { broName: 'Rambro', nextSpawn: false }), {
+    method: 'swap_bro', params: { broName: 'Rambro' },
+  });
+  assert.deepEqual(toolCommand('swap_bro', { broName: 'Rambro', playerNum: 1, nextSpawn: true, ignoreUnlocks: false }), {
+    method: 'set_bro', params: { broName: 'Rambro', playerNum: 1 },
+  });
+
+  assert.deepEqual(toolCommand('execute_script', { source: 's', name: 'n', args: { a: 1 } }), {
+    method: 'execute_script', params: { source: 's', name: 'n', args: { a: 1 } },
+  });
+  assert.deepEqual(toolCommand('execute_script', { source: 's', name: 'n', compileOnly: false }), {
+    method: 'execute_script', params: { source: 's', name: 'n' },
+  });
+  assert.deepEqual(toolCommand('execute_script', { source: 's', name: 'n', args: {}, compileOnly: true }), {
+    method: 'compile_script', params: { source: 's', name: 'n' },
+  });
+
+  const params = { a: 1 };
+  assert.deepEqual(toolCommand('ping', params), { method: 'ping', params });
+  assert.deepEqual(toolCommand('ping'), { method: 'ping', params: {} });
+});
+
+test('toolCommand refuses a flag the chosen command would ignore', () => {
+  assert.throws(
+    () => toolCommand('swap_bro', { broName: 'Rambro', nextSpawn: true, ignoreUnlocks: true }),
+    /nextSpawn cannot take ignoreUnlocks/,
+  );
+  assert.throws(
+    () => toolCommand('execute_script', { source: 's', name: 'n', compileOnly: true, args: { a: 1 } }),
+    /compileOnly cannot take args/,
+  );
 });
 
 test('simulate_input budgets cover every press it asks the game to hold', () => {

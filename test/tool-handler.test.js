@@ -28,7 +28,7 @@ function lastRequest(method) {
 }
 
 test('tool calls with no "arguments" member do not throw', { timeout: 20000 }, async () => {
-  for (const name of ['list_test_scripts', 'list_scripts', 'watch_log', 'list_gameobjects', 'query_gameobjects']) {
+  for (const name of ['list_test_scripts', 'list_scripts', 'read_log', 'list_gameobjects', 'query_gameobjects']) {
     const response = await handleToolCall({ params: { name } });
     const text = textOf(response);
     assert.doesNotMatch(
@@ -147,6 +147,55 @@ test('swap_bro forwards ignoreUnlocks to the game', async () => {
   });
   assert.ok(!response.isError, textOf(response));
   assert.deepEqual(lastRequest('swap_bro').params, { broName: 'Rambro', playerNum: 0, ignoreUnlocks: true });
+});
+
+test('swap_bro with nextSpawn reaches the mod as set_bro, without the flag', async () => {
+  const response = await handleToolCall({
+    params: { name: 'swap_bro', arguments: { broName: 'Rambro', playerNum: 2, nextSpawn: true } },
+  });
+  assert.ok(!response.isError, textOf(response));
+  assert.deepEqual(lastRequest('set_bro').params, { broName: 'Rambro', playerNum: 2 });
+});
+
+test('swap_bro refuses nextSpawn with ignoreUnlocks and sends nothing', async () => {
+  const before = requests.length;
+  const response = await handleToolCall({
+    params: { name: 'swap_bro', arguments: { broName: 'Rambro', nextSpawn: true, ignoreUnlocks: true } },
+  });
+  assert.equal(response.isError, true);
+  assert.match(textOf(response), /nextSpawn cannot take ignoreUnlocks/);
+  assert.equal(requests.length, before);
+});
+
+test('execute_script with compileOnly reaches the mod as compile_script, without the flag or args', async () => {
+  const response = await handleToolCall({
+    params: { name: 'execute_script', arguments: { path: 'watch-field', compileOnly: true } },
+  });
+  assert.ok(!response.isError, textOf(response));
+  const { source, name, ...rest } = lastRequest('compile_script').params;
+  assert.match(source, /class /);
+  assert.equal(name, 'watch-field');
+  assert.deepEqual(rest, {});
+});
+
+test('execute_script without compileOnly still runs, its args passed through', async () => {
+  const response = await handleToolCall({
+    params: { name: 'execute_script', arguments: { path: 'watch-field', args: { field: 'health' }, compileOnly: false } },
+  });
+  assert.ok(!response.isError, textOf(response));
+  const { params } = lastRequest('execute_script');
+  assert.deepEqual(params.args, { field: 'health' });
+  assert.ok(!('compileOnly' in params), 'the flag never reaches the mod');
+});
+
+test('execute_script refuses compileOnly with args and sends nothing', async () => {
+  const before = requests.length;
+  const response = await handleToolCall({
+    params: { name: 'execute_script', arguments: { path: 'watch-field', compileOnly: true, args: { field: 'health' } } },
+  });
+  assert.equal(response.isError, true);
+  assert.match(textOf(response), /compileOnly cannot take args/);
+  assert.equal(requests.length, before);
 });
 
 test('trace_spawns forwards action, targets and since to the game', async () => {

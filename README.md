@@ -114,7 +114,7 @@ If your launch command's `--help` lists `--args-help`, the server runs the comma
 
 On Linux, each Claude Code session can get its own game instance. An instance is a second copy of the game with its own profile, settings, saves, logs, TCP port and virtual display, so an agent can play with its own game while you play yours. `BROFORCE_INSTANCE_CMD` turns this on and names the launcher that creates and runs the instance. Leave it unset and there are no instances, and the server serves your own game.
 
-`launch_game` with no arguments starts this session's instance and points the server at it, and `launch_game { steam: true }` launches your own game and points the server there instead. The two games never touch each other. `stop_game` stops whichever one the server is pointed at, and `stop_game { remove: true }` deletes the instance directory afterwards, so the next launch builds it fresh. `game_state` names the target on every reply, along with the instances currently running. `read_log` and `watch_log` read the instance's own `profile/UMM/Core/Log.txt` and `home/unity3d/Free Lives/Broforce/Player.log`.
+`launch_game` with no arguments starts this session's instance and points the server at it, and `launch_game { steam: true }` launches your own game and points the server there instead. The two games never touch each other. `stop_game` stops whichever one the server is pointed at, and `stop_game { remove: true }` deletes the instance directory afterwards, so the next launch builds it fresh. `game_state` names the target on every reply, along with the instances currently running. `read_log` reads the instance's own `profile/UMM/Core/Log.txt` and `home/unity3d/Free Lives/Broforce/Player.log`.
 
 Your session's instance is stopped when the session ends. Reconnecting the client on the same session id keeps it running, and the new server picks it up.
 
@@ -124,7 +124,7 @@ Writing a launcher of your own: [docs/launcher-contract.md](docs/launcher-contra
 
 ## Tools
 
-There are 36, 35 from the server and `restart_server` from the wrapper.
+There are 33, 32 from the server and `restart_server` from the wrapper.
 
 | Tool | Description |
 |---|---|
@@ -139,8 +139,7 @@ There are 36, 35 from the server and `restart_server` from the wrapper.
 | `teleport_player` | Move a player (or all players) to a coordinate. |
 | `set_player_health` | Set a player's health. |
 | `list_bros` | List usable bros and which one each player has. Requires Swap Bros Mod. |
-| `set_bro` | Choose the bro a player spawns as next. Does not change the current one. Requires Swap Bros Mod. |
-| `swap_bro` | Swap a player's bro immediately, in place, mid-level. `ignoreUnlocks` allows bros not yet unlocked for that one swap, every installed custom bro, locked or disabled included. Requires Swap Bros Mod. |
+| `swap_bro` | Swap a player's bro immediately, in place, mid-level. `ignoreUnlocks` allows bros not yet unlocked for that one swap, every installed custom bro, locked or disabled included. `nextSpawn` instead chooses the bro the player spawns as next and leaves the current one. Requires Swap Bros Mod. |
 | `list_enemies` | List the live enemies in the loaded level, from the game's own unit registry plus a scene sweep, classified by the game's own enemy test, so aliens, hell units, vehicles and bosses are covered as well as mooks. An empty list says whether a level is loaded at all. If one is, `enemySpawnSuppressed` says a suppressor is active right now (Utility Mod with `disableEnemySpawn` on) and `enemySpawnPrefixOwners` lists every mod that could suppress spawning. |
 | `spawn_entity` | Spawn a unit at a coordinate in the loaded level, with optional initial velocity. The type is any RocketLib `UnitType`, given as its enum name or its display name. The prefab comes from the level's theme or the shared assets, and most units are the theme's, so a type this level's theme holds no prefab for fails naming that. Try a level whose theme has it. An unknown name comes back with the list of the names that exist. `ignoreSuppression` lifts Utility Mod's `disableEnemySpawn` for that one spawn. |
 | `trace_spawns` | Record the game's mook, projectile and (on request) doodad spawn calls, then read them back by sequence number, until stopped or the server reconnects, which `restart_server` always does. |
@@ -151,15 +150,13 @@ There are 36, 35 from the server and `restart_server` from the wrapper.
 | `go_to_level` | Go directly to a campaign/level pair. |
 | `restart_level` | Restart the current level, clearing checkpoints and trigger state. |
 | `execute_code` | Run C# in the Unity context: statements, local declarations and a trailing `return` all work, and a trailing expression comes back as the value. Locals last for the one call. Exceptions thrown by submitted code come back with their stack trace, plus the line and text of the statement that was running. |
-| `execute_script` | Compile and run a full C# script in the game, Harmony patches and private members included. |
-| `compile_script` | Compile a script without running it, to check for compiler errors. |
+| `execute_script` | Compile and run a full C# script in the game, Harmony patches and private members included. `compileOnly` compiles without running, to check for compiler errors. |
 | `list_scripts` | List the C# script library with descriptions, tags and arguments. |
 | `unload_script` | Unload a running script, unpatching it and destroying its GameObjects. |
 | `list_test_scripts` | List the JSON test scripts. |
 | `run_test_script` | Run a JSON command sequence and report each step, checking any per-step `expect` so a step can be required to fail. |
 | `capture_animations` | Sweep a bro's animation states into PNG frame strips with the game clock held at zero, and report which sprite-sheet cells each state addressed against what the state list expected. |
-| `read_log` | Read the last N lines of the mod manager log, with an optional filter. |
-| `watch_log` | Return only the log lines written since the previous call. |
+| `read_log` | Read the last N lines of the mod manager log, with an optional filter, or with `onlyNew` only the lines written since the previous such call. |
 | `launch_game` | Launch Broforce and wait until it answers, with `restart`, `vanilla` and `launchArgs` options. If it never answers, it reports which failure mode it hit, same as `wait_for_game`. |
 | `stop_game` | Stop the Broforce process this server is responsible for. |
 | `wait_for_game` | Poll until the game responds, or time out. A timeout says which case it was: no process, nothing listening on the port, connected but no reply, or a connection that got closed. |
@@ -169,7 +166,7 @@ Under Proton and WSL the game returns Windows paths for screenshots, and the ser
 
 ## C# scripts
 
-`scripts/csharp/` has a library of scripts committed to the repo: `find-by-type`, `inspect-private-fields`, `watch-field`, `trace-method-calls`, `spawn-capture` and `dump-harmony-patches`, which work on any modded install, plus `menu-tweaker` and `diff-component` (both need the RocketLib mod) and `rogueforce-runner` (needs the Rogueforce mod). Each one has a header of `// #name`, `// #description`, `// #tags` and `// #args` comments. `list_scripts` and the `execute_script` tool description both report that metadata, so the agent can pick a script and fill in its arguments on its own.
+`scripts/csharp/` has a library of scripts committed to the repo: `find-by-type`, `inspect-private-fields`, `watch-field`, `trace-method-calls`, `spawn-capture` and `dump-harmony-patches`, which work on any modded install, plus `menu-tweaker` and `diff-component` (both need the RocketLib mod) and `rogueforce-runner` (needs the Rogueforce mod). Each one has a header of `// #name`, `// #description`, `// #tags` and `// #args` comments. `list_scripts` reports that metadata, so the agent can pick a script and fill in its arguments on its own.
 
 A script gets its own Harmony instance, a logger and a dictionary of its arguments, and its patches and GameObjects are cleaned up when it unloads. The format, the lifecycle, the ScriptContext API and the .NET 3.5 constraints are in [scripts/csharp/README.md](scripts/csharp/README.md). You can run a script that isn't in the library by passing an absolute path to it, it just won't show up in the catalog.
 
@@ -192,11 +189,11 @@ The `capture_animations` tool drives its own in-game script end to end — level
 
 If the game process is there but doesn't answer, `launch_game` reports that instead of starting a second copy. That's almost always the mod failing to load, and the log will have the reason.
 
-Most commands get 6 seconds. The level and bro changing ones, plus `take_screenshot`, `execute_code` and `unload_script`, get 10, and `execute_script` and `compile_script` get 30 since compiling is slow. The mod gives `execute_code` 9 seconds of its own, just under the server's 10, so code that runs too long comes back as the mod's diagnostic rather than a bare client side timeout. A timeout usually just means the game is busy with a long level load or a script that's overloading the main thread, and if the game dies partway through a command the server notices within half a second and reports a likely crash.
+Most commands get 6 seconds. The level and bro changing ones, plus `take_screenshot`, `execute_code` and `unload_script`, get 10, and `execute_script` gets 30 since compiling is slow. The mod gives `execute_code` 9 seconds of its own, just under the server's 10, so code that runs too long comes back as the mod's diagnostic rather than a bare client side timeout. A timeout usually just means the game is busy with a long level load or a script that's overloading the main thread, and if the game dies partway through a command the server notices within half a second and reports a likely crash.
 
-`read_log` and `watch_log` look for the Unity Mod Manager log at `~/.config/r2modmanPlus-local/Broforce/profiles/<profile>/UMM/Core/Log.txt` on Linux and `%APPDATA%\r2modmanPlus-local\Broforce\profiles\<profile>\UMM\Core\Log.txt` on Windows. They also check the Unity player log (`Player.log` or `output_log.txt`, depending on the Unity version), under `~/.config/unity3d/Free Lives/Broforce/` on Linux, `%USERPROFILE%\AppData\LocalLow\Free Lives\Broforce\` on Windows, the same folder inside the Proton prefix, `~/Library/Logs/` on macOS, and `Broforce_Data/output_log.txt` next to the game. The player log is always there and gets the same Unity Mod Manager and mod lines, while on a doorstop launch the Unity Mod Manager log sometimes never turns up, and sometimes appears a few seconds after startup and is written to alongside the player log. While the game is running they prefer the profile it was launched from, when the launcher's command line reveals it, and fall back to the player log when that profile has no log the running game has written to. Otherwise they check every candidate and take the most recently written one. A direct Unity Mod Manager install gets checked too, at `<game>/Mods/UnityModManager/Log.txt`. `UNITY_INSPECTOR_LOG` overrides the search entirely, and if no log turns up the error lists every path that was tried.
+`read_log` looks for the Unity Mod Manager log at `~/.config/r2modmanPlus-local/Broforce/profiles/<profile>/UMM/Core/Log.txt` on Linux and `%APPDATA%\r2modmanPlus-local\Broforce\profiles\<profile>\UMM\Core\Log.txt` on Windows. It also checks the Unity player log (`Player.log` or `output_log.txt`, depending on the Unity version), under `~/.config/unity3d/Free Lives/Broforce/` on Linux, `%USERPROFILE%\AppData\LocalLow\Free Lives\Broforce\` on Windows, the same folder inside the Proton prefix, `~/Library/Logs/` on macOS, and `Broforce_Data/output_log.txt` next to the game. The player log is always there and gets the same Unity Mod Manager and mod lines, while on a doorstop launch the Unity Mod Manager log sometimes never turns up, and sometimes appears a few seconds after startup and is written to alongside the player log. While the game is running it prefers the profile the game was launched from, when the launcher's command line reveals it, and falls back to the player log when that profile has no log the running game has written to. Otherwise it checks every candidate and takes the most recently written one. A direct Unity Mod Manager install gets checked too, at `<game>/Mods/UnityModManager/Log.txt`. `UNITY_INSPECTOR_LOG` overrides the search entirely, and if no log turns up the error lists every path that was tried.
 
-Both tools report which file they read and when it was last written, and if the game is running and that file is older than the game process, they say so instead of quietly handing back a log nothing is writing to. Since a fresh Unity Mod Manager log wins as soon as it exists, the file being read can switch from the player log to it once during a run, at the point it appears, and `watch_log` starts a new baseline when that happens, so you get the new file's tail rather than a slice cut at the old file's offset.
+It reports which file it read and when it was last written, and if the game is running and that file is older than the game process, it says so instead of quietly handing back a log nothing is writing to. Since a fresh Unity Mod Manager log wins as soon as it exists, the file being read can switch from the player log to it once during a run, at the point it appears, and `onlyNew` starts a new baseline when that happens, so you get the new file's tail rather than a slice cut at the old file's offset.
 
 If the MCP server itself crashes, the wrapper restarts `index.js` and any in-flight requests get an error back, though it gives up after three crashes inside 30 seconds. `/tmp/mcp-wrapper-<pid>.log` has the wrapper's log plus everything the server wrote to stderr, and `restart_server` starts it back up once you've fixed the problem.
 

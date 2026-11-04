@@ -223,8 +223,9 @@
       }
     },
     {
-      "command": "compile_script",
+      "command": "execute_script",
       "params": {
+        "compileOnly": true,
         "name": "script-constants-eval-enum",
         "source": "public static class ScriptConstTestUsesEvalMode\n{\n    public static int Read() { return (int)ScriptConstTestEvalMode.A; }\n\n    public static void Main() { }\n}\n"
       },

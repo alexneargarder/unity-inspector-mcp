@@ -46,8 +46,8 @@ Test scripts are JSON files with the following structure:
 
 ### Step Fields
 
-- **command** (required): Name of any Unity Inspector MCP tool
-- **params** (optional): Object containing parameters for the command. A `{{name}}` anywhere in a string, nested objects included, is replaced by that arg: a string that is only the placeholder takes the arg's own type, and a placeholder with no value is an error before the script runs. `execute_script` and `compile_script` take either `path` (a library script by name, `.cs` name, catalog display name or absolute path, sent to the game as source) or inline `source`
+- **command** (required): Name of a game-side Unity Inspector MCP tool. Server-side tools like `read_log` and `launch_game` are refused before the script runs
+- **params** (optional): Object containing parameters for the command. A `{{name}}` anywhere in a string, nested objects included, is replaced by that arg: a string that is only the placeholder takes the arg's own type, and a placeholder with no value is an error before the script runs. `execute_script` takes either `path` (a library script by name, `.cs` name, catalog display name or absolute path, sent to the game as source) or inline `source`. Flags behave as they do on the tool and are refused alike: `swap_bro` takes `nextSpawn`, `execute_script` takes `compileOnly`
 - **wait** (optional): Milliseconds to wait after this step completes
 - **expect** (optional): Checks run against this step's result — `success` (boolean), `contains` and `notContains` (arrays of substrings matched against the result as it is returned). The step passes when every check holds, so a step that is expected to fail does not stop the script; an unmet check fails the step and stops it. An `expect` must carry at least one of the three, and neither array may be empty — an `expect` that checks nothing is rejected before the script runs
 - **until** (optional, needs `expect`): `{ "timeout": <seconds>, "interval": <seconds, default 1> }` — re-send the step every `interval` until its `expect` holds or `timeout` passes; the step passes or fails on its last attempt, and its record carries `attempts`, with `duration` covering them all
@@ -90,7 +90,7 @@ A script that arms a library script, polls it and collects its report:
 
 ## Available Commands
 
-You can use any Unity Inspector MCP tool in your scripts:
+You can use any game-side Unity Inspector MCP tool in your scripts:
 
 ### Level Control
 - `go_to_level` - Load a specific level
@@ -114,6 +114,10 @@ You can use any Unity Inspector MCP tool in your scripts:
 - `set_player_health` - Set player health
 - `set_game_speed` - Change time scale
 - `modify_component` - Modify component properties
+
+### Bros and Scripts
+- `swap_bro` - Swap a player's bro, or with `nextSpawn` choose the bro they spawn as next
+- `execute_script` - Run a C# script, or with `compileOnly` only compile it
 
 ### Utilities
 - `take_screenshot` - Capture game screenshot

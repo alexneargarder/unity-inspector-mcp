@@ -67,7 +67,7 @@ function payload(response) {
   return JSON.parse(text);
 }
 
-const watchLog = async (args) => payload(await handleToolCall({ params: { name: 'watch_log', arguments: args } }));
+const readNew = async (args) => payload(await handleToolCall({ params: { name: 'read_log', arguments: { onlyNew: true, ...args } } }));
 
 async function openFdCount() {
   if (process.platform !== 'linux') return null;
@@ -78,16 +78,16 @@ test.after(async () => {
   await fs.rm(logDir, { recursive: true, force: true });
 });
 
-test('watch_log returns a baseline, then only the new lines', async () => {
-  const baseline = await watchLog({});
+test('read_log with onlyNew returns a baseline, then only the new lines', async () => {
+  const baseline = await readNew({});
   assert.equal(baseline.isBaseline, true);
 
-  const quiet = await watchLog({});
+  const quiet = await readNew({});
   assert.equal(quiet.newLines, 0);
   assert.equal(quiet.isBaseline, false);
 
   await fs.appendFile(logPath, 'third line\nfourth line\n');
-  const delta = await watchLog({});
+  const delta = await readNew({});
   assert.equal(delta.newLines, 2);
   assert.equal(delta.isBaseline, false);
   assert.match(delta.content, /third line\nfourth line/);
@@ -95,21 +95,21 @@ test('watch_log returns a baseline, then only the new lines', async () => {
 });
 
 test('a reset reports itself as a baseline restart', async () => {
-  const reset = await watchLog({ reset: true });
+  const reset = await readNew({ reset: true });
   assert.equal(reset.isBaseline, true);
   assert.equal(reset.path, logPath);
   assert.equal(reset.fileSize, (await fs.stat(logPath)).size);
 
-  assert.equal((await watchLog({})).newLines, 0);
+  assert.equal((await readNew({})).newLines, 0);
 });
 
-test('watch_log caps a huge delta at 64KB and says so', async () => {
-  await watchLog({ reset: true });
+test('read_log with onlyNew caps a huge delta at 64KB and says so', async () => {
+  await readNew({ reset: true });
 
   const line = 'x'.repeat(99) + '\n';
   await fs.appendFile(logPath, line.repeat(3000));
 
-  const delta = await watchLog({});
+  const delta = await readNew({});
   assert.equal(delta.truncated, true);
   assert.ok(delta.skippedBytes > 200 * 1024, `skippedBytes was ${delta.skippedBytes}`);
   assert.ok(
@@ -118,21 +118,42 @@ test('watch_log caps a huge delta at 64KB and says so', async () => {
   );
   assert.match(delta.message, /truncated/i);
 
-  assert.equal((await watchLog({})).newLines, 0);
+  assert.equal((await readNew({})).newLines, 0);
 });
 
-test('watch_log does not leak file descriptors', { skip: process.platform !== 'linux' }, async () => {
-  await watchLog({ reset: true });
-  await watchLog({});
+test('read_log with onlyNew does not leak file descriptors', { skip: process.platform !== 'linux' }, async () => {
+  await readNew({ reset: true });
+  await readNew({});
 
   const before = await openFdCount();
   for (let i = 0; i < 25; i++) {
     await fs.appendFile(logPath, `iteration ${i}\n`);
-    await watchLog({});
+    await readNew({});
   }
   const after = await openFdCount();
 
   assert.ok(after <= before + 2, `fd count grew from ${before} to ${after}`);
+});
+
+test('read_log refuses onlyNew with lines or filter, and reset without onlyNew', async () => {
+  const refused = async (args) => {
+    const response = await handleToolCall({ params: { name: 'read_log', arguments: args } });
+    assert.equal(response.isError, true, JSON.stringify(args));
+    return response.content.map((c) => c.text).join('\n');
+  };
+
+  assert.match(await refused({ onlyNew: true, lines: 5 }), /onlyNew .*neither lines nor filter/);
+  assert.match(await refused({ onlyNew: true, filter: 'x' }), /onlyNew .*neither lines nor filter/);
+  assert.match(await refused({ reset: true }), /reset .*needs onlyNew/);
+  assert.match(await refused({ reset: true, lines: 5 }), /reset .*needs onlyNew/);
+
+  await readNew({ reset: true });
+  await fs.appendFile(logPath, 'after the refusals\n');
+  await handleToolCall({ params: { name: 'read_log', arguments: { onlyNew: true, lines: 5 } } });
+  assert.equal((await readNew({})).newLines, 1, 'a refused call does not move the position');
+
+  const plain = payload(await handleToolCall({ params: { name: 'read_log', arguments: { reset: false, onlyNew: false, lines: 1 } } }));
+  assert.equal(plain.returnedLines, 1, 'false flags are the plain read');
 });
 
 test('an explicit UNITY_INSPECTOR_LOG that is missing is reported, not silently replaced', async () => {
@@ -188,17 +209,17 @@ test('the log search globs r2modman profiles and prefers the newest', fakeHomeWo
   }
 });
 
-test('watch_log restarts as a baseline when the resolved log path changes', async () => {
+test('read_log with onlyNew restarts as a baseline when the resolved log path changes', async () => {
   process.env.UNITY_INSPECTOR_LOG = logPath;
-  await watchLog({ reset: true });
+  await readNew({ reset: true });
   await fs.appendFile(logPath, 'tail on first log\n');
-  assert.equal((await watchLog({})).newLines, 1);
+  assert.equal((await readNew({})).newLines, 1);
 
   const otherLog = path.join(logDir, 'Other.txt');
   await fs.writeFile(otherLog, 'aaaa\n'.repeat(2000) + 'last line of other\n');
   process.env.UNITY_INSPECTOR_LOG = otherLog;
   try {
-    const switched = await watchLog({});
+    const switched = await readNew({});
     assert.equal(switched.isBaseline, true);
     assert.equal(switched.path, otherLog);
     assert.match(switched.content, /last line of other/);
@@ -340,21 +361,21 @@ test('the Windows layout offers output_log.txt as well as Player.log', fakeHomeW
   }
 });
 
-test('watch_log restarts as a baseline when the log is rotated behind the same path', async () => {
+test('read_log with onlyNew restarts as a baseline when the log is rotated behind the same path', async () => {
   const rotating = path.join(logDir, 'Rotating.log');
   await fs.writeFile(rotating, 'run one line\n');
 
   process.env.UNITY_INSPECTOR_LOG = rotating;
   try {
-    assert.equal((await watchLog({})).isBaseline, true);
+    assert.equal((await readNew({})).isBaseline, true);
     await fs.appendFile(rotating, 'more of run one\n');
-    assert.equal((await watchLog({})).newLines, 1);
+    assert.equal((await readNew({})).newLines, 1);
 
     await fs.rename(rotating, path.join(logDir, 'Rotating-prev.log'));
     await fs.writeFile(rotating, '[Manager] starting up\n'.repeat(40));
 
-    const afterRotation = await watchLog({});
-    assert.equal(afterRotation.isBaseline, true, 'rotation must restart the watch');
+    const afterRotation = await readNew({});
+    assert.equal(afterRotation.isBaseline, true, 'rotation must restart the baseline');
     assert.match(afterRotation.content, /\[Manager\] starting up/);
   } finally {
     process.env.UNITY_INSPECTOR_LOG = logPath;
@@ -412,7 +433,7 @@ test('the not-found error lists the profile globs it searched', fakeHomeWorks, a
   delete process.env.UNITY_INSPECTOR_LOG;
 
   try {
-    const response = await handleToolCall({ params: { name: 'watch_log' } });
+    const response = await handleToolCall({ params: { name: 'read_log', arguments: { onlyNew: true } } });
     assert.equal(response.isError, true);
     const text = response.content.map((c) => c.text).join('\n');
     assert.match(text, /UMM log file not found/);

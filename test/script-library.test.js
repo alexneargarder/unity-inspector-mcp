@@ -116,14 +116,28 @@ test('test scripts reject steps that only the MCP server can run', () => {
 test('a script step names a library script or inlines source, never both', () => {
   const problems = validateTestScriptSteps([
     { command: 'execute_script', params: { path: 'watch-field' } },
-    { command: 'compile_script', params: { path: 'watch-field.cs' } },
+    { command: 'execute_script', params: { path: 'watch-field.cs', compileOnly: true } },
     { command: 'execute_script', params: { path: 'watch-field', source: 'class X {}' } },
-    { command: 'compile_script', params: {} },
+    { command: 'execute_script', params: { compileOnly: true } },
+    { command: 'execute_script', params: { path: 'watch-field', source: 'class X {}', compileOnly: true } },
   ]);
 
-  assert.equal(problems.length, 2);
+  assert.equal(problems.length, 3);
   assert.match(problems[0], /step 3: "execute_script" takes params\.path or params\.source, not both/);
-  assert.match(problems[1], /step 4: "compile_script" needs params\.path/);
+  assert.match(problems[1], /step 4: "execute_script" needs params\.path/);
+  assert.match(problems[2], /step 5: "execute_script" takes params\.path or params\.source, not both/);
+});
+
+test('a step gets the same refusals as the tool', () => {
+  const problems = validateTestScriptSteps([
+    { command: 'swap_bro', params: { broName: 'Rambro', nextSpawn: true } },
+    { command: 'swap_bro', params: { broName: 'Rambro', nextSpawn: true, ignoreUnlocks: true } },
+    { command: 'execute_script', params: { path: 'watch-field', compileOnly: true, args: { a: 1 } } },
+  ], 'cleanup step');
+
+  assert.equal(problems.length, 2);
+  assert.match(problems[0], /cleanup step 2: .*nextSpawn cannot take ignoreUnlocks/);
+  assert.match(problems[1], /cleanup step 3: .*compileOnly cannot take args/);
 });
 
 test('until needs an expect and a timeout in seconds; report is a boolean', () => {

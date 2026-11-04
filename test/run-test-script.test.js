@@ -68,7 +68,7 @@ test('a library script step sends the file\'s source, by bare name, .cs name and
   const scriptPath = await writeScript(t, {
     steps: [
       { command: 'execute_script', params: { path: 'watch-field', args: { field: 'health' } } },
-      { command: 'compile_script', params: { path: 'watch-field.cs' } },
+      { command: 'execute_script', params: { path: 'watch-field.cs', compileOnly: true } },
       { command: 'execute_script', params: { path: 'Watch Field' } },
       { command: 'execute_script', params: { path: path.join(CSHARP_SCRIPTS_DIR, 'watch-field.cs') } },
     ],
@@ -79,6 +79,7 @@ test('a library script step sends the file\'s source, by bare name, .cs name and
 
   const source = await readFile(path.join(CSHARP_SCRIPTS_DIR, 'watch-field.cs'), 'utf-8');
   const scripts = [...sent('execute_script'), ...sent('compile_script')];
+  assert.equal(sent('compile_script').length, 1);
   assert.equal(scripts.length, 4);
   for (const request of scripts) {
     assert.equal(request.params.source, source);
@@ -88,6 +89,45 @@ test('a library script step sends the file\'s source, by bare name, .cs name and
   assert.deepEqual(sent('execute_script')[0].params.args, { field: 'health' });
   assert.deepEqual(run.results[0].params, { path: 'watch-field', args: { field: 'health' } },
     'the record shows the step as written, not the whole source');
+  assert.ok(!('compileOnly' in sent('compile_script')[0].params), 'the flag never reaches the mod');
+});
+
+test('a step reaches the mod the way the tool does, with the flag stripped and the record as written', async (t) => {
+  startRecording();
+  answer = (request, socket) => reply(socket, request.id, { success: true });
+  const scriptPath = await writeScript(t, {
+    steps: [
+      { command: 'swap_bro', params: { broName: 'Rambro', nextSpawn: true } },
+      { command: 'swap_bro', params: { broName: 'Bronobi', ignoreUnlocks: true, nextSpawn: false } },
+      { command: 'execute_script', params: { source: 'class X {}', name: 'inline', compileOnly: '{{check}}' } },
+    ],
+    args: { check: { default: true } },
+  });
+
+  const run = await runTestScript(scriptPath, client);
+  assert.equal(run.passed, true, JSON.stringify(run));
+
+  assert.deepEqual(sent('set_bro').map((r) => r.params), [{ broName: 'Rambro' }]);
+  assert.deepEqual(sent('swap_bro').map((r) => r.params), [{ broName: 'Bronobi', ignoreUnlocks: true }]);
+  assert.deepEqual(sent('compile_script').map((r) => r.params), [{ source: 'class X {}', name: 'inline' }]);
+  assert.equal(sent('execute_script').length, 0);
+
+  assert.deepEqual(run.results.map((r) => r.command), ['swap_bro', 'swap_bro', 'execute_script']);
+  assert.deepEqual(run.results[0].params, { broName: 'Rambro', nextSpawn: true });
+});
+
+test('a refused step fails the script before any command is sent', async (t) => {
+  for (const [step, words] of [
+    [{ command: 'swap_bro', params: { broName: 'Rambro', nextSpawn: true, ignoreUnlocks: true } }, /nextSpawn cannot take ignoreUnlocks/],
+    [{ command: 'execute_script', params: { path: 'watch-field', compileOnly: true, args: { a: 1 } } }, /compileOnly cannot take args/],
+    [{ command: 'read_log', params: { onlyNew: true } }, /implemented by the MCP server/],
+  ]) {
+    startRecording();
+    const run = await runTestScript(await writeScript(t, { steps: [{ command: 'ping' }, step] }), client);
+    assert.equal(run.passed, false, step.command);
+    assert.match(run.error, words);
+    assert.equal(requests.length, 0, `${step.command} let a command through`);
+  }
 });
 
 test('a library script that does not exist fails the script before any command is sent', async (t) => {

@@ -7,8 +7,8 @@ const { isGameRunning, setProcReader } = await import('../lib/game-process.js');
 const { fakeProcReader } = await import('./support/fake-proc.js');
 const { NODE_ONLY_TOOLS, validateTestScriptSteps } = await import('../lib/script-library.js');
 
-const MAX_TOOL_CHARS = 2800;
-const MAX_TOTAL_CHARS = 26000;
+const MAX_TOOL_CHARS = 2020;
+const MAX_TOTAL_CHARS = 18500;
 
 function textOf(response) {
   return response.content.map((c) => c.text).join('\n');
@@ -65,8 +65,12 @@ test('simulate_input advertises the sequence form and what the actions do', asyn
   assert.match(tool.description, /highFive/);
   assert.match(tool.description, /interact button/);
   assert.match(tool.description, /switch/);
-  assert.match(tool.description, /count/);
-  assert.match(tool.description, /duration/);
+  for (const exception of [/teleport door/, /live grenade within 20 units/, /citizen within 32 units/, /running special blocks it/]) {
+    assert.match(tool.description, exception, 'a caller who reads only this needs to know what takes or blocks the press');
+  }
+  assert.match(tool.description, /Input reaches every player/);
+  assert.equal(tool.inputSchema.properties.count.type, 'number');
+  assert.equal(tool.inputSchema.properties.duration.type, 'number');
 });
 
 test('query_gameobjects advertises base-type matching and the scan fields', async () => {
@@ -90,7 +94,7 @@ test('game_state advertises the level fields and the single gameplay scene', asy
 
 test('list_enemies advertises the classification and the suppression answer', async () => {
   const { description } = await toolNamed('list_enemies');
-  assert.ok(description.length < 500, `list_enemies description is ${description.length} characters`);
+  assert.ok(description.length < 460, `list_enemies description is ${description.length} characters`);
   assert.match(description, /the game's own classification/i);
   assert.match(description, /unitType/);
   assert.match(description, /category/);
@@ -115,10 +119,9 @@ test('modify_component advertises the failure reasons and the success rule', asy
   assert.match(description, /'error'/);
   assert.match(description, /static/i);
   assert.match(description, /'success' is false when nothing was written/);
-  assert.match(description, /dotted paths into nested members/);
   assert.match(description, /'suggestions'/);
   assert.equal(tool.inputSchema.properties.properties.minProperties, 1, 'an empty properties object is rejected by the schema');
-  assert.match(tool.inputSchema.properties.properties.description, /dotted path/);
+  assert.match(tool.inputSchema.properties.properties.description, /dotted paths into nested members/);
 });
 
 test('inspect_component advertises static members, dotted paths and suggestions', async () => {
@@ -134,16 +137,13 @@ test('inspect_component advertises static members, dotted paths and suggestions'
 });
 
 test('the bro tools advertise the Swap Bros Mod gate and the rosters a miss answers with', async () => {
-  for (const name of ['swap_bro', 'set_bro']) {
-    const { description } = await toolNamed(name);
-    assert.match(description, /availableBros/, name);
-    assert.match(description, /allNormal/, name);
-    assert.match(description, /allExpendabros/, name);
-    assert.match(description, /allUnfinished/, name);
-  }
+  const swap = await toolNamed('swap_bro');
+  assert.match(swap.description, /availableBros/);
+  assert.match(swap.description, /allNormal/);
+  assert.match(swap.description, /allExpendabros/);
+  assert.match(swap.description, /allUnfinished/);
 
-  // set_bro and list_bros are gated on the mod exactly as swap_bro is
-  for (const name of ['swap_bro', 'set_bro', 'list_bros']) {
+  for (const name of ['swap_bro', 'list_bros']) {
     const { description } = await toolNamed(name);
     assert.match(description, /Requires Swap Bros Mod/, name);
     assert.match(description, /refused when it is not active/, name);
@@ -175,9 +175,8 @@ test('take_screenshot advertises the highlight argument and what it reports', as
 test('spawn_entity advertises the type roster and the velocity arguments', async () => {
   const tool = await toolNamed('spawn_entity');
   assert.match(tool.description, /availableTypes/);
-  assert.match(tool.description, /RocketLib `UnitType`/);
-  assert.match(tool.description, /display name/i);
-  assert.match(tool.inputSchema.properties.type.description, /UnitType/);
+  assert.match(tool.inputSchema.properties.type.description, /RocketLib UnitType/);
+  assert.match(tool.inputSchema.properties.type.description, /display name/i);
   assert.equal(tool.inputSchema.properties.xI?.type, 'number');
   assert.equal(tool.inputSchema.properties.yI?.type, 'number');
   assert.deepEqual(tool.inputSchema.required, ['type', 'x', 'y'], 'velocities stay optional');
@@ -187,7 +186,7 @@ test('spawn_entity says where the prefab comes from and how it fails', async () 
   const tool = await toolNamed('spawn_entity');
 
   assert.ok(
-    tool.description.length < 650,
+    tool.description.length < 555,
     `spawn_entity's description is at its ceiling at ${tool.description.length} characters - anything new has to be paid for by a trim elsewhere in it`
   );
   assert.match(tool.description, /theme or the shared assets/, 'the prefab is the theme\'s or the shared assets\'');
@@ -217,6 +216,47 @@ test('swap_bro takes an optional ignoreUnlocks flag that the reply answers', asy
   assert.match(flag.description, /every installed custom bro/);
   assert.match(flag.description, /ignoredUnlocks/);
   assert.deepEqual(tool.inputSchema.required, ['broName'], 'the flag stays optional');
+});
+
+test('swap_bro takes an optional nextSpawn flag that leaves the current bro', async () => {
+  const tool = await toolNamed('swap_bro');
+  const flag = tool.inputSchema.properties.nextSpawn;
+  assert.equal(flag?.type, 'boolean');
+  assert.match(flag.description, /spawns as next/);
+  assert.match(flag.description, /leave the current one/);
+  assert.match(flag.description, /not with ignoreUnlocks/);
+  assert.match(tool.description, /kills the current bro/);
+});
+
+test('read_log advertises onlyNew, reset and what a baseline is', async () => {
+  const tool = await toolNamed('read_log');
+  const { onlyNew, reset } = tool.inputSchema.properties;
+  assert.equal(onlyNew?.type, 'boolean');
+  assert.match(onlyNew.description, /isBaseline: true/);
+  assert.match(onlyNew.description, /Not with lines or filter/);
+  assert.equal(reset?.type, 'boolean');
+  assert.match(reset.description, /With onlyNew/);
+  assert.match(tool.description, /`stale: true`/);
+  assert.equal(tool.inputSchema.required, undefined);
+});
+
+test('execute_script takes an optional compileOnly flag and points at list_scripts', async () => {
+  const tool = await toolNamed('execute_script');
+  const flag = tool.inputSchema.properties.compileOnly;
+  assert.equal(flag?.type, 'boolean');
+  assert.match(flag.description, /without running/);
+  assert.match(flag.description, /Not with args/);
+  assert.deepEqual(tool.inputSchema.required, ['path']);
+  assert.match(tool.description, /list_scripts/);
+});
+
+test('the merged tools are gone from the list', async () => {
+  const names = (await buildToolList()).map((tool) => tool.name);
+  for (const name of ['set_bro', 'compile_script', 'watch_log']) {
+    assert.ok(!names.includes(name), `${name} is still listed`);
+  }
+  const text = JSON.stringify(await buildToolList());
+  assert.doesNotMatch(text, /set_bro|compile_script|watch_log/, 'nothing in the list names a removed tool');
 });
 
 test('trace_spawns advertises its actions, targets and the read cursor', async () => {
@@ -258,9 +298,6 @@ test('capture_animations is listed, and is server-side orchestration rather than
 
 test('launch_game says which launch launchArgs reach', async () => {
   const tool = await toolNamed('launch_game');
-
-  assert.match(tool.description, /launchArgs go to whichever launch the call runs/);
-  assert.match(tool.description, /the instance launch by default, the configured launch command with steam: true/);
 
   const { launchArgs } = tool.inputSchema.properties;
   assert.match(launchArgs.description, /appended to the launch this call runs/);
@@ -335,23 +372,19 @@ test('the server announces a tool list that changes', () => {
   assert.deepEqual(SERVER_CAPABILITIES.tools, { listChanged: true });
 });
 
-test('execute_script leaves scenario-tagged scripts out of its catalog and lists the rest', async () => {
-  const { listCSharpScripts, isScenarioScript } = await import('../lib/script-library.js');
-  const { description } = await toolNamed('execute_script');
+test('the script catalog stays out of the tool list, and list_scripts and the resource list every script', async () => {
+  const { buildScriptCatalog, listCSharpScripts } = await import('../lib/script-library.js');
   const { scripts } = await listCSharpScripts();
-  const scenarios = scripts.filter(isScenarioScript);
-  const others = scripts.filter((s) => !isScenarioScript(s));
+  const list = JSON.stringify(await buildToolList());
+  const catalog = await buildScriptCatalog();
+  const listed = JSON.parse(textOf(await handleToolCall({ params: { name: 'list_scripts' } }))).scripts.map((s) => s.name);
 
-  assert.ok(scenarios.length > 0, 'the library ships scenario scripts');
-  for (const script of scenarios) {
-    assert.ok(!description.includes(`- ${script.name}:`), `${script.name} is in the execute_script catalog`);
+  assert.ok(scripts.some((s) => /\bscenario\b/.test(s.tags)), 'the library ships scenario scripts');
+  for (const script of scripts) {
+    assert.ok(!list.includes(`- ${script.name}:`), `${script.name} is in the tool list`);
+    assert.ok(catalog.includes(`- ${script.name}:`), `${script.name} is missing from the catalog resource`);
+    assert.ok(listed.includes(script.name), `${script.name} is missing from list_scripts`);
   }
-  for (const script of others) {
-    assert.ok(description.includes(`- ${script.name}:`), `${script.name} is missing from the execute_script catalog`);
-  }
-  assert.equal(isScenarioScript({ tags: 'debugging, Scenario' }), true);
-  assert.equal(isScenarioScript({ tags: 'scenarios' }), false);
-  assert.equal(isScenarioScript({ tags: '' }), false);
 });
 
 test('the tool list stays within its size limits', async () => {
