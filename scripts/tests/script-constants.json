@@ -1,0 +1,264 @@
+{
+  "name": "Script constants from execute_code",
+  "description": "Checks that the constants a script declares are readable from execute_code with their exact values: long, ulong, char, bool, float, double, string, a null string, and a private constant read through a public method. Naming an enum that a script or execute_code defined is refused with a message pointing at the underlying values, and naming a member a script type lacks reports CS0117. A class declared through execute_code, with an int constant and a null string constant, is readable from a later execute_code call.",
+  "steps": [
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "script-constants-test",
+        "source": "public enum ScriptConstTestByteMode : byte { A = 1, B = 200 }\n\npublic enum ScriptConstTestWideMode : ulong { Small = 1, Huge = 18446744073709551615 }\n\npublic static class ScriptConstTestValues\n{\n    public const long Long = -9000000000L;\n    public const ulong MaxULong = ulong.MaxValue;\n    public const char Letter = 'Q';\n    public const bool Flag = true;\n    public const float Single = 1.5f;\n    public const double Double = 2.25;\n    public const string Text = \"script text\";\n    public const string NullText = null;\n    private const int Secret = 42;\n\n    public static int DoubledSecret() { return Secret * 2; }\n\n    public static void Main() { }\n}\n"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "ScriptConstTestValues.Long"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": -9000000000,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "ScriptConstTestValues.MaxULong.ToString()"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"18446744073709551615\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "ScriptConstTestValues.MaxULong == ulong.MaxValue"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "ScriptConstTestValues.Letter"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"Q\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "ScriptConstTestValues.Flag"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "ScriptConstTestValues.Single"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 1.5,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "ScriptConstTestValues.Double"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2.25,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "ScriptConstTestValues.Text"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"script text\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "ScriptConstTestValues.NullText"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": null,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "ScriptConstTestValues.DoubledSecret()"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 84,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "(int)ScriptConstTestByteMode.B"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Enum 'ScriptConstTestByteMode' is defined by a script or by execute_code",
+          "cannot be named from execute_code"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "ScriptConstTestWideMode mode = ScriptConstTestWideMode.Small; return 0;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Enum 'ScriptConstTestWideMode' is defined by a script or by execute_code",
+          "cannot be named from execute_code"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return ScriptConstTestValues.NoSuchMember;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "CS0117"
+        ],
+        "notContains": [
+          "CS0584"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ScriptConstTestEvalValues { public const int Answer = 41; public const string NullText = null; }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "ScriptConstTestEvalValues.Answer"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 41,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "ScriptConstTestEvalValues.NullText == null"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public enum ScriptConstTestEvalMode { A = 1 }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      }
+    },
+    {
+      "command": "compile_script",
+      "params": {
+        "name": "script-constants-eval-enum",
+        "source": "public static class ScriptConstTestUsesEvalMode\n{\n    public static int Read() { return (int)ScriptConstTestEvalMode.A; }\n\n    public static void Main() { }\n}\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Enum 'ScriptConstTestEvalMode' is defined by a script or by execute_code"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "(int)ScriptConstTestEvalMode.A"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Enum 'ScriptConstTestEvalMode' is defined by a script or by execute_code",
+          "cannot be named from execute_code"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public enum ScriptConstTestInputMode { A } public static class ScriptConstTestInputUse { public static ScriptConstTestInputMode X; }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Enum 'ScriptConstTestInputMode' is defined by a script or by execute_code"
+        ]
+      }
+    }
+  ]
+}

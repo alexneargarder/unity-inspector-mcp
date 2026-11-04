@@ -101,7 +101,7 @@ Behaviour the tool descriptions are too small to carry.
 - The tool result is the mod's own object, with three shapes on its top-level `success`: `resultSet:true` with `result`; `success:true, resultSet:false` for ran-but-void; `success:false` with `error`
 - A failure from thrown user code also carries `position` (`{line, column}` of the top-level statement that was executing, 1-based in the submitted input) and `statement` (that statement's text). `position`, `statement` and `stackTrace` are all null for plain compiler diagnostics and for timeouts
 - **Exceptions thrown by submitted code report `stackTrace`**, and reading `StackTrace` or `ToString()` is safe in `execute_code` input and inside a compiled script alike — a script's own `catch` gets a full managed trace naming its methods
-- Types defined by a script loaded through `execute_script` are in scope for `execute_code`, by direct name and by reflection over the script assembly (field reads, member enumeration). `MethodBase.GetMethodBody()` on a script-compiled method kills the game process
+- Types defined by a script loaded through `execute_script` are in scope for `execute_code`, by direct name and by reflection over the script assembly (field reads, member enumeration), consts and `null` consts included; an enum declared by a script or by `execute_code` is the exception, and `execute_code` input or a script naming one is refused before it compiles. `MethodBase.GetMethodBody()` on a script-compiled method kills the game process
 
 ### Crash Detection
 

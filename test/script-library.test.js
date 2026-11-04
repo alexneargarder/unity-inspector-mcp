@@ -61,6 +61,7 @@ const SHIPPED_TEST_SCRIPTS = [
   'scenario-level-run.json',
   'scenario-menus.json',
   'scenario-player-join.json',
+  'script-constants.json',
 ];
 
 test('list_test_scripts finds every script shipped in scripts/tests', async () => {
