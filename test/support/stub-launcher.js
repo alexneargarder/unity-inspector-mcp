@@ -3,6 +3,7 @@ import net from 'net';
 import path from 'path';
 
 import { NO_LISTENER_PORT, NO_OP_LAUNCH_CMD } from './session.js';
+import { serveConnection } from './stub-server.js';
 
 // The launcher's own game root, which it reports as `root` and the server has no use for: instances
 // live under `instancesRoot`, and a server that confused the two would derive every path from here
@@ -181,29 +182,24 @@ export async function seedInstanceDir(instanceDir) {
   return instanceDir;
 }
 
-// A fake inspector: the only thing in these tests that ever answers a ping
-export function fakeInspector({ answers = true } = {}) {
+export function fakeInspector({ answers = true, hello = 'accept' } = {}) {
   return new Promise((resolve, reject) => {
     const sockets = [];
+    const state = { hello, hellos: [], firstLines: [] };
     const server = net.createServer((socket) => {
       sockets.push(socket);
       socket.on('error', () => {});
-      let buffer = '';
-      socket.on('data', (chunk) => {
-        buffer += chunk.toString();
-        let index;
-        while ((index = buffer.indexOf('\n')) !== -1) {
-          const line = buffer.slice(0, index).trim();
-          buffer = buffer.slice(index + 1);
-          if (line && answers) {
-            socket.write(JSON.stringify({ id: JSON.parse(line).id, success: true, result: {} }) + '\n');
-          }
-        }
+      serveConnection(socket, state, (request) => {
+        if (answers) socket.write(JSON.stringify({ id: request.id, success: true, result: {} }) + '\n');
       });
     });
     server.once('error', reject);
     server.listen(0, '127.0.0.1', () => resolve({
       port: server.address().port,
+      get hello() { return state.hello; },
+      set hello(mode) { state.hello = mode; },
+      hellos: state.hellos,
+      firstLines: state.firstLines,
       close: () => {
         for (const socket of sockets) socket.destroy();
         return new Promise(done => server.close(done));

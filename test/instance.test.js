@@ -45,7 +45,8 @@ test('the session id derives every per-instance path from the launcher\'s root',
   // A header naming no stage root leaves the session no stage of its own
   assert.equal(config.stagePath, null);
   assert.equal(config.ummLog, `${root}/profile/UMM/Core/Log.txt`);
-  assert.equal(config.playerLog, `${root}/home/unity3d/Free Lives/Broforce/Player.log`);
+  assert.equal(config.unityDataDir, `${root}/home/unity3d/Free Lives/Broforce`);
+  assert.equal(config.playerLog, `${config.unityDataDir}/Player.log`);
   assert.equal(config.ownerFile, `${root}/owner.pid`);
   assert.equal(config.launchCommand, LAUNCHER);
   // The launcher allocates the port and writes it to the instance; the server never asks for one

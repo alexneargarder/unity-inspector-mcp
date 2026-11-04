@@ -12,7 +12,7 @@ This lets an MCP client inspect and change things in Broforce while the game is 
 
 Install the mod first. There's no prebuilt download, so clone the [BroforceMods repo](https://github.com/alexneargarder/BroforceMods) and build the Unity Inspector Mod project yourself, then put the built folder in Broforce's `Mods` directory like any other Unity Mod Manager mod. On r2modman it goes in `UMM/Mods` inside the profile folder instead. Here's a [guide for installing Unity Mod Manager and mods](https://steamcommunity.com/sharedfiles/filedetails/?id=2434812447) if you haven't done that before.
 
-Open the Unity Mod Manager overlay in game (Ctrl+F10 by default) and click on the mod. Its panel shows whether the TCP server is running, the port, the address it's bound to and how many clients are connected, and there's a Start Server button if it's stopped. If you change the port from 9999, set `UNITY_INSPECTOR_PORT` on the server side to match.
+Open the Unity Mod Manager overlay in game (Ctrl+F10 by default) and click on the mod. Its panel shows whether the TCP server is running, the port, the address it's bound to and how many clients are connected, and there's a Start Server button if it's stopped. If you change the port from 9999, set `UNITY_INSPECTOR_PORT` on the server side to match. Update the mod and the server together, since a mismatched pair refuses to connect and the error says which one to update.
 
 ## Installing the server
 
@@ -88,7 +88,7 @@ If the game is on Windows and your MCP client is in WSL, the server runs in WSL 
 }
 ```
 
-Launching and stopping the game don't work from there, since `pgrep` can't see Windows processes. You'd start the game on Windows yourself. This setup also needs the mod's "Allow remote connections (LAN)" setting turned on. The mod compiles and runs whatever C# gets sent to its port and there's no authentication on it, so any process that can reach the port can run code as whoever is running the game. It binds to 127.0.0.1 by default, and remote connections rebind it to 0.0.0.0, so while that's on, anyone on your network can run code on the game machine.
+Launching and stopping the game don't work from there, since `pgrep` can't see Windows processes. You'd start the game on Windows yourself. This setup also needs the mod's "Allow remote connections (LAN)" setting turned on. The mod binds to 127.0.0.1 by default, and remote connections rebind it to 0.0.0.0, so its port is open to your network while that's on. The server finds the mod's token file under every `/mnt/c/Users/<user>/AppData/LocalLow/Free Lives/Broforce`.
 
 ## Environment variables
 
@@ -101,8 +101,9 @@ All of these are optional and go in the `env` block (the `[mcp_servers.unity-ins
 | `BROFORCE_INSTANCE_CMD` | unset, and there are no instances | The launcher that creates and runs this session's own game instance. |
 | `BROFORCE_STOP_CMD` | unset, and the game is stopped by signalling its own process | Command line `stop_game` runs to stop your own game. |
 | `UNITY_INSPECTOR_LOG` | unset, and the server searches for the log itself | Path to the Unity Mod Manager log. |
+| `UNITY_INSPECTOR_TOKEN_FILE` | unset, and the server searches the game's data folders itself | Path to the token file the mod writes. |
 
-The other four are about your own game, never about a session's instance, which takes its port and its logs from `BROFORCE_INSTANCE_CMD`'s launcher instead.
+The other five are about your own game, never about a session's instance, which takes its port, its logs and its token from `BROFORCE_INSTANCE_CMD`'s launcher instead.
 
 `launch_game` goes through Steam by default. `BROFORCE_LAUNCH_CMD` replaces that with a full command line, like a Proton launcher script, parsed into a command plus arguments with shell-style quoting. It runs exactly as you configured it, with `--vanilla` added for a vanilla launch and whatever `launchArgs` holds appended. `launchArgs` reach whichever launch the call runs, this command with `steam: true` and the instance launcher's `instance <id> launch` by default, so an option of one is not an option of the other.
 
@@ -159,7 +160,7 @@ There are 33, 32 from the server and `restart_server` from the wrapper.
 | `read_log` | Read the last N lines of the mod manager log, with an optional filter, or with `onlyNew` only the lines written since the previous such call. |
 | `launch_game` | Launch Broforce and wait until it answers, with `restart`, `vanilla` and `launchArgs` options. If it never answers, it reports which failure mode it hit, same as `wait_for_game`. |
 | `stop_game` | Stop the Broforce process this server is responsible for. |
-| `wait_for_game` | Poll until the game responds, or time out. A timeout says which case it was: no process, nothing listening on the port, connected but no reply, or a connection that got closed. |
+| `wait_for_game` | Poll until the game responds, or time out. A timeout says which case it was: no process, nothing listening on the port, connected but no reply, or a connection that got closed. A connection the mod refuses ends it at once. |
 | `restart_server` | Restart `index.js` in place to pick up code changes. Provided by `wrapper.js`. |
 
 Under Proton and WSL the game returns Windows paths for screenshots, and the server translates those into paths you can open locally.
@@ -186,6 +187,8 @@ The `capture_animations` tool drives its own in-game script end to end — level
 2. The mod's TCP server is stopped. Its settings panel shows the status and has a Start Server button.
 3. The mod is on a port other than the default one. Set `UNITY_INSPECTOR_PORT` to match, or set the mod back to 9999.
 4. You're on WSL with "Allow remote connections (LAN)" turned off. The mod is bound to the Windows loopback and WSL can't reach it.
+
+If the mod refuses the connection, the error says why. The mod writes its token to `unity-inspector-<port>.token` in the game's Unity data folder, which is `~/.config/unity3d/Free Lives/Broforce/` on Linux, `%USERPROFILE%\AppData\LocalLow\Free Lives\Broforce\` on Windows, the same folder inside the Proton prefix, and `~/Library/Application Support/Free Lives/Broforce/` on macOS. Set `UNITY_INSPECTOR_TOKEN_FILE` if yours is elsewhere.
 
 If the game process is there but doesn't answer, `launch_game` reports that instead of starting a second copy. That's almost always the mod failing to load, and the log will have the reason.
 

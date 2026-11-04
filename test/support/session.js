@@ -28,6 +28,13 @@ delete process.env.STUB_STAGE_ROOT;
 // The wrapper hands its child this path to record the owner.pid it wrote; inherited, it would have
 // the tests writing a claim into a live session's wrapper file
 delete process.env.UNITY_INSPECTOR_MCP_CLAIM_FILE;
+delete process.env.XDG_CONFIG_HOME;
 export const TEST_RESULTS_SCRATCH = mkdtempSync(path.join(tmpdir(), 'unity-inspector-test-results-'));
 process.env.UNITY_INSPECTOR_TEST_RESULTS_DIR = TEST_RESULTS_SCRATCH;
 process.on('exit', () => rmSync(TEST_RESULTS_SCRATCH, { recursive: true, force: true }));
+export const NO_TOKEN_FILE = path.join(TEST_RESULTS_SCRATCH, 'no-inspector-token');
+process.env.UNITY_INSPECTOR_TOKEN_FILE = NO_TOKEN_FILE;
+
+export const NO_WSL_USERS_ROOT = path.join(TEST_RESULTS_SCRATCH, 'no-wsl-users');
+const { setWslUsersRoot } = await import('../../lib/unity-client.js');
+setWslUsersRoot(NO_WSL_USERS_ROOT);

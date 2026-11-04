@@ -99,7 +99,28 @@ test('the recorded port is only this instance\'s while a game of its own is runn
   assert.equal(unityClient.connected, true);
 });
 
-test('an instance with no allocated port has no port to connect to', { timeout: 30000, skip: !isLinux }, async () => {
+test('an instance\'s hello carries the token from its own data folder, never UNITY_INSPECTOR_TOKEN_FILE', { timeout: 30000, skip: !isLinux }, async (t) => {
+  const inspector = await fakeInspector({ hello: (params) => (params.token === 'instance-token' ? 'accept' : 'refuse') });
+  t.after(() => inspector.close());
+  const dataDir = path.join(instanceDir, 'home/unity3d/Free Lives/Broforce');
+  await fs.mkdir(dataDir, { recursive: true });
+  await fs.writeFile(portFile, String(inspector.port));
+  await fs.writeFile(path.join(dataDir, `unity-inspector-${inspector.port}.token`), 'instance-token\n');
+  const userGameToken = path.join(root, 'user-game.token');
+  await fs.writeFile(userGameToken, 'user-game-token');
+  const previous = process.env.UNITY_INSPECTOR_TOKEN_FILE;
+  process.env.UNITY_INSPECTOR_TOKEN_FILE = userGameToken;
+  t.after(() => { process.env.UNITY_INSPECTOR_TOKEN_FILE = previous; });
+  ownGame();
+
+  assert.equal(await resolveTarget(), 'instance');
+  assert.equal(activeConfig().unityDataDir, dataDir);
+  payload(await handleToolCall({ params: { name: 'ping', arguments: {} } }));
+  assert.equal(unityClient.connected, true);
+  assert.deepEqual(inspector.hellos.map((hello) => hello.token), ['instance-token']);
+});
+
+test('an instance with no allocated port has no port to connect to',{ timeout: 30000, skip: !isLinux }, async () => {
   assert.equal(await resolveTarget(), 'instance');
   assert.equal(unityClient.port, null);
 

@@ -13,7 +13,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import { UnityInspectorClient, defaultPort, toolCommand } from './lib/unity-client.js';
+import { HANDSHAKE_TIMEOUT, UNITY_PRODUCT_DIR, UnityInspectorClient, defaultPort, isHandshakeRefusal, tokenSearchIn, toolCommand, unityDataDirs } from './lib/unity-client.js';
 import { captureCommandHelp, composeExtraLaunchArgs, detectActiveProfile, forgetCommandHelp, gameStartTime, instanceModeChecked, invalidateGameProcessScan, isGameRunning, killGame, listInstances, ownedGameProcesses, probeInstanceMode, readValidatedPidfile, removeInstance, resolveLaunchCommand, runCommandCapture, spawnDetached } from './lib/game-process.js';
 import { NO_INSTANCE_REASONS, instanceConfig, launcherConfig, steamConfig, withRoot } from './lib/instance.js';
 import { tokenizeCommand } from './lib/command-line.js';
@@ -121,7 +121,6 @@ export function configureLaunchTiming(overrides = {}) {
 const R2_PROFILES_SUFFIX = 'r2modmanPlus-local/Broforce/profiles';
 const UMM_LOG_IN_PROFILE = 'UMM/Core/Log.txt';
 const DIRECT_INSTALL_LOGS = ['Mods/UnityModManager/Log.txt', 'Mods/Log.txt'];
-const UNITY_PRODUCT_DIR = 'Free Lives/Broforce';
 // Unity only settled on Player.log in 2018.3; this game is 2017.4 and writes output_log.txt on Windows
 const WINDOWS_PLAYER_LOGS = ['Player.log', 'output_log.txt'];
 // etimes reports whole seconds, so a log written in the game's start second can read as older than it
@@ -134,19 +133,15 @@ function r2ProfileRoots() {
   return [...new Set(roots)];
 }
 
-function playerLogPaths() {
+async function playerLogPaths() {
   const home = os.homedir();
-  const paths = [path.join(home, '.config/unity3d', UNITY_PRODUCT_DIR, 'Player.log')];
-
-  const windowsBases = [];
-  if (process.env.USERPROFILE) {
-    windowsBases.push(path.join(process.env.USERPROFILE, 'AppData/LocalLow', UNITY_PRODUCT_DIR));
-  }
-  windowsBases.push(path.join(home, 'AppData/LocalLow', UNITY_PRODUCT_DIR));
-  if (unityClient.protonPrefix) {
-    windowsBases.push(path.join(unityClient.protonPrefix, 'drive_c/users/steamuser/AppData/LocalLow', UNITY_PRODUCT_DIR));
-  }
-  for (const base of windowsBases) {
+  const { linux, windows } = await unityDataDirs({
+    home,
+    protonPrefix: unityClient.protonPrefix,
+    wsl: unityClient.platform === 'wsl',
+  });
+  const paths = linux.map(base => path.join(base, 'Player.log'));
+  for (const base of windows) {
     for (const name of WINDOWS_PLAYER_LOGS) paths.push(path.join(base, name));
   }
 
@@ -218,7 +213,7 @@ async function ummLogSearch() {
     }
   }
 
-  for (const candidate of playerLogPaths()) {
+  for (const candidate of await playerLogPaths()) {
     paths.push(candidate);
     displays.push(candidate);
   }
@@ -272,9 +267,9 @@ export async function resolveLogFile(detectProfile = detectActiveProfile, startT
     const profile = await detectProfile(config);
     if (profile) {
       chosen = liveSince === null
-        ? await newestExisting([...profileLogPaths(profile), ...playerLogPaths()])
+        ? await newestExisting([...profileLogPaths(profile), ...(await playerLogPaths())])
         : (await newestExisting(profileLogPaths(profile), liveSince))
-          ?? (await newestExisting(playerLogPaths(), liveSince));
+          ?? (await newestExisting(await playerLogPaths(), liveSince));
     }
 
     if (!chosen) chosen = await newestExisting(paths);
@@ -453,7 +448,7 @@ export async function targetLogPaths(config = activeConfig()) {
 
   return {
     umm: profile ? (await newestExisting(profileLogPaths(profile)))?.path ?? null : null,
-    player: (await newestExisting(playerLogPaths()))?.path ?? null,
+    player: (await newestExisting(await playerLogPaths()))?.path ?? null,
   };
 }
 
@@ -560,11 +555,24 @@ export async function targetPort(config = activeConfig()) {
   return recorded !== null && (await instanceOwnsGame(config)) ? recorded : null;
 }
 
-// The client's port and the crash detector's idea of "the game" both follow the target
+function targetTokenSearch(config) {
+  if (!config.isAgentInstance) return null;
+  return (port) => tokenSearchIn(config.unityDataDir ? [config.unityDataDir] : [], port);
+}
+
+function pointClient(port, config) {
+  unityClient.pointAt({
+    port,
+    gameConfig: config,
+    noPortMessage: noPortMessage(config),
+    tokenSearch: targetTokenSearch(config),
+  });
+}
+
 export async function pointClientAtTarget() {
   const config = activeConfig();
   const port = await targetPort(config);
-  unityClient.pointAt({ port, gameConfig: config, noPortMessage: noPortMessage(config) });
+  pointClient(port, config);
   return port;
 }
 
@@ -1498,7 +1506,7 @@ export async function buildToolList() {
       },
       {
         name: "wait_for_game",
-        description: "Poll until the game's inspector answers a ping or the timeout is reached. On timeout 'state' names how it failed (no-process, connection-refused, connected-unresponsive, connection-dropped, unknown, no-port) and 'message' explains it.",
+        description: "Poll until the game's inspector answers a ping or the timeout is reached. On failure 'state' names how it failed (no-process, connection-refused, connected-unresponsive, connection-dropped, unknown, no-port, or handshake-refused, which ends the wait at once) and 'message' explains it.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1802,6 +1810,7 @@ export async function pollUntilResponsive(timeoutMs, intervalMs, watcher = null,
   let attempts = 0;
   let lastError = null;
   let lastStage = null;
+  let lastTimedOut = false;
   let lastPort = null;
 
   for (;;) {
@@ -1811,11 +1820,7 @@ export async function pollUntilResponsive(timeoutMs, intervalMs, watcher = null,
       // makes its recorded port ours, and one attempt's answer does not settle the next
       lastPort = await pointClientAtTarget();
       if (lastPort === null && launchedPort !== null) {
-        unityClient.pointAt({
-          port: launchedPort,
-          gameConfig: activeConfig(),
-          noPortMessage: noPortMessage(activeConfig()),
-        });
+        pointClient(launchedPort, activeConfig());
         lastPort = launchedPort;
       }
       if (lastPort === null) {
@@ -1840,6 +1845,16 @@ export async function pollUntilResponsive(timeoutMs, intervalMs, watcher = null,
     } catch (err) {
       lastError = err.message;
       console.error(`Attempt ${attempts}: ${err.message}`);
+      if (isHandshakeRefusal(err)) {
+        const elapsed = secondsSoFar();
+        return { success: false, state: "handshake-refused", message: err.message, lastError, attempts, elapsed };
+      }
+      if (err.stage === "handshake") {
+        lastStage = "handshake";
+        lastTimedOut = err.code === HANDSHAKE_TIMEOUT;
+      } else if (lastStage === "ping") {
+        lastTimedOut = /^Command timeout after \d+ms$/.test(err.message);
+      }
     }
 
     if (watcher?.reason) break;
@@ -1871,7 +1886,8 @@ export async function pollUntilResponsive(timeoutMs, intervalMs, watcher = null,
   const running = await isGameRunning(activeConfig());
   const elapsed = secondsSoFar();
   const tail = `after ${elapsed}s (${attempts} attempts)`;
-  const pingTimedOut = /^Command timeout after \d+ms$/.test(lastError || "");
+  const answeredStage = lastStage === "ping" || lastStage === "handshake";
+  const unanswered = lastStage === "handshake" ? "the connection handshake" : "ping";
   const portLabel = lastPort === null ? 'the inspector port' : `port ${lastPort}`;
   const PortLabel = portLabel.charAt(0).toUpperCase() + portLabel.slice(1);
   let state;
@@ -1888,18 +1904,18 @@ export async function pollUntilResponsive(timeoutMs, intervalMs, watcher = null,
     };
   }
 
-  if (lastStage === "ping" && pingTimedOut) {
+  if (answeredStage && lastTimedOut) {
     state = "connected-unresponsive";
-    message = `${PortLabel} accepts connections but ping got no reply ${tail} — the mod may be starting or the main thread stalled`;
+    message = `${PortLabel} accepts connections but ${unanswered} got no reply ${tail} — the mod may be starting or the main thread stalled`;
     if (running === false) {
       message += ` (no Broforce process is detected, so whatever holds that port may not be the game)`;
     }
   } else if (running === false) {
     state = "no-process";
-    message = lastStage === "ping"
+    message = answeredStage
       ? `The connection dropped and no Broforce process is running ${tail} — the game likely died: ${lastError}`
       : `No Broforce process is running ${tail} — use launch_game to start it`;
-  } else if (lastStage === "ping") {
+  } else if (answeredStage) {
     state = "connection-dropped";
     message = `${PortLabel} accepted a connection that was then closed ${tail}: ${lastError}`;
   } else if (running === null) {
@@ -2470,6 +2486,7 @@ export async function handleToolCall(request) {
         const ownsGame = config.isAgentInstance ? (await isGameRunning(config)) === true : true;
 
         let gameRunning = false;
+        let refusal = null;
         if (ownsGame) {
           try {
             if (!unityClient.isConnected()) {
@@ -2478,16 +2495,22 @@ export async function handleToolCall(request) {
             }
             await unityClient.sendCommand("ping", {});
             gameRunning = true;
-          } catch {
-            gameRunning = false;
+          } catch (err) {
+            gameRunning = isHandshakeRefusal(err);
+            if (gameRunning) refusal = err.message;
           }
         }
 
         if (gameRunning && !args.restart) {
           result = withTargetNotes({
-            success: true,
+            success: refusal === null,
             alreadyRunning: true,
-            message: `${targetDescription(nextTarget)} is already running. Use restart: true to stop and relaunch.`,
+            ...(refusal === null
+              ? { message: `${targetDescription(nextTarget)} is already running. Use restart: true to stop and relaunch.` }
+              : {
+                  state: "handshake-refused",
+                  message: `${targetDescription(nextTarget)} is already running, but its inspector refused this server's connection: ${refusal}`,
+                }),
             // The game this launch would have started is the one already running, so it names it
             // exactly as a launch of its own would
             ...(config.isAgentInstance
@@ -2716,7 +2739,7 @@ export async function handleToolCall(request) {
               });
               break;
             }
-            unityClient.pointAt({ port: launchedPort, gameConfig: config, noPortMessage: noPortMessage(config) });
+            pointClient(launchedPort, config);
             // The next command re-checks ownership, and a scan from before the launch would deny it
             invalidateGameProcessScan();
           }
@@ -2798,7 +2821,9 @@ export async function handleToolCall(request) {
             ? `\`${launch.display}\` failed: ${poll.message}.`
             : poll.state === "no-process"
               ? `Ran \`${launch.display}\` but no Broforce process is running after ${poll.elapsed}s (${poll.attempts} attempts) — the launch command exited without leaving a game running.`
-              : `Game launched with \`${launch.display}\` but never answered — ${poll.message}`) + tail,
+              : poll.state === "handshake-refused"
+                ? `Game launched with \`${launch.display}\`, but its inspector refused this server's connection: ${poll.message}`
+                : `Game launched with \`${launch.display}\` but never answered — ${poll.message}`) + tail,
           lastError: poll.lastError,
           attempts: poll.attempts,
           ...(ignoredArgsNote ? { note: ignoredArgsNote } : {}),
