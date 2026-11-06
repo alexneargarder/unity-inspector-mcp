@@ -1,8 +1,8 @@
 export const FAKE_BOOT_TIME_MS = Date.parse('2026-01-01T00:00:00Z');
 
 // A /proc/<pid>/stat line: ppid is field 4 and starttime field 22, with filler in between
-function statLine(pid, comm, ppid, startTicks) {
-  return `${pid} (${comm}) S ${ppid} ${Array(17).fill(0).join(' ')} ${startTicks} 0 0\n`;
+function statLine(pid, comm, ppid, startTicks, state = 'S') {
+  return `${pid} (${comm}) ${state} ${ppid} ${Array(17).fill(0).join(' ')} ${startTicks} 0 0\n`;
 }
 
 export function fakeProcReader(processes, { bootTimeMs = FAKE_BOOT_TIME_MS } = {}) {
@@ -18,7 +18,7 @@ export function fakeProcReader(processes, { bootTimeMs = FAKE_BOOT_TIME_MS } = {
     },
     async stat(pid) {
       const proc = entry(pid);
-      return proc ? statLine(pid, proc.comm, proc.ppid ?? 1, proc.startTicks ?? 0) : null;
+      return proc ? statLine(pid, proc.comm, proc.ppid ?? 1, proc.startTicks ?? 0, proc.state) : null;
     },
     async cmdline(pid) {
       const proc = entry(pid);
@@ -31,8 +31,21 @@ export function fakeProcReader(processes, { bootTimeMs = FAKE_BOOT_TIME_MS } = {
     async cwd(pid) {
       return entry(pid)?.cwd ?? null;
     },
+    async exe(pid) {
+      return entry(pid)?.exe ?? null;
+    },
     async bootTimeMs() {
       return bootTimeMs;
+    },
+  };
+}
+
+export function conditionalProcReader(processes, { when, extra }, options = {}) {
+  const base = fakeProcReader({ ...processes, ...extra }, options);
+  return {
+    ...base,
+    async pids() {
+      return [...Object.keys(processes), ...((await when()) ? Object.keys(extra) : [])];
     },
   };
 }

@@ -1,0 +1,1782 @@
+{
+  "name": "spawn_entity, list_enemies and trace_spawns",
+  "description": "Covers spawn_entity with Utility Mod's disableEnemySpawn on, off, bypassed with ignoreSuppression, and with Utility Mod disabled in memory; every route (networked mooks, the mooks the networked prefab list lacks spawned locally, local vehicles, bosses and worms, the Facehugger and Screecher helpers), name forms, unknown names and Bro, positions and initial velocity; list_enemies with suppression on and off, after spawns, over a full level and on Challenge_Alien with nothing listed, with a corpse lying in the level, and while a MonoBehaviour's Update holds the main thread past its 5 s budget; alien and hell units spawned in a jungle level; and trace_spawns refusals, those the server refuses first sent to the mod's message handler directly, the idle read, the default and every named target, a replacing start, since cursors, ring overflow, and stop, which removes its own prefixes. Plays campaign 0 level 2; spawns happen at x 600-660 and at x 300 with the game frozen; the bro is made invulnerable and every spawned unit is destroyed after it is listed. Needs Utility Mod and campaign 16. A settings save during the run writes the disableEnemySpawn it found, not the value a step set in memory: step 6 loads the utility-mod-save-guard library script, step 125 proves it with a real save and step 126 unloads it; Utility Mod's enabled flag is a static no save writes. Its first steps undo whatever an earlier run left changed; its last steps restore Utility Mod's settings, stop the trace and reload the level it started in. Its cleanup runs the restore again whatever ended the steps: pause, speed, the second player, IronBro, the lock, the Swap Bros selection, and the Utility Mod settings and HeroController values it recorded; it also stops the trace and unloads the save guard.",
+  "steps": [
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "escape"
+      },
+      "until": {
+        "timeout": 90,
+        "interval": 1
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 1000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nstring log = \"\";\ntry { if (PauseController.pauseStatus != PauseStatus.UnPaused) { PauseController.SetPause(PauseStatus.UnPaused); log += \"unpaused \"; } } catch (System.Exception ex) { log += \"unpause failed: \" + ex.Message + \" \"; }\nif (UnityEngine.Time.timeScale != 1f) { UnityEngine.Time.timeScale = 1f; log += \"speed1 \"; }\ntry { if (d.GetData(\"uimtest.joined\") != null && HeroController.IsPlaying(1)) { HeroController.Dropout(1, false); log += \"dropped1 \"; } } catch (System.Exception ex) { log += \"dropout failed: \" + ex.Message + \" \"; }\nd.SetData(\"uimtest.joined\", null);\nvar hc = d.GetData(\"uimtest.ironbro\") as string;\nd.SetData(\"uimtest.ironbro\", null);\ntry {\n  var save = GameState.Instance.currentWorldmapSave;\n  if (hc != null && save != null) {\n    var parts = hc.Split(':');\n    save.worldMapIsHardcoreCampaign = parts[0] == \"1\";\n    save.hardcoreLives = int.Parse(parts[1]);\n    save.hardcoreModeAvailableBros.Clear();\n    foreach (var n in parts[2].Split(',')) if (n.Length > 0) save.hardcoreModeAvailableBros.Add((HeroType)System.Enum.Parse(typeof(HeroType), n));\n    log += \"ironbro-restored \";\n  }\n} catch (System.Exception ex) { log += \"ironbro restore failed: \" + ex.Message + \" \"; }\nvar lk = d.GetData(\"uimtest.lock\") as string;\nd.SetData(\"uimtest.lock\", null);\ntry {\n  if (lk != null) {\n    var fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\n    var t = System.Type.GetType(\"BroMakerLib.Unlocks.BroUnlockManager, BroMakerLib\");\n    var pd = t.GetField(\"progressData\", fl).GetValue(null);\n    var states = pd.GetType().GetProperty(\"BroStates\").GetValue(pd, null) as System.Collections.IDictionary;\n    var st = states[lk];\n    st.GetType().GetProperty(\"IsUnlocked\").SetValue(st, true, null);\n    st.GetType().GetProperty(\"UnlockedDate\").SetValue(st, d.GetData(\"uimtest.lock.date\"), null);\n    var names = t.GetProperty(\"UnlockedBroNames\", fl).GetValue(null, null) as System.Collections.Generic.List<string>;\n    var bros = t.GetProperty(\"UnlockedBros\", fl).GetValue(null, null) as System.Collections.IList;\n    int ni = (int)d.GetData(\"uimtest.lock.ni\"); if (ni < 0 || ni > names.Count) ni = names.Count;\n    if (!names.Contains(lk)) names.Insert(ni, lk);\n    var hero = d.GetData(\"uimtest.lock.hero\");\n    int hi = (int)d.GetData(\"uimtest.lock.hi\"); if (hi < 0 || hi > bros.Count) hi = bros.Count;\n    if (hero != null && !bros.Contains(hero)) bros.Insert(hi, hero);\n    typeof(BroMakerLib.Storages.BroSpawnManager).GetMethod(\"BroStatusChanged\", fl).Invoke(null, null);\n    log += \"unlocked \" + lk + \" \";\n  }\n} catch (System.Exception ex) { log += \"unlock failed: \" + ex.Message + \" \"; }\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); set.selGridInt[i] = ix < 0 ? 0 : ix; }\n    log += \"swap-settings-restored \";\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nvar fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\nstring log = \"\";\nvar ums = d.GetData(\"uimtest.u3.ums\") as string;\nd.SetData(\"uimtest.u3.ums\", null);\ntry {\n  if (ums != null) {\nSystem.Type um = null;\nforeach (var a in System.AppDomain.CurrentDomain.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\nvar umEnabled = um.GetField(\"enabled\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);\nvar umSettings = um.GetField(\"settings\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null);\nvar umDisable = umSettings.GetType().GetField(\"disableEnemySpawn\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\n    var p = ums.Split('|');\n    umEnabled.SetValue(null, p[0] == \"True\");\n    umDisable.SetValue(umSettings, p[1] == \"True\");\n    log += \"utility-mod-restored \";\n  }\n} catch (System.Exception ex) { log += \"utility mod restore failed: \" + ex.Message + \" \"; }\nvar hcs = d.GetData(\"uimtest.u3.hc\") as string;\nd.SetData(\"uimtest.u3.hc\", null);\ntry {\n  if (hcs != null) {\n    var p = hcs.Split('|');\n    HeroController.mustShowHUDS = p[0] == \"True\";\n    typeof(HeroController).GetField(\"doubleBroSevenAvatarCount\", fl).SetValue(null, int.Parse(p[1], ic));\n    var hc = UnityEngine.Object.FindObjectOfType<HeroController>();\n    if (hc != null) {\n      var ifl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance;\n      typeof(HeroController).GetField(\"explosivesCounter\", ifl).SetValue(hc, float.Parse(p[2], ic));\n      var c = p[3].Split(',');\n      hc.infoBarColor = new Color(float.Parse(c[0], ic), float.Parse(c[1], ic), float.Parse(c[2], ic), float.Parse(c[3], ic));\n      var ds = p[4].Split(',');\n      var arr = new float[ds.Length];\n      for (int i = 0; i < ds.Length; i++) arr[i] = float.Parse(ds[i], ic);\n      typeof(HeroController).GetField(\"suicideBroSpawnDelay\", ifl).SetValue(hc, arr);\n    }\n    log += \"hero-controller-restored \";\n  }\n} catch (System.Exception ex) { log += \"hero controller restore failed: \" + ex.Message + \" \"; }\ntry {\n  string dropped = \"\";\n  for (int i = 1; i < 4; i++) if (HeroController.IsPlaying(i)) { HeroController.Dropout(i, false); dropped += i; }\n  if (dropped.Length > 0) log += \"dropped-in-players-removed=\" + dropped + \" \";\n} catch (System.Exception ex) { log += \"drop-in removal failed: \" + ex.Message + \" \"; }\ntry {\n  string[] probes = { \"UimProbe\", \"UimDup\", \"UimInactive\", \"UimConstHolder\", \"UimShotProbe\", \"UimFarProbe\", \"UimBareProbe\", \"UimHiddenProbe\" };\n  int gone = 0;\n  foreach (var tr in Resources.FindObjectsOfTypeAll<Transform>()) {\n    if (tr == null || tr.parent != null || !tr.gameObject.scene.IsValid()) continue;\n    if (System.Array.IndexOf(probes, tr.name) < 0) continue;\n    UnityEngine.Object.DestroyImmediate(tr.gameObject);\n    gone++;\n  }\n  if (gone > 0) log += \"probes-destroyed=\" + gone + \" \";\n} catch (System.Exception ex) { log += \"probe cleanup failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar sc = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;\nvar camp = LevelSelectionController.currentCampaign;\nstring key = sc + \"|\" + (camp == null ? \"\" : camp.name) + \"|\" + LevelSelectionController.CurrentLevelNum;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nfloat now = UnityEngine.Time.realtimeSinceStartup;\nvar last = d.GetData(\"uimtest.settle\") as string;\nint cut = last == null ? -1 : last.LastIndexOf('|');\nif (last == null || last.Substring(0, cut) != key) {\n  d.SetData(\"uimtest.settle\", key + \"|\" + now.ToString(ic));\n  return \"waiting: \" + sc + \" just came up\";\n}\nfloat since = now - float.Parse(last.Substring(cut + 1), ic);\nif (sc == \"LoadingScreen\") return \"waiting: loading\";\nif (LevelSelectionController.IsCampaignScene) {\n  if (HeroController.Instance == null || Map.Instance == null || GameModeController.Instance == null) return \"waiting: the level is still being built\";\n  var wt = typeof(GameModeController).GetField(\"winTimer\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\n  if (GameModeController.IsLevelFinished() && (float)wt.GetValue(GameModeController.Instance) < 999999f) return \"waiting: the level finished and is moving on\";\n}\nif (since < 4f) return \"waiting: \" + sc + \" unchanged for \" + since.ToString(\"0.0\", ic) + \" s\";\nreturn \"settled in \" + sc;"
+      },
+      "until": {
+        "timeout": 90,
+        "interval": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "settled in"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar set = Swap_Bros_Mod.Main.settings;\nSwap_Bros_Mod.API.EnsureBroListUpdated();\nvar l = Swap_Bros_Mod.Main.currentBroList;\nstring sw = set.alwaysChosen + \"|\" + set.ignoreCurrentUnlocked;\nfor (int i = 0; i < 4; i++) sw += \"|\" + l[set.selGridInt[i]];\nd.SetData(\"uimtest.swap\", sw);\nd.SetData(\"uimtest.found\", sw);\nstring lv = \"0|1\";\nif (LevelSelectionController.IsCampaignScene && LevelSelectionController.currentCampaign != null) {\n  var all = typeof(Unity_Inspector_Mod.StateModifier).GetField(\"CampaignNames\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null) as string[];\n  for (int i = 0; i < all.Length; i++) if (string.Equals(all[i], LevelSelectionController.currentCampaign.name, System.StringComparison.OrdinalIgnoreCase)) lv = i + \"|\" + LevelSelectionController.CurrentLevelNum;\n}\nd.SetData(\"uimtest.level\", lv);\nd.SetData(\"uimtest.settle\", null);\nreturn \"recorded swap=\" + sw + \" level=\" + d.GetData(\"uimtest.level\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "recorded swap="
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "path": "utility-mod-save-guard",
+        "args": {
+          "recordSlots": "true"
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "recorded utility mod",
+          "guarding "
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 0,
+        "levelIndex": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Level 2"
+        ]
+      },
+      "wait": 7000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "trace_spawns",
+      "params": {
+        "action": "stop"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"tracing\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nstring ids = \",\";\nforeach (var u in UnityEngine.Object.FindObjectsOfType<NetworkedUnit>()) if (u.IsEnemy) ids += u.GetInstanceID() + \",\";\nd.SetData(\"uimtest.u3.baseline\", ids);\nvar c = HeroController.players[0].character;\nc.SetInvulnerable(900f, false, false);\nreturn \"baseline enemies \" + ids + \" bro invulnerable=\" + c.invulnerable;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "bro invulnerable=True"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "System.Type um = null;\nforeach (var a in System.AppDomain.CurrentDomain.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\nvar umEnabled = um.GetField(\"enabled\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);\nvar umSettings = um.GetField(\"settings\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null);\nvar umDisable = umSettings.GetType().GetField(\"disableEnemySpawn\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\nreturn \"utility mod enabled=\" + umEnabled.GetValue(null) + \" disableEnemySpawn=\" + umDisable.GetValue(umSettings);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "enabled=True disableEnemySpawn=True"
+        ]
+      }
+    },
+    {
+      "command": "list_enemies",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"enemySpawnSuppressed\": true",
+          "\"suppressedBy\": [",
+          "\"Utility Mod\"",
+          "\"mapLoaded\": true",
+          "\"name\": \"ZSatan(Clone)\""
+        ]
+      }
+    },
+    {
+      "command": "trace_spawns",
+      "params": {
+        "action": "read"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"tracing\": false",
+          "\"records\": []"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"trace_spawns\\\",\\\"params\\\":{\\\"action\\\":\\\"pause\\\"}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "True|action must be 'start', 'read' or 'stop'"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"trace_spawns\\\",\\\"params\\\":{\\\"action\\\":\\\"start\\\",\\\"targets\\\":[\\\"Nope.Method\\\"]}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "True|Unknown trace target(s): Nope.Method"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "trace_spawns",
+      "params": {
+        "action": "start",
+        "targets": []
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "targets is empty",
+          "\"validTargets\": [",
+          "\"Map.PlaceDoodad\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"trace_spawns\\\",\\\"params\\\":{\\\"action\\\":\\\"start\\\",\\\"targets\\\":\\\"MapController.SpawnMook_Networked\\\"}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "True|targets must be an array of target names"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "trace_spawns",
+      "params": {
+        "action": "read"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"tracing\": false"
+        ]
+      }
+    },
+    {
+      "command": "trace_spawns",
+      "params": {
+        "action": "start"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"tracing\": true",
+          "\"replaced\": false",
+          "\"MapController.SpawnMook_Networked\"",
+          "\"MapController.SpawnMook_Local\"",
+          "\"ProjectileController.SpawnProjectileOverNetwork\""
+        ],
+        "notContains": [
+          "\"Map.PlaceDoodad\""
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Mook",
+        "x": 301,
+        "y": 520
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Networked spawn of 'Mook' returned no instance",
+          "a Harmony prefix from Utility Mod may have suppressed the spawn"
+        ]
+      }
+    },
+    {
+      "command": "trace_spawns",
+      "params": {
+        "action": "read",
+        "since": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"method\": \"MapController.SpawnMook_Networked\"",
+          "\"prefab\": \"ZMook\"",
+          "\"x\": 301",
+          "\"time\": "
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Mook",
+        "x": 620,
+        "y": 500,
+        "ignoreSuppression": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"type\": \"Mook\"",
+          "\"unitType\": \"Mook\"",
+          "\"prefab\": \"ZMook\"",
+          "\"networked\": true",
+          "\"suppressionFound\": true",
+          "\"instanceId\": "
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "System.Type um = null;\nforeach (var a in System.AppDomain.CurrentDomain.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\nvar umEnabled = um.GetField(\"enabled\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);\nvar umSettings = um.GetField(\"settings\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null);\nvar umDisable = umSettings.GetType().GetField(\"disableEnemySpawn\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\nreturn \"utility mod enabled=\" + umEnabled.GetValue(null) + \" disableEnemySpawn=\" + umDisable.GetValue(umSettings);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "enabled=True disableEnemySpawn=True"
+        ]
+      }
+    },
+    {
+      "command": "list_enemies",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"enemySpawnSuppressed\": true",
+          "\"suppressedBy\": [",
+          "\"Utility Mod\"",
+          "\"type\": \"MookTrooper\"",
+          "\"unitType\": \"Mook\"",
+          "\"category\": \"normal\"",
+          "\"isMook\": true",
+          "\"aliveCount\": "
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "suicide mook",
+        "x": 622,
+        "y": 500,
+        "ignoreSuppression": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"type\": \"Suicide Mook\"",
+          "\"unitType\": \"SuicideMook\""
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "SuicideMook",
+        "x": 624,
+        "y": 500,
+        "ignoreSuppression": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"type\": \"Suicide Mook\""
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "  suicide-MOOK! ",
+        "x": 626,
+        "y": 500,
+        "ignoreSuppression": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"type\": \"Suicide Mook\""
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "xx",
+        "x": 600,
+        "y": 500
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Unknown unit type 'xx'",
+          "\"availableTypes\": [",
+          "\"Sand Worm\""
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Bro",
+        "x": 600,
+        "y": 500
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "use swap_bro to change the bro a player has"
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Villager",
+        "x": 640,
+        "y": 500,
+        "ignoreSuppression": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"type\": \"Villager\"",
+          "\"networked\": false"
+        ]
+      }
+    },
+    {
+      "command": "list_enemies",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"type\": \"Villager\"",
+          "\"category\": \"friendly\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar ids = (d.GetData(\"uimtest.u3.baseline\") as string) ?? \",\";\nint n = 0;\nforeach (var u in UnityEngine.Object.FindObjectsOfType<NetworkedUnit>()) {\n  if (!u.IsEnemy || ids.Contains(\",\" + u.GetInstanceID() + \",\")) continue;\n  if (u.transform.parent != null && u.transform.parent.GetComponent<NetworkedUnit>() != null) continue;\n  UnityEngine.Object.Destroy(u.gameObject);\n  n++;\n}\nUnityEngine.Time.timeScale = 1f;\nreturn \"destroyed \" + n + \" spawned units, speed 1\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "destroyed"
+        ]
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"timeScale\": 0"
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Mech",
+        "x": 300,
+        "y": 520,
+        "ignoreSuppression": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"unitType\": \"Mech\"",
+          "\"networked\": true"
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Mook Truck",
+        "x": 300,
+        "y": 520,
+        "ignoreSuppression": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"unitType\": \"MookTruck\"",
+          "\"networked\": false"
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Stealth Tank",
+        "x": 300,
+        "y": 520,
+        "ignoreSuppression": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"unitType\": \"StealthTank\"",
+          "\"networked\": false"
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Terrorkopter",
+        "x": 300,
+        "y": 520,
+        "ignoreSuppression": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"unitType\": \"Terrorkopter\"",
+          "\"networked\": false"
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Satan Miniboss",
+        "x": 300,
+        "y": 520,
+        "ignoreSuppression": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"unitType\": \"SatanMiniboss\"",
+          "\"networked\": true"
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Sand Worm",
+        "x": 300,
+        "y": 520,
+        "ignoreSuppression": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"unitType\": \"SandWorm\"",
+          "\"prefab\": \"Hell BoneWorm\"",
+          "\"networked\": false"
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Facehugger",
+        "x": 300.5,
+        "y": 520.25,
+        "xI": 40,
+        "yI": 60,
+        "ignoreSuppression": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"unitType\": \"Facehugger\"",
+          "\"networked\": false",
+          "\"x\": 300.5",
+          "\"y\": 520.25"
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Screecher",
+        "x": 300,
+        "y": 520,
+        "ignoreSuppression": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"unitType\": \"Screecher\"",
+          "\"prefab\": \"ZAlienMelter\"",
+          "\"networked\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var sb = new System.Text.StringBuilder();\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nforeach (var u in UnityEngine.Object.FindObjectsOfType<Unit>()) {\n  if (!u.name.StartsWith(\"ZAlienFaceHugger\")) continue;\n  sb.Append(u.name + \" at \" + u.X.ToString(ic) + \",\" + u.Y.ToString(ic) + \" xI=\" + u.xI.ToString(ic) + \" yI=\" + u.yI.ToString(ic) + \"; \");\n}\nreturn sb.Length == 0 ? \"no facehugger\" : sb.ToString();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "at 300.5,520.25 xI=40 yI=60"
+        ]
+      }
+    },
+    {
+      "command": "list_enemies",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"category\": \"boss\"",
+          "\"category\": \"vehicle\"",
+          "\"category\": \"worm\"",
+          "\"category\": \"alien\"",
+          "\"type\": \"TankChaingun\"",
+          "\"type\": \"AlienGiantSandWorm\"",
+          "\"unitType\": \"None\"",
+          "\"category\": \"none\""
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Facehugger",
+        "x": -50,
+        "y": 500,
+        "ignoreSuppression": true
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Facehugger",
+        "x": 5000,
+        "y": 5000,
+        "ignoreSuppression": true
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar ids = (d.GetData(\"uimtest.u3.baseline\") as string) ?? \",\";\nint n = 0;\nforeach (var u in UnityEngine.Object.FindObjectsOfType<NetworkedUnit>()) {\n  if (!u.IsEnemy || ids.Contains(\",\" + u.GetInstanceID() + \",\")) continue;\n  if (u.transform.parent != null && u.transform.parent.GetComponent<NetworkedUnit>() != null) continue;\n  UnityEngine.Object.Destroy(u.gameObject);\n  n++;\n}\nUnityEngine.Time.timeScale = 1f;\nreturn \"destroyed \" + n + \" spawned units, speed 1\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "destroyed",
+          "speed 1"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "System.Type um = null;\nforeach (var a in System.AppDomain.CurrentDomain.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\nvar umEnabled = um.GetField(\"enabled\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);\nvar umSettings = um.GetField(\"settings\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null);\nvar umDisable = umSettings.GetType().GetField(\"disableEnemySpawn\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\numEnabled.SetValue(null, true);\numDisable.SetValue(umSettings, false);\nreturn \"utility mod enabled=\" + umEnabled.GetValue(null) + \" disableEnemySpawn=\" + umDisable.GetValue(umSettings);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "enabled=True disableEnemySpawn=False"
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Mook",
+        "x": 630,
+        "y": 500
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"networked\": true"
+        ],
+        "notContains": [
+          "suppressionFound"
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Mook",
+        "x": 632,
+        "y": 500,
+        "ignoreSuppression": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"suppressionFound\": false"
+        ]
+      }
+    },
+    {
+      "command": "list_enemies",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"enemySpawnSuppressed\": false",
+          "\"suppressedBy\": []",
+          "\"enemySpawnPrefixOwners\": [",
+          "\"Utility Mod\"",
+          "\"unitType\": \"Mook\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar ids = (d.GetData(\"uimtest.u3.baseline\") as string) ?? \",\";\nint n = 0;\nforeach (var u in UnityEngine.Object.FindObjectsOfType<NetworkedUnit>()) {\n  if (!u.IsEnemy || ids.Contains(\",\" + u.GetInstanceID() + \",\")) continue;\n  if (u.transform.parent != null && u.transform.parent.GetComponent<NetworkedUnit>() != null) continue;\n  UnityEngine.Object.Destroy(u.gameObject);\n  n++;\n}\nUnityEngine.Time.timeScale = 1f;\nreturn \"destroyed \" + n + \" spawned units, speed 1\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "destroyed"
+        ]
+      }
+    },
+    {
+      "command": "restart_level",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"scene\": \"Test Evan2\""
+        ]
+      },
+      "wait": 7000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "list_enemies",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"enemySpawnSuppressed\": false",
+          "\"suppressedBy\": []",
+          "\"enemySpawnPrefixOwners\": [",
+          "\"Utility Mod\"",
+          "\"name\": \"ZMook"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "System.Type um = null;\nforeach (var a in System.AppDomain.CurrentDomain.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\nvar umEnabled = um.GetField(\"enabled\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);\nvar umSettings = um.GetField(\"settings\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null);\nvar umDisable = umSettings.GetType().GetField(\"disableEnemySpawn\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\numEnabled.SetValue(null, true);\numDisable.SetValue(umSettings, true);\nreturn \"utility mod enabled=\" + umEnabled.GetValue(null) + \" disableEnemySpawn=\" + umDisable.GetValue(umSettings);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "enabled=True disableEnemySpawn=True"
+        ]
+      }
+    },
+    {
+      "command": "restart_level",
+      "params": {},
+      "expect": {
+        "success": true
+      },
+      "wait": 7000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "list_enemies",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"enemySpawnSuppressed\": true",
+          "\"suppressedBy\": [",
+          "\"Utility Mod\""
+        ],
+        "notContains": [
+          "\"name\": \"ZMook"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nstring ids = \",\";\nforeach (var u in UnityEngine.Object.FindObjectsOfType<NetworkedUnit>()) if (u.IsEnemy) ids += u.GetInstanceID() + \",\";\nd.SetData(\"uimtest.u3.baseline\", ids);\nvar c = HeroController.players[0].character;\nc.SetInvulnerable(900f, false, false);\nreturn \"baseline enemies \" + ids + \" bro invulnerable=\" + c.invulnerable;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "bro invulnerable=True"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "System.Type um = null;\nforeach (var a in System.AppDomain.CurrentDomain.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\nvar umEnabled = um.GetField(\"enabled\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);\nvar umSettings = um.GetField(\"settings\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null);\nvar umDisable = umSettings.GetType().GetField(\"disableEnemySpawn\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\numEnabled.SetValue(null, false);\numDisable.SetValue(umSettings, true);\nreturn \"utility mod enabled=\" + umEnabled.GetValue(null) + \" disableEnemySpawn=\" + umDisable.GetValue(umSettings);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "enabled=False disableEnemySpawn=True"
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Mook",
+        "x": 634,
+        "y": 500
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"networked\": true"
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Mook",
+        "x": 636,
+        "y": 500,
+        "ignoreSuppression": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"suppressionFound\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "System.Type um = null;\nforeach (var a in System.AppDomain.CurrentDomain.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\nvar umEnabled = um.GetField(\"enabled\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);\nvar umSettings = um.GetField(\"settings\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null);\nvar umDisable = umSettings.GetType().GetField(\"disableEnemySpawn\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\nreturn \"utility mod enabled=\" + umEnabled.GetValue(null) + \" disableEnemySpawn=\" + umDisable.GetValue(umSettings);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "enabled=False disableEnemySpawn=True"
+        ]
+      }
+    },
+    {
+      "command": "list_enemies",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"enemySpawnSuppressed\": false",
+          "\"suppressedBy\": []",
+          "\"enemySpawnPrefixOwners\": [",
+          "\"Utility Mod\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar ids = (d.GetData(\"uimtest.u3.baseline\") as string) ?? \",\";\nint n = 0;\nforeach (var u in UnityEngine.Object.FindObjectsOfType<NetworkedUnit>()) {\n  if (!u.IsEnemy || ids.Contains(\",\" + u.GetInstanceID() + \",\")) continue;\n  if (u.transform.parent != null && u.transform.parent.GetComponent<NetworkedUnit>() != null) continue;\n  UnityEngine.Object.Destroy(u.gameObject);\n  n++;\n}\nUnityEngine.Time.timeScale = 1f;\nreturn \"destroyed \" + n + \" spawned units, speed 1\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "destroyed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "System.Type um = null;\nforeach (var a in System.AppDomain.CurrentDomain.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\nvar umEnabled = um.GetField(\"enabled\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);\nvar umSettings = um.GetField(\"settings\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null);\nvar umDisable = umSettings.GetType().GetField(\"disableEnemySpawn\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\numEnabled.SetValue(null, true);\numDisable.SetValue(umSettings, true);\nreturn \"utility mod enabled=\" + umEnabled.GetValue(null) + \" disableEnemySpawn=\" + umDisable.GetValue(umSettings);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "enabled=True disableEnemySpawn=True"
+        ]
+      }
+    },
+    {
+      "command": "trace_spawns",
+      "params": {
+        "action": "start",
+        "targets": [
+          "MapController.SpawnMook_Local",
+          "ProjectileController.SpawnProjectileOverNetwork",
+          "Map.PlaceDoodad"
+        ]
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"replaced\": true",
+          "\"previousTargets\": [",
+          "the records so far and the seq counter are kept"
+        ]
+      }
+    },
+    {
+      "command": "trace_spawns",
+      "params": {
+        "action": "read",
+        "since": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"x\": 301",
+          "\"dropped\": {"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var m = MapController.SpawnMook_Local(Map.Instance.activeTheme.mook as Mook, 662f, 500f, 0f, 0f, false, false, false, false, false);\nif (m != null) UnityEngine.Object.Destroy(m.gameObject);\nreturn \"SpawnMook_Local called; spawned=\" + (m != null);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "SpawnMook_Local called"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "Projectile bullet = null;\nforeach (var p in Resources.FindObjectsOfTypeAll<Projectile>()) if (!p.gameObject.scene.IsValid() && p.name == \"Bullet\") bullet = p;\nvar c = HeroController.players[0].character;\nvar s = ProjectileController.SpawnProjectileOverNetwork(bullet, c, c.X, c.Y + 300f, 0f, 500f, false, 0, false, false, 0f);\nreturn \"fired \" + (s == null ? \"nothing\" : s.name) + \" by \" + c.GetType().Name;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "fired Bullet(Clone)"
+        ]
+      }
+    },
+    {
+      "command": "trace_spawns",
+      "params": {
+        "action": "read",
+        "since": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"method\": \"MapController.SpawnMook_Local\"",
+          "\"x\": 662",
+          "\"method\": \"ProjectileController.SpawnProjectileOverNetwork\"",
+          "\"prefab\": \"Bullet\"",
+          "\"firedBy\": \"",
+          "\"playerNum\": 0"
+        ]
+      }
+    },
+    {
+      "command": "trace_spawns",
+      "params": {
+        "action": "read",
+        "since": 1000000000000000
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"records\": []",
+          "\"tracing\": true",
+          "\"seq\": "
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\nvar t = typeof(Unity_Inspector_Mod.StateModifier).Assembly.GetType(\"Unity_Inspector_Mod.SpawnTrace\");\nlong before = (long)t.GetField(\"seq\", fl).GetValue(null);\nvar m = MapController.SpawnMook_Local(Map.Instance.activeTheme.mook as Mook, 663f, 500f, 0f, 0f, false, false, false, false, false);\nif (m != null) UnityEngine.Object.Destroy(m.gameObject);\nvar r = Newtonsoft.Json.Linq.JToken.FromObject(t.GetMethod(\"Read\").Invoke(null, new object[] { before }));\nvar recs = (Newtonsoft.Json.Linq.JArray)r[\"records\"];\nlong first = recs.Count > 0 ? (long)recs[0][\"seq\"] : -1;\nreturn \"read since \" + before + \": \" + recs.Count + \" record(s)\" + (recs.Count == 1 && first == before + 1 ? \", cursor ok\" : \", first seq \" + first);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "1 record(s), cursor ok"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"trace_spawns\\\",\\\"params\\\":{\\\"action\\\":\\\"read\\\",\\\"since\\\":\\\"abc\\\"}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "False|since must be a number, got"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "restart_level",
+      "params": {},
+      "expect": {
+        "success": true
+      },
+      "wait": 7000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var t = typeof(Unity_Inspector_Mod.StateModifier).Assembly.GetType(\"Unity_Inspector_Mod.SpawnTrace\");\nvar r = Newtonsoft.Json.Linq.JToken.FromObject(t.GetMethod(\"Read\").Invoke(null, new object[] { 0L }));\nint n = 0;\nNewtonsoft.Json.Linq.JToken last = null;\nforeach (var rec in (Newtonsoft.Json.Linq.JArray)r[\"records\"]) if ((string)rec[\"method\"] == \"Map.PlaceDoodad\") { n++; last = rec; }\nreturn n + \" doodad record(s); last \" + (last == null ? \"none\" : \"method=\" + last[\"method\"] + \" doodadType=\" + last[\"doodadType\"] + \" gridPosition=\" + last[\"gridPosition\"][\"x\"] + \",\" + last[\"gridPosition\"][\"y\"] + \" variation=\" + last[\"variation\"] + \" seq=\" + last[\"seq\"]);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "method=Map.PlaceDoodad doodadType=",
+          " gridPosition=",
+          " variation="
+        ],
+        "notContains": [
+          "0 doodad record(s)"
+        ]
+      }
+    },
+    {
+      "command": "trace_spawns",
+      "params": {
+        "action": "stop"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"stopped\": true",
+          "\"tracing\": false"
+        ]
+      }
+    },
+    {
+      "command": "trace_spawns",
+      "params": {
+        "action": "read"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"tracing\": false",
+          "\"records\": []",
+          "\"dropped\": {}"
+        ]
+      }
+    },
+    {
+      "command": "trace_spawns",
+      "params": {
+        "action": "start",
+        "targets": [
+          "ProjectileController.SpawnProjectileOverNetwork"
+        ]
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"replaced\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "Projectile bullet = null;\nforeach (var p in Resources.FindObjectsOfTypeAll<Projectile>()) if (!p.gameObject.scene.IsValid() && p.name == \"Bullet\") bullet = p;\nvar c = HeroController.players[0].character;\nint n = 0;\nfor (int i = 0; i < 515; i++) if (ProjectileController.SpawnProjectileOverNetwork(bullet, c, 100f + i, -1000f, 0f, -500f, false, 0, false, false, 0f) != null) n++;\nreturn \"fired \" + n + \" bullets below the map\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "fired 515"
+        ]
+      }
+    },
+    {
+      "command": "trace_spawns",
+      "params": {
+        "action": "read",
+        "since": 1000000000000000
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"ProjectileController.SpawnProjectileOverNetwork\": 3"
+        ]
+      }
+    },
+    {
+      "command": "trace_spawns",
+      "params": {
+        "action": "stop"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 16,
+        "levelIndex": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Challenge_Alien"
+        ]
+      },
+      "wait": 7000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "int inactive = 0, active = 0;\nforeach (var u in Map.units) { if (u == null) continue; if (u.gameObject.activeInHierarchy) active++; else inactive++; }\nreturn \"registered inactive=\" + inactive + \" active=\" + active;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "registered inactive=52"
+        ]
+      }
+    },
+    {
+      "command": "list_enemies",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"count\": 0",
+          "\"mapLoaded\": true",
+          "\"enemySpawnSuppressed\": true",
+          "\"suppressedBy\": [",
+          "\"Utility Mod\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "System.Type um = null;\nforeach (var a in System.AppDomain.CurrentDomain.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\nvar umEnabled = um.GetField(\"enabled\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);\nvar umSettings = um.GetField(\"settings\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null);\nvar umDisable = umSettings.GetType().GetField(\"disableEnemySpawn\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\numEnabled.SetValue(null, false);\numDisable.SetValue(umSettings, true);\nreturn \"utility mod enabled=\" + umEnabled.GetValue(null) + \" disableEnemySpawn=\" + umDisable.GetValue(umSettings);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "enabled=False"
+        ]
+      }
+    },
+    {
+      "command": "list_enemies",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"count\": 0",
+          "\"enemySpawnSuppressed\": false",
+          "\"suppressedBy\": []",
+          "\"enemySpawnPrefixOwners\": [",
+          "\"Utility Mod\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "System.Type um = null;\nforeach (var a in System.AppDomain.CurrentDomain.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\nvar umEnabled = um.GetField(\"enabled\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);\nvar umSettings = um.GetField(\"settings\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null);\nvar umDisable = umSettings.GetType().GetField(\"disableEnemySpawn\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\numEnabled.SetValue(null, true);\numDisable.SetValue(umSettings, true);\nreturn \"utility mod enabled=\" + umEnabled.GetValue(null) + \" disableEnemySpawn=\" + umDisable.GetValue(umSettings);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "enabled=True disableEnemySpawn=True"
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Treasure Mook",
+        "x": 628,
+        "y": 500
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Local spawn of 'Treasure Mook' returned no instance",
+          "a Harmony prefix from Utility Mod may have suppressed the spawn"
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Treasure Mook",
+        "x": 628,
+        "y": 500,
+        "ignoreSuppression": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"type\": \"Treasure Mook\"",
+          "\"unitType\": \"TreasureMook\"",
+          "\"prefab\": \"ZMookTreasure\"",
+          "\"networked\": false",
+          "\"suppressionFound\": true"
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Suicide Bruiser",
+        "x": 624,
+        "y": 500,
+        "ignoreSuppression": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"unitType\": \"SuicideBruiser\"",
+          "\"prefab\": \"ZMookSuicideBigGuy\"",
+          "\"networked\": false"
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Strong Bruiser",
+        "x": 632,
+        "y": 500,
+        "ignoreSuppression": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"unitType\": \"StrongBruiser\"",
+          "\"prefab\": \"ZMookBigGuy Strong\"",
+          "\"networked\": false"
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Brown Mech",
+        "x": 636,
+        "y": 500,
+        "ignoreSuppression": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"unitType\": \"BrownMech\"",
+          "\"prefab\": \"ZMookArmouredGuy Brown\"",
+          "\"networked\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var want = new[] { \"ZMookTreasure(Clone)\", \"ZMookSuicideBigGuy(Clone)\", \"ZMookBigGuy Strong(Clone)\", \"ZMookArmouredGuy Brown(Clone)\" };\nvar sb = new System.Text.StringBuilder();\nint ok = 0;\nforeach (var n in want) {\n  Mook found = null;\n  foreach (var m in UnityEngine.Object.FindObjectsOfType<Mook>()) if (m.name == n) { found = m; break; }\n  if (found == null) { sb.Append(n + \" missing; \"); continue; }\n  bool parented = Map.Instance != null && found.transform.parent == Map.Instance.transform;\n  bool registered = Map.units.Contains(found);\n  if (parented && registered) ok++;\n  sb.Append(n + \" parent=\" + (found.transform.parent == null ? \"none\" : found.transform.parent.name) + \" registered=\" + registered + \"; \");\n}\nreturn ok + \" of \" + want.Length + \" local mooks parented to the map and registered: \" + sb;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "4 of 4 local mooks parented to the map and registered"
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 0,
+        "levelIndex": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Level 2"
+        ]
+      },
+      "wait": 7000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nstring ids = \",\";\nforeach (var u in UnityEngine.Object.FindObjectsOfType<NetworkedUnit>()) if (u.IsEnemy) ids += u.GetInstanceID() + \",\";\nd.SetData(\"uimtest.u3.baseline\", ids);\nvar c = HeroController.players[0].character;\nc.SetInvulnerable(900f, false, false);\nreturn \"baseline enemies \" + ids + \" bro invulnerable=\" + c.invulnerable;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "bro invulnerable=True"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class UimBusyHold : MonoBehaviour\n{\n    public int Ms;\n\n    void Update()\n    {\n        int ms = Ms;\n        Ms = 0;\n        if (ms <= 0) return;\n        Destroy(gameObject);\n        System.Threading.Thread.Sleep(ms);\n    }\n}\nnew GameObject(\"UimBusyHold\").AddComponent<UimBusyHold>().Ms = 7000;\nreturn \"main thread held for 7000 ms from the next frame\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "main thread held for 7000 ms"
+        ]
+      },
+      "wait": 300
+    },
+    {
+      "command": "list_enemies",
+      "params": {},
+      "expect": {
+        "success": false,
+        "contains": [
+          "\"error\": \"Main thread action timed out after 5000ms: the main thread has not finished a frame",
+          "\"mainThreadAnswered\": false"
+        ],
+        "notContains": [
+          "\"mapLoaded\"",
+          "\"count\"",
+          "Internal error",
+          "stackTrace"
+        ]
+      },
+      "wait": 2500
+    },
+    {
+      "command": "list_enemies",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"mapLoaded\": true",
+          "\"name\": \"ZSatan(Clone)\""
+        ],
+        "notContains": [
+          "\"error\""
+        ]
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"timeScale\": 0"
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Xenomorph",
+        "x": 300,
+        "y": 520,
+        "ignoreSuppression": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"unitType\": \"Xenomorph\"",
+          "\"prefab\": \"ZAlienXenomorph\"",
+          "\"networked\": true"
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Hellhound",
+        "x": 300,
+        "y": 520,
+        "ignoreSuppression": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"unitType\": \"Hellhound\"",
+          "\"prefab\": \"ZHellDog\"",
+          "\"networked\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var want = new[] { \"ZAlienXenomorph(Clone) [local]\", \"ZHellDog(Clone) [local]\" };\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nvar sb = new System.Text.StringBuilder();\nint ok = 0;\nforeach (var n in want) {\n  Unit found = null;\n  foreach (var u in UnityEngine.Object.FindObjectsOfType<Unit>()) if (u.name == n) { found = u; break; }\n  if (found == null) { sb.Append(n + \" missing; \"); continue; }\n  bool live = found.gameObject.activeInHierarchy && found.health > 0 && Map.units.Contains(found);\n  if (live) ok++;\n  sb.Append(n + \" active=\" + found.gameObject.activeInHierarchy + \" health=\" + found.health + \" registered=\" + Map.units.Contains(found) + \" at \" + found.X.ToString(ic) + \",\" + found.Y.ToString(ic) + \"; \");\n}\nreturn ok + \" of \" + want.Length + \" units active, alive and registered in theme \" + Map.Instance.activeTheme.name + \": \" + sb;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "2 of 2 units active, alive and registered in theme Themeholder Jungle"
+        ]
+      }
+    },
+    {
+      "command": "list_enemies",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"unitType\": \"Xenomorph\"",
+          "\"category\": \"alien\"",
+          "\"unitType\": \"Hellhound\"",
+          "\"category\": \"hell\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar ids = (d.GetData(\"uimtest.u3.baseline\") as string) ?? \",\";\nint n = 0;\nforeach (var u in UnityEngine.Object.FindObjectsOfType<NetworkedUnit>()) {\n  if (!u.IsEnemy || ids.Contains(\",\" + u.GetInstanceID() + \",\")) continue;\n  if (u.transform.parent != null && u.transform.parent.GetComponent<NetworkedUnit>() != null) continue;\n  UnityEngine.Object.Destroy(u.gameObject);\n  n++;\n}\nUnityEngine.Time.timeScale = 1f;\nreturn \"destroyed \" + n + \" spawned units, speed 1\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "destroyed 2 spawned units",
+          "speed 1"
+        ]
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 0
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Mook",
+        "x": 640,
+        "y": 500,
+        "ignoreSuppression": true
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nMook best = null;\nforeach (var m in UnityEngine.Object.FindObjectsOfType<Mook>()) if (m.health > 0 && (best == null || System.Math.Abs(m.X - 640f) < System.Math.Abs(best.X - 640f))) best = m;\nbest.Damage(best.health + 1, DamageType.Bullet, 0f, 0f, 0, null, best.X, best.Y);\nd.SetData(\"uimtest.corpse\", best.GetInstanceID());\nreturn \"killed \" + best.name + \" health=\" + best.health + \" active=\" + best.gameObject.activeInHierarchy;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "killed",
+          "active=True"
+        ]
+      }
+    },
+    {
+      "command": "list_enemies",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"isAlive\": false",
+          "\"aliveCount\": "
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar id = d.GetData(\"uimtest.corpse\");\nd.SetData(\"uimtest.corpse\", null);\nint gone = 0;\nforeach (var m in UnityEngine.Object.FindObjectsOfType<Mook>()) if (id != null && m.GetInstanceID() == (int)id) { UnityEngine.Object.Destroy(m.gameObject); gone++; }\nUnityEngine.Time.timeScale = 1f;\nreturn \"corpse removed \" + gone + \", speed 1\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "corpse removed 1, speed 1"
+        ]
+      }
+    },
+    {
+      "command": "trace_spawns",
+      "params": {
+        "action": "start"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"tracing\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var owner = typeof(Unity_Inspector_Mod.StateModifier).Assembly.GetType(\"Unity_Inspector_Mod.SpawnTrace\").GetProperty(\"HarmonyId\").GetValue(null, null) as string;\nint n = 0;\nforeach (var name in new[] { \"SpawnMook_Networked\", \"SpawnMook_Local\" }) {\n  var info = HarmonyLib.Harmony.GetPatchInfo(HarmonyLib.AccessTools.Method(typeof(MapController), name));\n  if (info != null) foreach (var p in info.Prefixes) if (p.owner == owner) n++;\n}\nreturn n + \" trace prefixes installed\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "2 trace prefixes installed"
+        ]
+      }
+    },
+    {
+      "command": "trace_spawns",
+      "params": {
+        "action": "stop"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var owner = typeof(Unity_Inspector_Mod.StateModifier).Assembly.GetType(\"Unity_Inspector_Mod.SpawnTrace\").GetProperty(\"HarmonyId\").GetValue(null, null) as string;\nint n = 0;\nforeach (var name in new[] { \"SpawnMook_Networked\", \"SpawnMook_Local\" }) {\n  var info = HarmonyLib.Harmony.GetPatchInfo(HarmonyLib.AccessTools.Method(typeof(MapController), name));\n  if (info != null) foreach (var p in info.Prefixes) if (p.owner == owner) n++;\n}\nreturn n + \" trace prefixes left\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "0 trace prefixes left"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "escape"
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 1000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nstring log = \"\";\ntry { if (PauseController.pauseStatus != PauseStatus.UnPaused) { PauseController.SetPause(PauseStatus.UnPaused); log += \"unpaused \"; } } catch (System.Exception ex) { log += \"unpause failed: \" + ex.Message + \" \"; }\nif (UnityEngine.Time.timeScale != 1f) { UnityEngine.Time.timeScale = 1f; log += \"speed1 \"; }\ntry { if (d.GetData(\"uimtest.joined\") != null && HeroController.IsPlaying(1)) { HeroController.Dropout(1, false); log += \"dropped1 \"; } } catch (System.Exception ex) { log += \"dropout failed: \" + ex.Message + \" \"; }\nd.SetData(\"uimtest.joined\", null);\nvar hc = d.GetData(\"uimtest.ironbro\") as string;\nd.SetData(\"uimtest.ironbro\", null);\ntry {\n  var save = GameState.Instance.currentWorldmapSave;\n  if (hc != null && save != null) {\n    var parts = hc.Split(':');\n    save.worldMapIsHardcoreCampaign = parts[0] == \"1\";\n    save.hardcoreLives = int.Parse(parts[1]);\n    save.hardcoreModeAvailableBros.Clear();\n    foreach (var n in parts[2].Split(',')) if (n.Length > 0) save.hardcoreModeAvailableBros.Add((HeroType)System.Enum.Parse(typeof(HeroType), n));\n    log += \"ironbro-restored \";\n  }\n} catch (System.Exception ex) { log += \"ironbro restore failed: \" + ex.Message + \" \"; }\nvar lk = d.GetData(\"uimtest.lock\") as string;\nd.SetData(\"uimtest.lock\", null);\ntry {\n  if (lk != null) {\n    var fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\n    var t = System.Type.GetType(\"BroMakerLib.Unlocks.BroUnlockManager, BroMakerLib\");\n    var pd = t.GetField(\"progressData\", fl).GetValue(null);\n    var states = pd.GetType().GetProperty(\"BroStates\").GetValue(pd, null) as System.Collections.IDictionary;\n    var st = states[lk];\n    st.GetType().GetProperty(\"IsUnlocked\").SetValue(st, true, null);\n    st.GetType().GetProperty(\"UnlockedDate\").SetValue(st, d.GetData(\"uimtest.lock.date\"), null);\n    var names = t.GetProperty(\"UnlockedBroNames\", fl).GetValue(null, null) as System.Collections.Generic.List<string>;\n    var bros = t.GetProperty(\"UnlockedBros\", fl).GetValue(null, null) as System.Collections.IList;\n    int ni = (int)d.GetData(\"uimtest.lock.ni\"); if (ni < 0 || ni > names.Count) ni = names.Count;\n    if (!names.Contains(lk)) names.Insert(ni, lk);\n    var hero = d.GetData(\"uimtest.lock.hero\");\n    int hi = (int)d.GetData(\"uimtest.lock.hi\"); if (hi < 0 || hi > bros.Count) hi = bros.Count;\n    if (hero != null && !bros.Contains(hero)) bros.Insert(hi, hero);\n    typeof(BroMakerLib.Storages.BroSpawnManager).GetMethod(\"BroStatusChanged\", fl).Invoke(null, null);\n    log += \"unlocked \" + lk + \" \";\n  }\n} catch (System.Exception ex) { log += \"unlock failed: \" + ex.Message + \" \"; }\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); set.selGridInt[i] = ix < 0 ? 0 : ix; }\n    log += \"swap-settings-restored \";\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nvar fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\nstring log = \"\";\nvar ums = d.GetData(\"uimtest.u3.ums\") as string;\nd.SetData(\"uimtest.u3.ums\", null);\ntry {\n  if (ums != null) {\nSystem.Type um = null;\nforeach (var a in System.AppDomain.CurrentDomain.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\nvar umEnabled = um.GetField(\"enabled\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);\nvar umSettings = um.GetField(\"settings\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null);\nvar umDisable = umSettings.GetType().GetField(\"disableEnemySpawn\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\n    var p = ums.Split('|');\n    umEnabled.SetValue(null, p[0] == \"True\");\n    umDisable.SetValue(umSettings, p[1] == \"True\");\n    log += \"utility-mod-restored \";\n  }\n} catch (System.Exception ex) { log += \"utility mod restore failed: \" + ex.Message + \" \"; }\nvar hcs = d.GetData(\"uimtest.u3.hc\") as string;\nd.SetData(\"uimtest.u3.hc\", null);\ntry {\n  if (hcs != null) {\n    var p = hcs.Split('|');\n    HeroController.mustShowHUDS = p[0] == \"True\";\n    typeof(HeroController).GetField(\"doubleBroSevenAvatarCount\", fl).SetValue(null, int.Parse(p[1], ic));\n    var hc = UnityEngine.Object.FindObjectOfType<HeroController>();\n    if (hc != null) {\n      var ifl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance;\n      typeof(HeroController).GetField(\"explosivesCounter\", ifl).SetValue(hc, float.Parse(p[2], ic));\n      var c = p[3].Split(',');\n      hc.infoBarColor = new Color(float.Parse(c[0], ic), float.Parse(c[1], ic), float.Parse(c[2], ic), float.Parse(c[3], ic));\n      var ds = p[4].Split(',');\n      var arr = new float[ds.Length];\n      for (int i = 0; i < ds.Length; i++) arr[i] = float.Parse(ds[i], ic);\n      typeof(HeroController).GetField(\"suicideBroSpawnDelay\", ifl).SetValue(hc, arr);\n    }\n    log += \"hero-controller-restored \";\n  }\n} catch (System.Exception ex) { log += \"hero controller restore failed: \" + ex.Message + \" \"; }\ntry {\n  string dropped = \"\";\n  for (int i = 1; i < 4; i++) if (HeroController.IsPlaying(i)) { HeroController.Dropout(i, false); dropped += i; }\n  if (dropped.Length > 0) log += \"dropped-in-players-removed=\" + dropped + \" \";\n} catch (System.Exception ex) { log += \"drop-in removal failed: \" + ex.Message + \" \"; }\ntry {\n  string[] probes = { \"UimProbe\", \"UimDup\", \"UimInactive\", \"UimConstHolder\", \"UimShotProbe\", \"UimFarProbe\", \"UimBareProbe\", \"UimHiddenProbe\" };\n  int gone = 0;\n  foreach (var tr in Resources.FindObjectsOfTypeAll<Transform>()) {\n    if (tr == null || tr.parent != null || !tr.gameObject.scene.IsValid()) continue;\n    if (System.Array.IndexOf(probes, tr.name) < 0) continue;\n    UnityEngine.Object.DestroyImmediate(tr.gameObject);\n    gone++;\n  }\n  if (gone > 0) log += \"probes-destroyed=\" + gone + \" \";\n} catch (System.Exception ex) { log += \"probe cleanup failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar rec = (d.GetData(\"uimtest.level\") as string) ?? \"0|1\";\nd.SetData(\"uimtest.level\", null);\nvar p = rec.Split('|');\nvar r = Unity_Inspector_Mod.StateModifier.GoToLevel(int.Parse(p[0]), int.Parse(p[1]));\nvar j = Newtonsoft.Json.Linq.JToken.FromObject(r);\nreturn \"loading recorded level \" + rec + \": success=\" + j[\"success\"] + \" \" + j.ToString(Newtonsoft.Json.Formatting.None);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "success=True"
+        ]
+      },
+      "wait": 6000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar f = d.GetData(\"uimtest.found\") as string;\nvar set = Swap_Bros_Mod.Main.settings;\nSwap_Bros_Mod.API.EnsureBroListUpdated();\nvar l = Swap_Bros_Mod.Main.currentBroList;\nstring now = set.alwaysChosen + \"|\" + set.ignoreCurrentUnlocked;\nfor (int i = 0; i < 4; i++) now += \"|\" + l[set.selGridInt[i]];\nd.SetData(\"uimtest.found\", null);\nvar c = HeroController.players[0] == null ? null : HeroController.players[0].character;\nreturn \"settings \" + (now == f ? \"match\" : \"differ: found \" + f + \" now \" + now) + \" speed=\" + UnityEngine.Time.timeScale + \" pause=\" + PauseController.pauseStatus + \" p1=\" + HeroController.IsPlaying(1) + \" hc=\" + GameModeController.IsHardcoreMode + \" locked=\" + !BroMakerLib.Storages.BroSpawnManager.IsBroUnlocked(\"Cobro\") + \" scene=\" + UnityEngine.SceneManagement.SceneManager.GetActiveScene().name + \" level=\" + LevelSelectionController.CurrentLevelNum + \" bro=\" + (c == null ? \"none\" : c.name);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "settings match",
+          "speed=1 ",
+          "pause=UnPaused",
+          "p1=False",
+          "hc=False",
+          "locked=False",
+          "scene=Test Evan2"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "System.Type um = null;\nforeach (var a in System.AppDomain.CurrentDomain.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\nvar umEnabled = um.GetField(\"enabled\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);\nvar umSettings = um.GetField(\"settings\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null);\nvar umDisable = umSettings.GetType().GetField(\"disableEnemySpawn\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\nstring snap = umEnabled.GetValue(null) + \"|\" + umDisable.GetValue(umSettings);\nvar d = System.AppDomain.CurrentDomain;\nvar f = d.GetData(\"uimtest.u3.ums.found\") as string;\nd.SetData(\"uimtest.u3.ums.found\", null);\nreturn \"utility mod \" + (f == null || f == snap ? \"matches\" : \"differs: found \" + f + \" now \" + snap) + \" (\" + snap + \")\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "utility mod matches"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "System.Type um = null;\nforeach (var a in System.AppDomain.CurrentDomain.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\nvar fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\nvar settings = um.GetField(\"settings\", fl).GetValue(null);\nvar mod = um.GetField(\"mod\", fl).GetValue(null);\nvar f = settings.GetType().GetField(\"disableEnemySpawn\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\nbool kept = (bool)f.GetValue(settings);\nvar modArg = new object[] { mod };\nvar sig = new[] { mod.GetType() };\nvar save = settings.GetType().GetMethod(\"Save\", sig);\nstring path = (string)settings.GetType().GetMethod(\"GetPath\", sig).Invoke(settings, modArg);\nf.SetValue(settings, !kept);\nbool liveAfter;\nstring onDisk;\ntry {\n  save.Invoke(settings, modArg);\n  liveAfter = (bool)f.GetValue(settings);\n  onDisk = System.IO.File.ReadAllText(path);\n} finally {\n  f.SetValue(settings, kept);\n  save.Invoke(settings, modArg);\n}\nstring want = \">\" + (kept ? \"true\" : \"false\") + \"</disableEnemySpawn>\";\nbool held = onDisk.Contains(want) && liveAfter == !kept;\nreturn \"save guard \" + (held ? \"held\" : \"failed\") + \": recorded \" + kept + \", in memory after the save \" + liveAfter + \", on disk \" + (onDisk.Contains(want) ? \"the recorded value\" : \"the changed value\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "save guard held"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "utility-mod-save-guard"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    }
+  ],
+  "cleanup": [
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nd.SetData(\"uimtest.found\", null);\nd.SetData(\"uimtest.level\", null);\nd.SetData(\"uimtest.u3.ums.found\", null);\nstring log = \"\";\ntry { if (PauseController.pauseStatus != PauseStatus.UnPaused) { PauseController.SetPause(PauseStatus.UnPaused); log += \"unpaused \"; } } catch (System.Exception ex) { log += \"unpause failed: \" + ex.Message + \" \"; }\nif (UnityEngine.Time.timeScale != 1f) { UnityEngine.Time.timeScale = 1f; log += \"speed1 \"; }\ntry { if (d.GetData(\"uimtest.joined\") != null && HeroController.IsPlaying(1)) { HeroController.Dropout(1, false); log += \"dropped1 \"; } } catch (System.Exception ex) { log += \"dropout failed: \" + ex.Message + \" \"; }\nd.SetData(\"uimtest.joined\", null);\nvar hc = d.GetData(\"uimtest.ironbro\") as string;\nd.SetData(\"uimtest.ironbro\", null);\ntry {\n  var save = GameState.Instance.currentWorldmapSave;\n  if (hc != null && save != null) {\n    var parts = hc.Split(':');\n    save.worldMapIsHardcoreCampaign = parts[0] == \"1\";\n    save.hardcoreLives = int.Parse(parts[1]);\n    save.hardcoreModeAvailableBros.Clear();\n    foreach (var n in parts[2].Split(',')) if (n.Length > 0) save.hardcoreModeAvailableBros.Add((HeroType)System.Enum.Parse(typeof(HeroType), n));\n    log += \"ironbro-restored \";\n  }\n} catch (System.Exception ex) { log += \"ironbro restore failed: \" + ex.Message + \" \"; }\nvar lk = d.GetData(\"uimtest.lock\") as string;\nd.SetData(\"uimtest.lock\", null);\ntry {\n  if (lk != null) {\n    var fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\n    var t = System.Type.GetType(\"BroMakerLib.Unlocks.BroUnlockManager, BroMakerLib\");\n    var pd = t.GetField(\"progressData\", fl).GetValue(null);\n    var states = pd.GetType().GetProperty(\"BroStates\").GetValue(pd, null) as System.Collections.IDictionary;\n    var st = states[lk];\n    st.GetType().GetProperty(\"IsUnlocked\").SetValue(st, true, null);\n    st.GetType().GetProperty(\"UnlockedDate\").SetValue(st, d.GetData(\"uimtest.lock.date\"), null);\n    var names = t.GetProperty(\"UnlockedBroNames\", fl).GetValue(null, null) as System.Collections.Generic.List<string>;\n    var bros = t.GetProperty(\"UnlockedBros\", fl).GetValue(null, null) as System.Collections.IList;\n    int ni = (int)d.GetData(\"uimtest.lock.ni\"); if (ni < 0 || ni > names.Count) ni = names.Count;\n    if (!names.Contains(lk)) names.Insert(ni, lk);\n    var hero = d.GetData(\"uimtest.lock.hero\");\n    int hi = (int)d.GetData(\"uimtest.lock.hi\"); if (hi < 0 || hi > bros.Count) hi = bros.Count;\n    if (hero != null && !bros.Contains(hero)) bros.Insert(hi, hero);\n    typeof(BroMakerLib.Storages.BroSpawnManager).GetMethod(\"BroStatusChanged\", fl).Invoke(null, null);\n    log += \"unlocked \" + lk + \" \";\n  }\n} catch (System.Exception ex) { log += \"unlock failed: \" + ex.Message + \" \"; }\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); set.selGridInt[i] = ix < 0 ? 0 : ix; }\n    log += \"swap-settings-restored \";\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nvar fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\nstring log = \"\";\nvar ums = d.GetData(\"uimtest.u3.ums\") as string;\nd.SetData(\"uimtest.u3.ums\", null);\ntry {\n  if (ums != null) {\nSystem.Type um = null;\nforeach (var a in System.AppDomain.CurrentDomain.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\nvar umEnabled = um.GetField(\"enabled\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);\nvar umSettings = um.GetField(\"settings\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null);\nvar umDisable = umSettings.GetType().GetField(\"disableEnemySpawn\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\n    var p = ums.Split('|');\n    umEnabled.SetValue(null, p[0] == \"True\");\n    umDisable.SetValue(umSettings, p[1] == \"True\");\n    log += \"utility-mod-restored \";\n  }\n} catch (System.Exception ex) { log += \"utility mod restore failed: \" + ex.Message + \" \"; }\nvar hcs = d.GetData(\"uimtest.u3.hc\") as string;\nd.SetData(\"uimtest.u3.hc\", null);\ntry {\n  if (hcs != null) {\n    var p = hcs.Split('|');\n    HeroController.mustShowHUDS = p[0] == \"True\";\n    typeof(HeroController).GetField(\"doubleBroSevenAvatarCount\", fl).SetValue(null, int.Parse(p[1], ic));\n    var hc = UnityEngine.Object.FindObjectOfType<HeroController>();\n    if (hc != null) {\n      var ifl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance;\n      typeof(HeroController).GetField(\"explosivesCounter\", ifl).SetValue(hc, float.Parse(p[2], ic));\n      var c = p[3].Split(',');\n      hc.infoBarColor = new Color(float.Parse(c[0], ic), float.Parse(c[1], ic), float.Parse(c[2], ic), float.Parse(c[3], ic));\n      var ds = p[4].Split(',');\n      var arr = new float[ds.Length];\n      for (int i = 0; i < ds.Length; i++) arr[i] = float.Parse(ds[i], ic);\n      typeof(HeroController).GetField(\"suicideBroSpawnDelay\", ifl).SetValue(hc, arr);\n    }\n    log += \"hero-controller-restored \";\n  }\n} catch (System.Exception ex) { log += \"hero controller restore failed: \" + ex.Message + \" \"; }\ntry {\n  string dropped = \"\";\n  for (int i = 1; i < 4; i++) if (HeroController.IsPlaying(i)) { HeroController.Dropout(i, false); dropped += i; }\n  if (dropped.Length > 0) log += \"dropped-in-players-removed=\" + dropped + \" \";\n} catch (System.Exception ex) { log += \"drop-in removal failed: \" + ex.Message + \" \"; }\ntry {\n  string[] probes = { \"UimProbe\", \"UimDup\", \"UimInactive\", \"UimConstHolder\", \"UimShotProbe\", \"UimFarProbe\", \"UimBareProbe\", \"UimHiddenProbe\" };\n  int gone = 0;\n  foreach (var tr in Resources.FindObjectsOfTypeAll<Transform>()) {\n    if (tr == null || tr.parent != null || !tr.gameObject.scene.IsValid()) continue;\n    if (System.Array.IndexOf(probes, tr.name) < 0) continue;\n    UnityEngine.Object.DestroyImmediate(tr.gameObject);\n    gone++;\n  }\n  if (gone > 0) log += \"probes-destroyed=\" + gone + \" \";\n} catch (System.Exception ex) { log += \"probe cleanup failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "trace_spawns",
+      "params": {
+        "action": "stop"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "utility-mod-save-guard"
+      },
+      "expect": {
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    }
+  ]
+}

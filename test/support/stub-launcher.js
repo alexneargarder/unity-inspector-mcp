@@ -51,6 +51,7 @@ case "$1" in
 esac
 
 if [ "$1" = instance ] && [ "$2" = list ]; then
+  [ -s "$root/slow-list" ] && sleep "$(cat "$root/slow-list")"
   if [ -s "$root/list-fails-after" ]; then
     left=$(cat "$root/list-fails-after")
     [ "$left" -le 0 ] && exit 1
@@ -76,20 +77,24 @@ if [ "$action" = launch ] && [ -f "$root/creates-nothing" ]; then
   exit 3
 fi
 
+# What the server wrote before running this command, so a test can see the ownership claim
+if [ "$action" = launch ]; then
+  if [ -f "$dir/owner.pid" ]; then
+    cp "$dir/owner.pid" "$root/owner-at-launch"
+  else
+    rm -f "$root/owner-at-launch"
+  fi
+fi
+
 # A launcher creates a missing instance as the first act of its launch
 if [ "$action" = launch ] && [ ! -d "$dir" ]; then
+  [ -f "$root/create-late" ] && sleep 1
   mkdir -p "$dir/profile"
 fi
 mkdir -p "$dir"
 
 case "$action" in
   launch)
-    # What the server wrote before running this command, so a test can see the ownership claim
-    if [ -f "$dir/owner.pid" ]; then
-      cp "$dir/owner.pid" "$root/owner-at-launch"
-    else
-      rm -f "$root/owner-at-launch"
-    fi
     # A directory holding no profile is not an instance this launcher can launch into
     if [ ! -d "$dir/profile" ]; then
       stamp "instance profile missing: $dir/profile"
@@ -102,6 +107,7 @@ case "$action" in
     if [ -f "$root/slow-launch" ]; then
       stamp "launch: still setting the instance up"
       sleep 3
+      stamp "launch: set up"
       exit 0
     fi
     if [ -s "$root/cap-refusals" ]; then
@@ -117,6 +123,11 @@ case "$action" in
       sleep 1
       stamp "launch: refused, the display could not be created"
       exit 3
+    fi
+    if [ -f "$root/launch-terminated" ]; then
+      stamp "launch: terminated by SIGTERM (a stop or remove of instance $id sends one)"
+      printf 'Error: launch: terminated by SIGTERM (a stop or remove of instance %s sends one)\\n' "$id" >&2
+      exit 1
     fi
     if [ -f "$root/launch-fails" ]; then
       stamp "launch: refused, the display could not be created"
@@ -137,6 +148,11 @@ case "$action" in
     exit 0
     ;;
   stop)
+    if [ -s "$root/stop-refused" ]; then
+      stamp "$(cat "$root/stop-refused")"
+      printf 'Error: %s\\n' "$(cat "$root/stop-refused")" >&2
+      exit 1
+    fi
     stamp "stop: done"
     rm -f "$dir/game.pid"
     [ -f "$root/stop-fails" ] && exit 4
@@ -185,7 +201,7 @@ export async function seedInstanceDir(instanceDir) {
 export function fakeInspector({ answers = true, hello = 'accept' } = {}) {
   return new Promise((resolve, reject) => {
     const sockets = [];
-    const state = { hello, hellos: [], firstLines: [] };
+    const state = { hello, hellos: [], firstLines: [], lines: [] };
     const server = net.createServer((socket) => {
       sockets.push(socket);
       socket.on('error', () => {});
@@ -200,6 +216,7 @@ export function fakeInspector({ answers = true, hello = 'accept' } = {}) {
       set hello(mode) { state.hello = mode; },
       hellos: state.hellos,
       firstLines: state.firstLines,
+      lines: state.lines,
       close: () => {
         for (const socket of sockets) socket.destroy();
         return new Promise(done => server.close(done));

@@ -1,0 +1,546 @@
+{
+  "name": "Library scripts",
+  "description": "Runs the library scripts in the level that is loaded: trace-method-calls on an overloaded name, whose every overload it patches, and on a method the type inherits, patched on its declaring type for calls on the named type only; spawn-capture and dump-harmony-patches on that inherited method; trace-method-calls and spawn-capture on BroBase's inherited MustBroFailToWin, called on a mook the script spawns beside the bro and deactivates, which neither records, and on player 1's bro, which each records once; inspect-private-fields and watch-field on a private field a base class declares; watch-field's object still active under the pause menu; trace-method-calls and spawn-capture refusing a type the script system compiled; and diff-component on an inactive object named by a path with no leading slash. Needs RocketLib, and a vanilla bro or one derived from BroBase for player 1. Its first step closes a pause menu and destroys the probe and mook an earlier run left; its last step destroys them, and its cleanup closes the pause menu, destroys them and unloads every script it ran.",
+  "steps": [
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nstring log = \"\";\ntry { if (PauseController.pauseStatus != PauseStatus.UnPaused) { PauseController.SetPause(PauseStatus.UnPaused); log += \"unpaused \"; } } catch (System.Exception ex) { log += \"unpause failed: \" + ex.Message + \" \"; }\nforeach (var tr in Resources.FindObjectsOfTypeAll<Transform>())\n  if (tr != null && tr.parent == null && tr.name == \"UimLibInactive\" && tr.gameObject.scene.IsValid()) { UnityEngine.Object.DestroyImmediate(tr.gameObject); log += \"probe-destroyed \"; }\nvar mk = d.GetData(\"uimtest.lib.mook\") as Component;\nd.SetData(\"uimtest.lib.mook\", null);\nif (mk != null) { UnityEngine.Object.Destroy(mk.gameObject); log += \"mook-destroyed \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "path": "trace-method-calls",
+        "args": {
+          "typeName": "ProjectileController",
+          "methodName": "SpawnProjectileLocally",
+          "maxCalls": "1"
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Tracing 3 of 3 overload(s) of ProjectileController.SpawnProjectileLocally",
+          "ProjectileController.SpawnProjectileLocally(Projectile, MonoBehaviour, Single, Single, Single, Single, Int32)"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "trace-method-calls"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "path": "trace-method-calls",
+        "args": {
+          "typeName": "Rambro",
+          "methodName": "UseFire",
+          "maxCalls": "1"
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Tracing 1 of 1 overload(s) of Rambro.UseFire",
+          "Declared on TestVanDammeAnim: only calls on a Rambro are logged.",
+          "TestVanDammeAnim.UseFire()"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "trace-method-calls"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "path": "spawn-capture",
+        "args": {
+          "typeName": "Rambro",
+          "methodName": "UseFire",
+          "captureCount": "1"
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Declared on TestVanDammeAnim: only calls on a Rambro are captured.",
+          "Void UseFire()"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "spawn-capture"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "path": "dump-harmony-patches",
+        "args": {
+          "typeName": "Rambro",
+          "methodName": "UseFire"
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Rambro does not declare UseFire; it is inherited from TestVanDammeAnim",
+          "TestVanDammeAnim.UseFire()"
+        ],
+        "notContains": [
+          "Method not found"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var b = HeroController.players[0] == null ? null : HeroController.players[0].character;\nif (b == null) return \"no bro\";\nvar at = new Vector2(b.X + 48f, b.Y + 16f);\nUnity_Inspector_Mod.StateModifier.SpawnEntity(\"Mook\", at.x, at.y, 0f, 0f, true);\nvar m = UnityEngine.Object.FindObjectsOfType<Mook>().OrderBy(x => Vector2.Distance(new Vector2(x.X, x.Y), at)).FirstOrDefault();\nif (m == null) return \"no mook\";\nm.gameObject.SetActive(false);\nSystem.AppDomain.CurrentDomain.SetData(\"uimtest.lib.mook\", m);\nreturn \"mook \" + m.GetType().Name + \" is BroBase=\" + (m is BroBase) + \", bro \" + b.GetType().Name + \" is BroBase=\" + (b is BroBase);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "is BroBase=False, bro ",
+          "is BroBase=True"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "path": "trace-method-calls",
+        "args": {
+          "typeName": "BroBase",
+          "methodName": "MustBroFailToWin",
+          "maxCalls": "10"
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Declared on TestVanDammeAnim: only calls on a BroBase are logged."
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var u = System.AppDomain.CurrentDomain.GetData(\"uimtest.lib.mook\") as TestVanDammeAnim;\nif (u == null) return \"no mook\";\nint before = TraceMethodCalls.CallCount;\nu.MustBroFailToWin();\nreturn \"calls \" + (TraceMethodCalls.CallCount - before) + \" on \" + u.GetType().Name;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "calls 0 on "
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var u = HeroController.players[0].character;\nif (u == null) return \"no bro\";\nint before = TraceMethodCalls.CallCount;\nu.MustBroFailToWin();\nreturn \"calls \" + (TraceMethodCalls.CallCount - before) + \" on \" + u.GetType().Name;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "calls 1 on "
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "trace-method-calls"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "path": "spawn-capture",
+        "args": {
+          "typeName": "BroBase",
+          "methodName": "MustBroFailToWin",
+          "captureCount": "10"
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Declared on TestVanDammeAnim: only calls on a BroBase are captured."
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var u = System.AppDomain.CurrentDomain.GetData(\"uimtest.lib.mook\") as TestVanDammeAnim;\nif (u == null) return \"no mook\";\nint before = SpawnCapture.Recorded;\nu.MustBroFailToWin();\nreturn \"calls \" + (SpawnCapture.Recorded - before) + \" on \" + u.GetType().Name;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "calls 0 on "
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var u = HeroController.players[0].character;\nif (u == null) return \"no bro\";\nint before = SpawnCapture.Recorded;\nu.MustBroFailToWin();\nreturn \"calls \" + (SpawnCapture.Recorded - before) + \" on \" + u.GetType().Name;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "calls 1 on "
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "spawn-capture"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "path": "inspect-private-fields",
+        "args": {
+          "gameObjectName": "HeroContoller",
+          "componentType": "HeroController"
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Boolean syncronize (NetworkObject) = "
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "path": "watch-field",
+        "args": {
+          "gameObjectName": "HeroContoller",
+          "componentType": "HeroController",
+          "fieldName": "syncronize"
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Watching HeroContoller.HeroController.syncronize (NetworkObject)"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "if (PauseController.instance == null) return \"no PauseController\";\nPauseController.instance.TogglePause();\nreturn \"pause \" + PauseController.pauseStatus;"
+      },
+      "wait": 1000,
+      "expect": {
+        "success": true,
+        "contains": [
+          "pause MenuPause"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var w = Resources.FindObjectsOfTypeAll<FieldWatcher>().FirstOrDefault(x => x != null && x.gameObject.scene.IsValid());\nreturn w == null ? \"no watcher\" : \"watcher active=\" + w.gameObject.activeInHierarchy + \" tag=\" + w.gameObject.tag + \" pause=\" + PauseController.pauseStatus;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "watcher active=True tag=Unpausable pause=MenuPause"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "PauseController.SetPause(PauseStatus.UnPaused);\nreturn \"asked to unpause\";"
+      },
+      "wait": 1000,
+      "expect": {
+        "success": true,
+        "contains": [
+          "asked to unpause"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return \"pause \" + PauseController.pauseStatus;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "pause UnPaused"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "path": "trace-method-calls",
+        "args": {
+          "typeName": "FieldWatcher",
+          "methodName": "Update"
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "FieldWatcher is compiled by the script system; Harmony cannot patch it"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "path": "spawn-capture",
+        "args": {
+          "typeName": "FieldWatcher",
+          "methodName": "Update"
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "FieldWatcher is compiled by the script system; Harmony cannot patch it"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "watch-field"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var g = new GameObject(\"UimLibInactive\");\ng.SetActive(false);\nreturn \"probe active=\" + g.activeSelf;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "probe active=False"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "path": "diff-component",
+        "args": {
+          "path": "UimLibInactive",
+          "component": "Transform",
+          "against": "fresh"
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Transform on /UimLibInactive vs a fresh Transform"
+        ],
+        "notContains": [
+          "GameObject not found"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nstring log = \"\";\ntry { if (PauseController.pauseStatus != PauseStatus.UnPaused) { PauseController.SetPause(PauseStatus.UnPaused); log += \"unpaused \"; } } catch (System.Exception ex) { log += \"unpause failed: \" + ex.Message + \" \"; }\nforeach (var tr in Resources.FindObjectsOfTypeAll<Transform>())\n  if (tr != null && tr.parent == null && tr.name == \"UimLibInactive\" && tr.gameObject.scene.IsValid()) { UnityEngine.Object.DestroyImmediate(tr.gameObject); log += \"probe-destroyed \"; }\nvar mk = d.GetData(\"uimtest.lib.mook\") as Component;\nd.SetData(\"uimtest.lib.mook\", null);\nif (mk != null) { UnityEngine.Object.Destroy(mk.gameObject); log += \"mook-destroyed \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "probe-destroyed",
+          "mook-destroyed"
+        ],
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "path": "trace-method-calls",
+        "args": {
+          "typeName": "Rambro",
+          "methodName": "UseFire",
+          "maxCalls": "1"
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Tracing 1 of 1 overload(s) of Rambro.UseFire"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "path": "dump-harmony-patches",
+        "args": {
+          "typeName": "Rambro",
+          "methodName": "UseFire"
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Prefixes (1)",
+          "script.trace-method-calls"
+        ],
+        "notContains": [
+          "No patches"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "trace-method-calls"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    }
+  ],
+  "cleanup": [
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nstring log = \"\";\ntry { if (PauseController.pauseStatus != PauseStatus.UnPaused) { PauseController.SetPause(PauseStatus.UnPaused); log += \"unpaused \"; } } catch (System.Exception ex) { log += \"unpause failed: \" + ex.Message + \" \"; }\nforeach (var tr in Resources.FindObjectsOfTypeAll<Transform>())\n  if (tr != null && tr.parent == null && tr.name == \"UimLibInactive\" && tr.gameObject.scene.IsValid()) { UnityEngine.Object.DestroyImmediate(tr.gameObject); log += \"probe-destroyed \"; }\nvar mk = d.GetData(\"uimtest.lib.mook\") as Component;\nd.SetData(\"uimtest.lib.mook\", null);\nif (mk != null) { UnityEngine.Object.Destroy(mk.gameObject); log += \"mook-destroyed \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "trace-method-calls"
+      },
+      "expect": {
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "spawn-capture"
+      },
+      "expect": {
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "watch-field"
+      },
+      "expect": {
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "dump-harmony-patches"
+      },
+      "expect": {
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "inspect-private-fields"
+      },
+      "expect": {
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "diff-component"
+      },
+      "expect": {
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    }
+  ]
+}

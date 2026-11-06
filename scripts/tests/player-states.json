@@ -1,0 +1,2405 @@
+{
+  "name": "Player tools across player states",
+  "description": "Probes teleport_player, set_player_health, inspect_player, swap_bro, list_bros, game_state, simulate_input and restart_level with the player alive, at game speed 0, dead with a corpse, between death and respawn, piloting a mech, beside a second co-op player, paused, in the bro intro cutscene CutsceneController.LoadCutScene starts, and in an IronBro campaign; with a revive halo the kill is refused; a bro the start-of-level transport holds, caught and frozen there, and a bro the game holds (hidden) are refused by the slot tools and read as arriving and held; coordinates of 1e30, and fractional integers sent to the mod's message handler directly, are refused; a running slow-motion overriding set_game_speed is reported; a jump and Bro Lee's special at game speed 0 leave the bro, the camera shake and the level's time finite. The kill path is refused for a piloting player, alone and with playerNum -1. Dead and respawning are held with game speed 0. The mech is spawned with ignoreSuppression and piloted through the game's own PilotUnit; the second player joins through HeroController.RequestJoinGame and has no input device; IronBro is the current save slot's worldMapIsHardcoreCampaign flag with three lives and a two-bro roster, restored before anything saves it; with no lives a level load would end the run and wipe the slot. Needs campaign 0 level 1, which its fifth step loads (its ground at x 760-790, y 408, which the bro is put on before the first teleport: the game deactivates blocks off screen, and a bro teleported onto them falls for a frame), Swap Bros Mod and an empty second player slot. With HeroController.BrosReleased false in memory, as Utility Mod's custom spawn leaves it for a whole level, a live bro still teleports and swaps and a hidden one reads as held. Custom spawn skips the start-of-level transport, so it is switched off in memory for the arriving steps, utility-mod-save-guard keeping that off the settings file, and restored. Its first steps undo whatever an earlier run left changed; its last steps drop the second player, end IronBro, restore the speed, the pause, any cutscene left running and the Swap Bros selection, and reload the level it started in. Its cleanup runs the restore again whatever ended the steps: a running cutscene, the second player, IronBro and its lives, the lock, the Swap Bros selection, pause and speed, custom spawn and the released flag.",
+  "steps": [
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "escape"
+      },
+      "until": {
+        "timeout": 90,
+        "interval": 1
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 1000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nstring log = \"\";\ntry { if (CutsceneController.InCutscene && Cutscene.CurrentCutscene != null) { Cutscene.CurrentCutscene.isFinished = true; log += \"cutscene-finished \"; } } catch (System.Exception ex) { log += \"cutscene finish failed: \" + ex.Message + \" \"; }\ntry { if (PauseController.pauseStatus != PauseStatus.UnPaused) { PauseController.SetPause(PauseStatus.UnPaused); log += \"unpaused \"; } } catch (System.Exception ex) { log += \"unpause failed: \" + ex.Message + \" \"; }\nif (UnityEngine.Time.timeScale != 1f) { UnityEngine.Time.timeScale = 1f; log += \"speed1 \"; }\ntry { if (d.GetData(\"uimtest.joined\") != null && HeroController.IsPlaying(1)) { HeroController.Dropout(1, false); log += \"dropped1 \"; } } catch (System.Exception ex) { log += \"dropout failed: \" + ex.Message + \" \"; }\nd.SetData(\"uimtest.joined\", null);\nvar hc = d.GetData(\"uimtest.ironbro\") as string;\nd.SetData(\"uimtest.ironbro\", null);\ntry {\n  var save = GameState.Instance.currentWorldmapSave;\n  if (hc != null && save != null) {\n    var parts = hc.Split(':');\n    save.worldMapIsHardcoreCampaign = parts[0] == \"1\";\n    save.hardcoreLives = int.Parse(parts[1]);\n    save.hardcoreModeAvailableBros.Clear();\n    foreach (var n in parts[2].Split(',')) if (n.Length > 0) save.hardcoreModeAvailableBros.Add((HeroType)System.Enum.Parse(typeof(HeroType), n));\n    log += \"ironbro-restored \";\n  }\n} catch (System.Exception ex) { log += \"ironbro restore failed: \" + ex.Message + \" \"; }\nvar lk = d.GetData(\"uimtest.lock\") as string;\nd.SetData(\"uimtest.lock\", null);\ntry {\n  if (lk != null) {\n    var fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\n    var t = System.Type.GetType(\"BroMakerLib.Unlocks.BroUnlockManager, BroMakerLib\");\n    var pd = t.GetField(\"progressData\", fl).GetValue(null);\n    var states = pd.GetType().GetProperty(\"BroStates\").GetValue(pd, null) as System.Collections.IDictionary;\n    var st = states[lk];\n    st.GetType().GetProperty(\"IsUnlocked\").SetValue(st, true, null);\n    st.GetType().GetProperty(\"UnlockedDate\").SetValue(st, d.GetData(\"uimtest.lock.date\"), null);\n    var names = t.GetProperty(\"UnlockedBroNames\", fl).GetValue(null, null) as System.Collections.Generic.List<string>;\n    var bros = t.GetProperty(\"UnlockedBros\", fl).GetValue(null, null) as System.Collections.IList;\n    int ni = (int)d.GetData(\"uimtest.lock.ni\"); if (ni < 0 || ni > names.Count) ni = names.Count;\n    if (!names.Contains(lk)) names.Insert(ni, lk);\n    var hero = d.GetData(\"uimtest.lock.hero\");\n    int hi = (int)d.GetData(\"uimtest.lock.hi\"); if (hi < 0 || hi > bros.Count) hi = bros.Count;\n    if (hero != null && !bros.Contains(hero)) bros.Insert(hi, hero);\n    typeof(BroMakerLib.Storages.BroSpawnManager).GetMethod(\"BroStatusChanged\", fl).Invoke(null, null);\n    log += \"unlocked \" + lk + \" \";\n  }\n} catch (System.Exception ex) { log += \"unlock failed: \" + ex.Message + \" \"; }\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); set.selGridInt[i] = ix < 0 ? 0 : ix; }\n    log += \"swap-settings-restored \";\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\ntry {\n  var hc0 = HeroController.players != null && HeroController.players[0] != null ? HeroController.players[0].character : null;\n  if (d.GetData(\"uimtest.hiding\") != null && hc0 != null) { hc0.HidingPlayer = false; log += \"hiding-cleared \"; }\n  if (d.GetData(\"uimtest.halo\") != null && hc0 != null) { hc0.willComeBackToLife = false; if (hc0.halo != null) hc0.halo.Hide(); log += \"halo-cleared \"; }\n  if (d.GetData(\"uimtest.timestop\") != null) { typeof(TimeController).GetField(\"timeStopped\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).SetValue(null, false); UnityEngine.Time.timeScale = 1f; log += \"time-effect-cleared \"; }\n} catch (System.Exception ex) { log += \"player flag restore failed: \" + ex.Message + \" \"; }\nvar spawnRec = d.GetData(\"uimtest.spawnsetting\") as string;\nd.SetData(\"uimtest.spawnsetting\", null);\ntry {\n  if (spawnRec != null) {\n    System.Type umType = null;\n    foreach (var a in d.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") umType = a.GetType(\"Utility_Mod.Main\");\n    var umSet = umType.GetField(\"settings\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null);\n    var spawnParts = spawnRec.Split('|');\n    umSet.GetType().GetField(\"changeSpawn\").SetValue(umSet, spawnParts[0] == \"True\");\n    umSet.GetType().GetField(\"changeSpawnFinal\").SetValue(umSet, spawnParts[1] == \"True\");\n    log += \"custom-spawn-restored \";\n  }\n} catch (System.Exception ex) { log += \"custom spawn restore failed: \" + ex.Message + \" \"; }\nvar releasedRec = d.GetData(\"uimtest.released\") as string;\nd.SetData(\"uimtest.released\", null);\ntry { if (releasedRec != null) { HeroController.BrosReleased = releasedRec == \"1\"; log += \"released-restored \"; } } catch (System.Exception ex) { log += \"released restore failed: \" + ex.Message + \" \"; }\nd.SetData(\"uimtest.hiding\", null);\nd.SetData(\"uimtest.halo\", null);\nd.SetData(\"uimtest.timestop\", null);\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar sc = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;\nvar camp = LevelSelectionController.currentCampaign;\nstring key = sc + \"|\" + (camp == null ? \"\" : camp.name) + \"|\" + LevelSelectionController.CurrentLevelNum;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nfloat now = UnityEngine.Time.realtimeSinceStartup;\nvar last = d.GetData(\"uimtest.settle\") as string;\nint cut = last == null ? -1 : last.LastIndexOf('|');\nif (last == null || last.Substring(0, cut) != key) {\n  d.SetData(\"uimtest.settle\", key + \"|\" + now.ToString(ic));\n  return \"waiting: \" + sc + \" just came up\";\n}\nfloat since = now - float.Parse(last.Substring(cut + 1), ic);\nif (sc == \"LoadingScreen\") return \"waiting: loading\";\nif (LevelSelectionController.IsCampaignScene) {\n  if (HeroController.Instance == null || Map.Instance == null || GameModeController.Instance == null) return \"waiting: the level is still being built\";\n  var wt = typeof(GameModeController).GetField(\"winTimer\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\n  if (GameModeController.IsLevelFinished() && (float)wt.GetValue(GameModeController.Instance) < 999999f) return \"waiting: the level finished and is moving on\";\n}\nif (since < 4f) return \"waiting: \" + sc + \" unchanged for \" + since.ToString(\"0.0\", ic) + \" s\";\nreturn \"settled in \" + sc;"
+      },
+      "until": {
+        "timeout": 90,
+        "interval": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "settled in"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar set = Swap_Bros_Mod.Main.settings;\nSwap_Bros_Mod.API.EnsureBroListUpdated();\nvar l = Swap_Bros_Mod.Main.currentBroList;\nstring sw = set.alwaysChosen + \"|\" + set.ignoreCurrentUnlocked;\nfor (int i = 0; i < 4; i++) sw += \"|\" + l[set.selGridInt[i]];\nd.SetData(\"uimtest.swap\", sw);\nd.SetData(\"uimtest.found\", sw);\nstring lv = \"0|1\";\nif (LevelSelectionController.IsCampaignScene && LevelSelectionController.currentCampaign != null) {\n  var all = typeof(Unity_Inspector_Mod.StateModifier).GetField(\"CampaignNames\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null) as string[];\n  for (int i = 0; i < all.Length; i++) if (string.Equals(all[i], LevelSelectionController.currentCampaign.name, System.StringComparison.OrdinalIgnoreCase)) lv = i + \"|\" + LevelSelectionController.CurrentLevelNum;\n}\nd.SetData(\"uimtest.level\", lv);\nd.SetData(\"uimtest.settle\", null);\nreturn \"recorded swap=\" + sw + \" level=\" + d.GetData(\"uimtest.level\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "recorded swap="
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar r = Unity_Inspector_Mod.StateModifier.GoToLevel(0, 1);\nvar j = Newtonsoft.Json.Linq.JToken.FromObject(r);\nreturn \"loading campaign 0 level 1: success=\" + j[\"success\"] + \" \" + j.ToString(Newtonsoft.Json.Formatting.None);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "success=True"
+        ]
+      },
+      "wait": 6000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return HeroController.players[1].character.name;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "NullReferenceException",
+          "\"line\": 1",
+          "\"statement\": \"return HeroController.players[1].character.name;\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nSystem.AppDomain.CurrentDomain.SetData(\"uimtest.z\", c.transform.position.z);\nc.SetXY(768f, 408f);\nc.SetPosition();\nc.xI = 0f;\nc.yI = 0f;\nc.xIBlast = 0f;\nc.yIBlast = 0f;\nreturn \"placed at X=\" + c.X + \" Y=\" + c.Y + \" z=\" + c.transform.position.z;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "placed at X=768 Y=408 z="
+        ]
+      },
+      "wait": 1000
+    },
+    {
+      "command": "teleport_player",
+      "params": {
+        "x": 784,
+        "y": 408
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"x\": 784",
+          "\"y\": 408"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nreturn (System.Math.Abs(c.X - 784f) < 0.6f && System.Math.Abs(c.Y - 408f) < 0.6f ? \"at target\" : \"off target\") + \" X=\" + c.X + \" Y=\" + c.Y + \" z=\" + c.transform.position.z;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "at target X="
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar c = HeroController.players[0].character;\nfloat z = (float)d.GetData(\"uimtest.z\");\nreturn (c.transform.position.z == z ? \"z kept \" : \"z changed from \" + z + \" to \") + c.transform.position.z;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "z kept"
+        ]
+      }
+    },
+    {
+      "command": "teleport_player",
+      "params": {
+        "x": 788,
+        "y": 408,
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"x\": 788",
+          "\"playerNum\": 0"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nreturn (System.Math.Abs(c.X - 788f) < 0.6f && System.Math.Abs(c.Y - 408f) < 0.6f ? \"at target\" : \"off target\") + \" X=\" + c.X + \" Y=\" + c.Y + \" z=\" + c.transform.position.z;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "at target X="
+        ]
+      }
+    },
+    {
+      "command": "teleport_player",
+      "params": {
+        "x": 786.5,
+        "y": 408.25
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"x\": 786.5",
+          "\"y\": 408.25"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nreturn (System.Math.Abs(c.X - 786.5f) < 0.3f && System.Math.Abs(c.Y - 408.25f) < 0.3f ? \"at target\" : \"off target\") + \" X=\" + c.X + \" Y=\" + c.Y + \" z=\" + c.transform.position.z;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "at target X="
+        ]
+      }
+    },
+    {
+      "command": "teleport_player",
+      "params": {
+        "x": 782,
+        "y": 408,
+        "z": 5
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"note\": \"z cannot be set"
+        ],
+        "notContains": [
+          "\"z\": 5"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nreturn (System.Math.Abs(c.X - 782f) < 0.6f && System.Math.Abs(c.Y - 408f) < 0.6f ? \"at target\" : \"off target\") + \" X=\" + c.X + \" Y=\" + c.Y + \" z=\" + c.transform.position.z;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "at target X="
+        ],
+        "notContains": [
+          "z=5"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar c = HeroController.players[0].character;\nfloat z = (float)d.GetData(\"uimtest.z\");\nd.SetData(\"uimtest.z\", null);\nvar p = c.transform.position;\nc.transform.position = new UnityEngine.Vector3(p.x, p.y, z);\nreturn \"z back to \" + z;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "z back to"
+        ]
+      }
+    },
+    {
+      "command": "teleport_player",
+      "params": {
+        "x": 784,
+        "y": 408,
+        "playerNum": 2
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Cannot teleport: no player in slot 2",
+          "\"reason\": \"no-player\""
+        ]
+      }
+    },
+    {
+      "command": "teleport_player",
+      "params": {
+        "x": 784,
+        "y": 408,
+        "playerNum": 7
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Player number must be 0-3"
+        ]
+      }
+    },
+    {
+      "command": "set_player_health",
+      "params": {
+        "health": 500,
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"health\": 500"
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"health\": 500",
+          "\"isAlive\": true"
+        ]
+      }
+    },
+    {
+      "command": "set_player_health",
+      "params": {
+        "health": 5,
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"health\": 5"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nreturn \"health=\" + c.health;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "health=5"
+        ]
+      }
+    },
+    {
+      "command": "set_player_health",
+      "params": {
+        "health": 5,
+        "playerNum": 1
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Cannot set health: no player in slot 1",
+          "\"reason\": \"no-player\""
+        ]
+      }
+    },
+    {
+      "command": "set_player_health",
+      "params": {
+        "health": 5,
+        "playerNum": 7
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Player number must be 0-3"
+        ]
+      }
+    },
+    {
+      "command": "set_player_health",
+      "params": {
+        "health": 1,
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 0
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"timeScale\": 0,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nc.xI = 300f; c.yI = 200f;\nreturn \"xI=\" + c.xI + \" yI=\" + c.yI;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "xI=300"
+        ]
+      }
+    },
+    {
+      "command": "teleport_player",
+      "params": {
+        "x": 784,
+        "y": 408
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nstring r = (c.xI == 0f && c.yI == 0f ? \"velocity cleared\" : \"velocity kept\") + \" xI=\" + c.xI + \" yI=\" + c.yI;\nc.xI = 0f; c.yI = 0f;\nreturn r;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "velocity cleared"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "right",
+        "duration": 300
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"note\": \"Time.timeScale is 0: the bro took the press, but nothing moves until the clock runs\""
+        ],
+        "notContains": [
+          "warning"
+        ]
+      },
+      "wait": 500
+    },
+    {
+      "command": "take_screenshot",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"path\""
+        ]
+      }
+    },
+    {
+      "command": "teleport_player",
+      "params": {
+        "x": -500,
+        "y": -500
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "\"reason\": \"out-of-bounds\"",
+          "is outside the map"
+        ]
+      },
+      "wait": 300
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var pl = HeroController.players[0];\nreturn pl.character == null ? \"slot 0 empty, playing=\" + HeroController.IsPlaying(0) : \"slot 0 holds \" + pl.character.name + \" health=\" + pl.character.health;"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 1
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 5000
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 0
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "set_player_health",
+      "params": {
+        "health": 0,
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"killed\": true",
+          "\"health\": 0"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nreturn c == null ? \"slot empty\" : (c.actionState == ActionState.Dead ? \"dead\" : \"not dead\") + \" state=\" + c.actionState + \" health=\" + c.health;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "dead state=Dead"
+        ]
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 1
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 5000
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 0
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "set_player_health",
+      "params": {
+        "health": -5,
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"killed\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nreturn c == null ? \"slot empty\" : (c.actionState == ActionState.Dead ? \"dead\" : \"not dead\") + \" state=\" + c.actionState + \" health=\" + c.health;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "dead state=Dead"
+        ]
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 1
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 0,
+        "levelIndex": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Level 2"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "\"waited\""
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 6000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nc.SetInvulnerable(0f, false, false);\nc.Damage(c.health + 1, DamageType.Bullet, 0f, 0f, 0, null, c.X, c.Y);\nUnityEngine.Time.timeScale = 0f;\nreturn \"player 0 \" + c.actionState + \" health=\" + c.health;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Dead"
+        ]
+      },
+      "wait": 300
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"isAlive\": false",
+          "\"playerCount\": 1"
+        ]
+      }
+    },
+    {
+      "command": "inspect_player",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"playerIndex\": 0",
+          "\"isAlive\": false"
+        ]
+      }
+    },
+    {
+      "command": "teleport_player",
+      "params": {
+        "x": 784,
+        "y": 408
+      },
+      "expect": {
+        "success": false
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Brommando",
+        "playerNum": 0
+      },
+      "expect": {
+        "success": false,
+        "notContains": [
+          "not found"
+        ],
+        "contains": [
+          "\"reason\": \"player-dead\""
+        ]
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 1
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 0,
+        "levelIndex": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Level 2"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "\"waited\""
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 6000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"levelIndex\": 1",
+          "\"playerCount\": 1",
+          "\"isAlive\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nc.SetInvulnerable(0f, false, false);\nc.Damage(c.health + 1, DamageType.Bullet, 0f, 0f, 0, null, c.X, c.Y);\nUnityEngine.Time.timeScale = 0f;\nreturn \"player 0 \" + c.actionState + \" health=\" + c.health;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Dead"
+        ]
+      },
+      "wait": 300
+    },
+    {
+      "command": "set_player_health",
+      "params": {
+        "health": 1,
+        "playerNum": 0
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Cannot set health: player 0 is dead",
+          "\"reason\": \"player-dead\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nreturn c == null ? \"slot empty\" : (c.actionState == ActionState.Dead ? \"dead\" : \"not dead\") + \" state=\" + c.actionState + \" health=\" + c.health;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "dead state=Dead"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nc.SetInvulnerable(0f, false, false);\nc.Damage(c.health + 1, DamageType.Bullet, 0f, 0f, 0, null, c.X, c.Y);\nUnityEngine.Time.timeScale = 0f;\nreturn \"player 0 \" + c.actionState + \" health=\" + c.health;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Dead"
+        ]
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 1
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "restart_level",
+      "params": {},
+      "expect": {
+        "success": true
+      },
+      "wait": 6000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"playerCount\": 1",
+          "\"isAlive\": true"
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Brommando",
+        "playerNum": 0,
+        "nextSpawn": true
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nc.SetInvulnerable(0f, false, false);\nc.Damage(c.health + 100, DamageType.Explosion, 0f, 0f, 0, null, c.X, c.Y);\nUnityEngine.Time.timeScale = 0f;\nreturn \"player 0 \" + c.actionState;"
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 300
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var pl = HeroController.players[0];\nreturn pl.character == null ? \"slot 0 empty, playing=\" + HeroController.IsPlaying(0) : \"slot 0 holds \" + pl.character.name + \" health=\" + pl.character.health;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "slot 0 empty, playing=True"
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"broName\": null",
+          "\"isAlive\": false"
+        ]
+      }
+    },
+    {
+      "command": "inspect_player",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"playerIndex\": 0"
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Brommando",
+        "playerNum": 0
+      },
+      "expect": {
+        "success": false,
+        "notContains": [
+          "not found"
+        ],
+        "contains": [
+          "\"reason\": \"player-dead\""
+        ]
+      }
+    },
+    {
+      "command": "teleport_player",
+      "params": {
+        "x": 784,
+        "y": 408
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Cannot teleport: player 0 is dead and waiting to respawn",
+          "\"reason\": \"player-dead\""
+        ]
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 1
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 5000
+    },
+    {
+      "command": "list_bros",
+      "params": {
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"currentBro\": \"Brommando\""
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"heroType\": \"Brommando\"",
+          "\"isAlive\": true"
+        ]
+      }
+    },
+    {
+      "command": "teleport_player",
+      "params": {
+        "x": 784,
+        "y": 408
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 300
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 0
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Mech",
+        "x": 790,
+        "y": 420,
+        "ignoreSuppression": true
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 300
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nMookArmouredGuy best = null;\nforeach (var m in UnityEngine.Object.FindObjectsOfType<MookArmouredGuy>()) if (best == null || System.Math.Abs(m.X - c.X) < System.Math.Abs(best.X - c.X)) best = m;\nbool cached = best != null && best.IsEnemy;\nif (best != null) best.PilotUnit(c);\nvar u = c.GetPilottedUnit();\nreturn best == null ? \"no mech\" : (u == null ? \"not piloting\" : \"piloting \" + u.name + \" at \" + u.X + \",\" + u.Y + \" enemy before=\" + cached);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "piloting ZMookArmouredGuy",
+          "enemy before=True"
+        ]
+      },
+      "wait": 300
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "ilot"
+        ]
+      }
+    },
+    {
+      "command": "inspect_player",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"playerIndex\": 0",
+          "ilot"
+        ]
+      }
+    },
+    {
+      "command": "list_enemies",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"mapLoaded\": true"
+        ],
+        "notContains": [
+          "ZMookArmouredGuy"
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Tank Bro",
+        "playerNum": 0
+      },
+      "expect": {
+        "success": false,
+        "notContains": [
+          "not found"
+        ],
+        "contains": [
+          "\"reason\": \"piloting\""
+        ]
+      }
+    },
+    {
+      "command": "set_player_health",
+      "params": {
+        "health": 5,
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nreturn \"health=\" + c.health;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "health=5"
+        ]
+      }
+    },
+    {
+      "command": "set_player_health",
+      "params": {
+        "health": 0,
+        "playerNum": 0
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Cannot set health: player 0 is piloting ZMookArmouredGuy",
+          "\"reason\": \"piloting\""
+        ],
+        "notContains": [
+          "\"killed\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nreturn (c.GetPilottedUnit() != null ? \"still piloting\" : \"not piloting\") + \" health=\" + c.health;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "still piloting health=5"
+        ]
+      }
+    },
+    {
+      "command": "set_player_health",
+      "params": {
+        "health": 0,
+        "playerNum": -1
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "No player's health could be set",
+          "\"reason\": \"piloting\"",
+          "\"skipped\": ["
+        ]
+      }
+    },
+    {
+      "command": "teleport_player",
+      "params": {
+        "x": 760,
+        "y": 408
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Cannot teleport: player 0 is piloting ZMookArmouredGuy",
+          "\"reason\": \"piloting\""
+        ]
+      },
+      "wait": 300
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nvar u = c.GetPilottedUnit();\nreturn u == null ? \"not piloting, bro X=\" + c.X : (System.Math.Abs(u.X - 760f) < 2f ? \"vehicle moved\" : \"vehicle stayed\") + \" mech X=\" + u.X + \" Y=\" + u.Y + \" bro X=\" + c.X;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "vehicle stayed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nvar mech = c.GetPilottedUnit() as MookArmouredGuy;\nif (mech != null) typeof(MookArmouredGuy).GetMethod(\"DisChargePilot\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).Invoke(mech, new object[] { 150f, false, null });\nreturn mech == null ? \"not piloting\" : (c.GetPilottedUnit() == null ? \"discharged\" : \"still piloting\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "discharged"
+        ]
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 1
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 0,
+        "levelIndex": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Level 2"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "\"waited\""
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 6000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "HeroController.RequestJoinGame(1, PID.MyID, \"P2\");\nSystem.AppDomain.CurrentDomain.SetData(\"uimtest.joined\", \"1\");\nreturn \"requested, playing1=\" + HeroController.IsPlaying(1);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "playing1=True"
+        ]
+      },
+      "wait": 3000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var p = HeroController.players[1];\nreturn p != null && p.character != null ? \"joined as \" + p.character.name : \"player 1 has no character\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "joined as"
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"playerCount\": 2",
+          "\"playerIndex\": 1"
+        ]
+      }
+    },
+    {
+      "command": "inspect_player",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"playerIndex\": 0",
+          "\"playerIndex\": 1"
+        ]
+      }
+    },
+    {
+      "command": "list_bros",
+      "params": {
+        "playerNum": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"playerNum\": 1,",
+          "\"currentBros\": ["
+        ]
+      }
+    },
+    {
+      "command": "teleport_player",
+      "params": {
+        "x": 784,
+        "y": 408,
+        "playerNum": -1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"playerNum\": 0",
+          "\"playerNum\": 1",
+          "\"skipped\": [",
+          "\"playerNum\": 2",
+          "\"reason\": \"no-player\""
+        ]
+      }
+    },
+    {
+      "command": "teleport_player",
+      "params": {
+        "x": 760,
+        "y": 408,
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "teleport_player",
+      "params": {
+        "x": 790,
+        "y": 408,
+        "playerNum": 1
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 500
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var a = HeroController.players[0].character; var b = HeroController.players[1].character;\nvar d = System.AppDomain.CurrentDomain;\nd.SetData(\"uimtest.x0\", a.X); d.SetData(\"uimtest.x1\", b.X);\nreturn \"x0=\" + a.X + \" x1=\" + b.X;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "x0="
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "right",
+        "duration": 600,
+        "player": 1
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 900
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var a = HeroController.players[0].character; var b = HeroController.players[1].character;\nvar d = System.AppDomain.CurrentDomain;\nfloat x0 = (float)d.GetData(\"uimtest.x0\"), x1 = (float)d.GetData(\"uimtest.x1\");\nd.SetData(\"uimtest.x0\", null); d.SetData(\"uimtest.x1\", null);\nfloat d0 = a.X - x0, d1 = b.X - x1;\nstring r = \"player 0 dx=\" + d0 + \" player 1 dx=\" + d1;\nreturn (System.Math.Abs(d1) < 2f ? \"player 1 did not move; \" : (System.Math.Abs(d0) < 2f ? \"only player 1 moved; \" : \"player 0 moved too; \")) + r;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "only player 1 moved"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nSystem.AppDomain.CurrentDomain.SetData(\"uimtest.p0id\", c.GetInstanceID());\nreturn \"player 0 is \" + c.name + \" player 1 is \" + HeroController.players[1].character.name;"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Tank Bro",
+        "playerNum": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"heroType\": \"TankBro\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nint id0 = (int)d.GetData(\"uimtest.p0id\");\nd.SetData(\"uimtest.p0id\", null);\nvar a = HeroController.players[0].character; var b = HeroController.players[1].character;\nreturn (a.GetInstanceID() == id0 && b.heroType == HeroType.TankBro ? \"only slot 1 swapped\" : \"slot 0 changed or slot 1 not swapped\") + \" p0=\" + a.name + \" p1=\" + b.name + \" \" + b.heroType;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "only slot 1 swapped"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[1].character;\nc.SetInvulnerable(0f, false, false);\nc.Damage(c.health + 100, DamageType.Explosion, 0f, 0f, 0, null, c.X, c.Y);\nUnityEngine.Time.timeScale = 0f;\nreturn \"player 1 \" + c.actionState;"
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 300
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var pl = HeroController.players[1];\nreturn pl.character == null ? \"slot 1 empty, playing=\" + HeroController.IsPlaying(1) : \"slot 1 holds \" + pl.character.name + \" health=\" + pl.character.health;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "slot 1 empty"
+        ]
+      }
+    },
+    {
+      "command": "set_player_health",
+      "params": {
+        "health": 1,
+        "playerNum": -1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "skipped"
+        ]
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 1
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 5000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "HeroController.Dropout(1, false);\nSystem.AppDomain.CurrentDomain.SetData(\"uimtest.joined\", null);\nreturn \"playing1=\" + HeroController.IsPlaying(1);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "playing1=False"
+        ]
+      },
+      "wait": 500
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "PauseController.SetPause(PauseStatus.MenuPause);\nreturn \"pause=\" + PauseController.pauseStatus + \" speed=\" + UnityEngine.Time.timeScale;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "pause=MenuPause"
+        ]
+      },
+      "wait": 1000
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"pauseState\": \"MenuPause\""
+        ]
+      }
+    },
+    {
+      "command": "take_screenshot",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"path\""
+        ]
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 0.5
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"timeScale\": 1",
+          "\"timeScaleAfterUnpause\": 0.5"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "escape"
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 1000
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"pauseState\": \"UnPaused\"",
+          "\"timeScale\": 0.5"
+        ]
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 1
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "PauseController.SetPause(PauseStatus.MenuPause);\nreturn \"pause=\" + PauseController.pauseStatus + \" speed=\" + UnityEngine.Time.timeScale;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "pause=MenuPause"
+        ]
+      },
+      "wait": 1000
+    },
+    {
+      "command": "restart_level",
+      "params": {},
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return \"pause=\" + PauseController.pauseStatus;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "pause=UnPaused"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "\"waited\""
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 5000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"pauseState\": \"UnPaused\"",
+          "\"isAlive\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "CutsceneController.LoadCutScene(CutsceneName.Rambro, 0f);\nreturn \"cutscene=\" + CutsceneController.InCutscene + \" pause=\" + PauseController.pauseStatus;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "cutscene=True pause=CutscenePause"
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"pauseState\": \"CutscenePause\""
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/HeroContoller",
+        "componentType": "HeroController",
+        "memberPath": "mustShowHUDS"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"memberPath\": \"mustShowHUDS\"",
+          "\"memberType\": \"Boolean\""
+        ]
+      }
+    },
+    {
+      "command": "list_enemies",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"mapLoaded\": true"
+        ],
+        "notContains": [
+          "\"error\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var name = Cutscene.CurrentCutscene.name;\nCutscene.CurrentCutscene.isFinished = true;\nreturn \"cutscene=\" + CutsceneController.InCutscene + \" finished \" + name;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "cutscene=True finished CutsceneCamera"
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 10,
+        "interval": 0.5
+      },
+      "expect": {
+        "contains": [
+          "\"pauseState\": \"UnPaused\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return \"cutscene=\" + CutsceneController.InCutscene;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "cutscene=False"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar s = GameState.Instance.currentWorldmapSave;\nif (d.GetData(\"uimtest.ironbro\") == null) {\n  string rec = (s.worldMapIsHardcoreCampaign ? \"1\" : \"0\") + \":\" + s.hardcoreLives + \":\";\n  foreach (var h in s.hardcoreModeAvailableBros) rec += h + \",\";\n  d.SetData(\"uimtest.ironbro\", rec);\n}\ns.worldMapIsHardcoreCampaign = true;\ns.hardcoreLives = 3;\ns.hardcoreModeAvailableBros.Clear();\ns.hardcoreModeAvailableBros.Add(HeroType.Rambro);\ns.hardcoreModeAvailableBros.Add(HeroType.Brommando);\nSwap_Bros_Mod.API.EnsureBroListUpdated();\nreturn \"hardcore=\" + GameModeController.IsHardcoreMode + \" roster=\" + string.Join(\",\", Swap_Bros_Mod.Main.currentBroList.ToArray());"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "hardcore=True roster=Rambro,Brommando"
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"ironBro\": true"
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Brominator",
+        "playerNum": 0
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "IronBro",
+          "\"reason\": \"unreachable\""
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Brominator",
+        "playerNum": 0,
+        "ignoreUnlocks": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"heroType\": \"Brominator\"",
+          "\"rosterGate\": true",
+          "\"broFrom\": \"vanilla\""
+        ]
+      }
+    },
+    {
+      "command": "set_player_health",
+      "params": {
+        "health": 3,
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"health\": 3"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nreturn \"health=\" + c.health;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "health=3"
+        ]
+      }
+    },
+    {
+      "command": "set_player_health",
+      "params": {
+        "health": 1,
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 0,
+        "levelIndex": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Level 2"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "\"waited\""
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 6000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nreturn \"hardcore=\" + GameModeController.IsHardcoreMode + \" bro=\" + (c == null ? \"none\" : c.name + \" alive=\" + c.IsAlive());"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "hardcore=True",
+          "alive=True"
+        ]
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 0
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar c = HeroController.players[0].character;\nd.SetData(\"uimtest.halo\", \"1\");\nc.SetWillComebackToLife(5f);\nreturn \"halo=\" + c.willComeBackToLife;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "halo=True"
+        ]
+      }
+    },
+    {
+      "command": "set_player_health",
+      "params": {
+        "health": 0
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "revive halo",
+          "\"killed\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar c = HeroController.players[0].character;\nc.willComeBackToLife = false;\ntypeof(TestVanDammeAnim).GetField(\"willComebackToLifeTime\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).SetValue(c, 0f);\nif (c.halo != null) c.halo.Hide();\nd.SetData(\"uimtest.halo\", null);\nreturn \"halo cleared, alive=\" + c.IsAlive();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "halo cleared, alive=True"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar c = HeroController.players[0].character;\nd.SetData(\"uimtest.hiding\", \"1\");\nc.HidingPlayer = true;\nreturn \"hiding=\" + c.HidingPlayer;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "hiding=True"
+        ]
+      }
+    },
+    {
+      "command": "teleport_player",
+      "params": {
+        "x": 784,
+        "y": 408
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "player 0's bro is held by the game",
+          "\"reason\": \"held\""
+        ]
+      }
+    },
+    {
+      "command": "set_player_health",
+      "params": {
+        "health": 5
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "held by the game",
+          "\"reason\": \"held\""
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Brommando"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "\"reason\": \"held\""
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"state\": \"held\"",
+          "\"isAlive\": false"
+        ]
+      }
+    },
+    {
+      "command": "inspect_player",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"state\": \"held\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar c = HeroController.players[0].character;\nc.HidingPlayer = false;\nd.SetData(\"uimtest.hiding\", null);\nreturn \"hiding=\" + c.HidingPlayer;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "hiding=False"
+        ]
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 1
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "teleport_player",
+      "params": {
+        "x": 1e+30,
+        "y": 1e+30
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "\"reason\": \"out-of-bounds\""
+        ]
+      }
+    },
+    {
+      "command": "teleport_player",
+      "params": {
+        "x": -1e+30,
+        "y": 400
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "\"reason\": \"out-of-bounds\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"set_player_health\\\",\\\"params\\\":{\\\"health\\\":0.5}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "False|health must be an integer, got 0.5"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"teleport_player\\\",\\\"params\\\":{\\\"x\\\":784,\\\"y\\\":408,\\\"playerNum\\\":1.5}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "False|playerNum must be an integer, got 1.5"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nd.SetData(\"uimtest.timestop\", \"1\");\nTimeController.StopTime(5f, 0.2f, 0f, false, false, true);\nreturn \"timeScale=\" + UnityEngine.Time.timeScale;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "timeScale=0.2"
+        ]
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 2
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "The game's own time effect set timeScale to 1",
+          "\"gameTimeEffect\""
+        ]
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"timeScale\": 1"
+        ],
+        "notContains": [
+          "gameTimeEffect"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nd.SetData(\"uimtest.timestop\", null);\nreturn \"time effect over\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "time effect over"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nif (d.GetData(\"uimtest.released\") == null) d.SetData(\"uimtest.released\", HeroController.BrosReleased ? \"1\" : \"0\");\nHeroController.BrosReleased = false;\nreturn \"released=\" + HeroController.BrosReleased + \" slot \" + Unity_Inspector_Mod.StateModifier.ReadSlot(0).State;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "released=False slot alive"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "HeroController.BrosReleased = false;\nvar reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"released-check\\\",\\\"method\\\":\\\"teleport_player\\\",\\\"params\\\":{\\\"x\\\":784,\\\"y\\\":408}}\", null));\nvar result = reply[\"result\"] as Newtonsoft.Json.Linq.JObject ?? reply;\nreturn \"released=\" + HeroController.BrosReleased + \" success=\" + result[\"success\"] + \" heroType=\" + result[\"heroType\"] + \" reason=\" + result[\"reason\"] + \" error=\" + result[\"error\"];"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "released=False success=True"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "HeroController.BrosReleased = false;\nvar reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"released-check\\\",\\\"method\\\":\\\"swap_bro\\\",\\\"params\\\":{\\\"broName\\\":\\\"Brommando\\\"}}\", null));\nvar result = reply[\"result\"] as Newtonsoft.Json.Linq.JObject ?? reply;\nreturn \"released=\" + HeroController.BrosReleased + \" success=\" + result[\"success\"] + \" heroType=\" + result[\"heroType\"] + \" reason=\" + result[\"reason\"] + \" error=\" + result[\"error\"];"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "released=False success=True",
+          "heroType=Brommando"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar c = HeroController.players[0].character;\nd.SetData(\"uimtest.hiding\", \"1\");\nc.HidingPlayer = true;\nHeroController.BrosReleased = false;\nreturn \"released=\" + HeroController.BrosReleased + \" slot \" + Unity_Inspector_Mod.StateModifier.ReadSlot(0).State;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "released=False slot held"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "HeroController.BrosReleased = false;\nvar reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"released-check\\\",\\\"method\\\":\\\"swap_bro\\\",\\\"params\\\":{\\\"broName\\\":\\\"Rambro\\\"}}\", null));\nvar result = reply[\"result\"] as Newtonsoft.Json.Linq.JObject ?? reply;\nreturn \"released=\" + HeroController.BrosReleased + \" success=\" + result[\"success\"] + \" heroType=\" + result[\"heroType\"] + \" reason=\" + result[\"reason\"] + \" error=\" + result[\"error\"];"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "released=False success=False",
+          "reason=held",
+          "held by the game"
+        ],
+        "notContains": [
+          "not-released"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar c = HeroController.players[0].character;\nc.HidingPlayer = false;\nd.SetData(\"uimtest.hiding\", null);\nreturn \"hiding=\" + c.HidingPlayer;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "hiding=False"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nif (d.GetData(\"uimtest.states.ums\") == null) d.SetData(\"uimtest.states.ums\", (d.GetData(\"uimtest.u3.ums\") ?? \"absent\") + \"/\" + (d.GetData(\"uimtest.u3.ums.found\") ?? \"absent\"));\nvar rec = d.GetData(\"uimtest.released\") as string;\nd.SetData(\"uimtest.released\", null);\nHeroController.BrosReleased = rec == \"1\";\nreturn \"released restored to \" + rec;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "released restored to"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "path": "utility-mod-save-guard"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nSystem.Type um = null;\nforeach (var a in d.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\nif (um == null) return \"no custom spawn to switch off\";\nvar set = um.GetField(\"settings\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null);\nvar spawn = set.GetType().GetField(\"changeSpawn\");\nvar final = set.GetType().GetField(\"changeSpawnFinal\");\nif (d.GetData(\"uimtest.spawnsetting\") == null) d.SetData(\"uimtest.spawnsetting\", spawn.GetValue(set) + \"|\" + final.GetValue(set));\nspawn.SetValue(set, false);\nfinal.SetValue(set, false);\nreturn \"custom spawn off in memory, was \" + d.GetData(\"uimtest.spawnsetting\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "custom spawn"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var r = Unity_Inspector_Mod.StateModifier.GoToLevel(0, 1);\nreturn Newtonsoft.Json.Linq.JToken.FromObject(r).ToString();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Loading WM_Intro(mouse) - Level 2"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "string state = Unity_Inspector_Mod.StateModifier.ReadSlot(0).State;\nif (state == \"arriving\") UnityEngine.Time.timeScale = 0f;\nreturn \"slot \" + state;"
+      },
+      "until": {
+        "timeout": 60,
+        "interval": 0.25
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "slot arriving"
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"state\": \"arriving\"",
+          "\"isInGame\": true",
+          "\"timeScale\": 0"
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Brommando"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "\"reason\": \"not-released\""
+        ]
+      }
+    },
+    {
+      "command": "teleport_player",
+      "params": {
+        "x": 784,
+        "y": 408
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "player 0's bro has not been released into the level yet",
+          "\"reason\": \"not-released\""
+        ]
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 1
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar rec = d.GetData(\"uimtest.spawnsetting\") as string;\nd.SetData(\"uimtest.spawnsetting\", null);\nif (rec == null) return \"custom spawn left alone\";\nSystem.Type um = null;\nforeach (var a in d.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\nvar set = um.GetField(\"settings\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null);\nvar p = rec.Split('|');\nset.GetType().GetField(\"changeSpawn\").SetValue(set, p[0] == \"True\");\nset.GetType().GetField(\"changeSpawnFinal\").SetValue(set, p[1] == \"True\");\nreturn \"custom spawn restored to \" + rec;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "custom spawn"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "utility-mod-save-guard"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Bro Lee",
+        "ignoreUnlocks": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"heroType\": \"BroLee\""
+        ]
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"timeScale\": 0"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "jump",
+        "duration": 100
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"note\": \"Time.timeScale is 0: the bro took the press, but nothing moves until the clock runs\""
+        ],
+        "notContains": [
+          "warning"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "special",
+        "duration": 150
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"note\": \"Time.timeScale is 0: the bro took the press, but nothing moves until the clock runs\""
+        ],
+        "notContains": [
+          "warning"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nvar stats = SingletonNetObj<StatisticsController>.Instance;\nfloat elapsed = stats != null && stats.currentStats != null ? stats.currentStats.elapsedTime : 0f;\nvar fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\nfloat shake = (float)typeof(SortOfFollow).GetField(\"sinXCounter\", fl).GetValue(null) + (float)typeof(SortOfFollow).GetField(\"sinYCounter\", fl).GetValue(null);\nbool finite = true;\nforeach (float v in new float[] { c.X, c.Y, c.xI, c.yI, c.xIBlast, c.t, elapsed, shake }) if (float.IsNaN(v) || float.IsInfinity(v)) finite = false;\nreturn (finite ? \"all finite\" : \"non-finite\") + \", \" + c.GetType().Name + \" special=\" + c.usingSpecial + \" \" + c.actionState + \" X=\" + c.X + \" Y=\" + c.Y + \" yI=\" + c.yI + \" t=\" + c.t + \" level time \" + elapsed;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "all finite",
+          "BroLee special=True"
+        ]
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"timeScale\": 1"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nvar stats = SingletonNetObj<StatisticsController>.Instance;\nfloat elapsed = stats != null && stats.currentStats != null ? stats.currentStats.elapsedTime : 0f;\nvar fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\nfloat shake = (float)typeof(SortOfFollow).GetField(\"sinXCounter\", fl).GetValue(null) + (float)typeof(SortOfFollow).GetField(\"sinYCounter\", fl).GetValue(null);\nbool finite = true;\nforeach (float v in new float[] { c.X, c.Y, c.xI, c.yI, c.xIBlast, c.t, elapsed, shake }) if (float.IsNaN(v) || float.IsInfinity(v)) finite = false;\nreturn (finite ? \"all finite\" : \"non-finite\") + \", \" + c.GetType().Name + \" special=\" + c.usingSpecial + \" \" + c.actionState + \" X=\" + c.X + \" Y=\" + c.Y + \" yI=\" + c.yI + \" t=\" + c.t + \" level time \" + elapsed;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "all finite"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "escape"
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 1000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nstring log = \"\";\ntry { if (CutsceneController.InCutscene && Cutscene.CurrentCutscene != null) { Cutscene.CurrentCutscene.isFinished = true; log += \"cutscene-finished \"; } } catch (System.Exception ex) { log += \"cutscene finish failed: \" + ex.Message + \" \"; }\ntry { if (PauseController.pauseStatus != PauseStatus.UnPaused) { PauseController.SetPause(PauseStatus.UnPaused); log += \"unpaused \"; } } catch (System.Exception ex) { log += \"unpause failed: \" + ex.Message + \" \"; }\nif (UnityEngine.Time.timeScale != 1f) { UnityEngine.Time.timeScale = 1f; log += \"speed1 \"; }\ntry { if (d.GetData(\"uimtest.joined\") != null && HeroController.IsPlaying(1)) { HeroController.Dropout(1, false); log += \"dropped1 \"; } } catch (System.Exception ex) { log += \"dropout failed: \" + ex.Message + \" \"; }\nd.SetData(\"uimtest.joined\", null);\nvar hc = d.GetData(\"uimtest.ironbro\") as string;\nd.SetData(\"uimtest.ironbro\", null);\ntry {\n  var save = GameState.Instance.currentWorldmapSave;\n  if (hc != null && save != null) {\n    var parts = hc.Split(':');\n    save.worldMapIsHardcoreCampaign = parts[0] == \"1\";\n    save.hardcoreLives = int.Parse(parts[1]);\n    save.hardcoreModeAvailableBros.Clear();\n    foreach (var n in parts[2].Split(',')) if (n.Length > 0) save.hardcoreModeAvailableBros.Add((HeroType)System.Enum.Parse(typeof(HeroType), n));\n    log += \"ironbro-restored \";\n  }\n} catch (System.Exception ex) { log += \"ironbro restore failed: \" + ex.Message + \" \"; }\nvar lk = d.GetData(\"uimtest.lock\") as string;\nd.SetData(\"uimtest.lock\", null);\ntry {\n  if (lk != null) {\n    var fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\n    var t = System.Type.GetType(\"BroMakerLib.Unlocks.BroUnlockManager, BroMakerLib\");\n    var pd = t.GetField(\"progressData\", fl).GetValue(null);\n    var states = pd.GetType().GetProperty(\"BroStates\").GetValue(pd, null) as System.Collections.IDictionary;\n    var st = states[lk];\n    st.GetType().GetProperty(\"IsUnlocked\").SetValue(st, true, null);\n    st.GetType().GetProperty(\"UnlockedDate\").SetValue(st, d.GetData(\"uimtest.lock.date\"), null);\n    var names = t.GetProperty(\"UnlockedBroNames\", fl).GetValue(null, null) as System.Collections.Generic.List<string>;\n    var bros = t.GetProperty(\"UnlockedBros\", fl).GetValue(null, null) as System.Collections.IList;\n    int ni = (int)d.GetData(\"uimtest.lock.ni\"); if (ni < 0 || ni > names.Count) ni = names.Count;\n    if (!names.Contains(lk)) names.Insert(ni, lk);\n    var hero = d.GetData(\"uimtest.lock.hero\");\n    int hi = (int)d.GetData(\"uimtest.lock.hi\"); if (hi < 0 || hi > bros.Count) hi = bros.Count;\n    if (hero != null && !bros.Contains(hero)) bros.Insert(hi, hero);\n    typeof(BroMakerLib.Storages.BroSpawnManager).GetMethod(\"BroStatusChanged\", fl).Invoke(null, null);\n    log += \"unlocked \" + lk + \" \";\n  }\n} catch (System.Exception ex) { log += \"unlock failed: \" + ex.Message + \" \"; }\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); set.selGridInt[i] = ix < 0 ? 0 : ix; }\n    log += \"swap-settings-restored \";\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\ntry {\n  var hc0 = HeroController.players != null && HeroController.players[0] != null ? HeroController.players[0].character : null;\n  if (d.GetData(\"uimtest.hiding\") != null && hc0 != null) { hc0.HidingPlayer = false; log += \"hiding-cleared \"; }\n  if (d.GetData(\"uimtest.halo\") != null && hc0 != null) { hc0.willComeBackToLife = false; if (hc0.halo != null) hc0.halo.Hide(); log += \"halo-cleared \"; }\n  if (d.GetData(\"uimtest.timestop\") != null) { typeof(TimeController).GetField(\"timeStopped\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).SetValue(null, false); UnityEngine.Time.timeScale = 1f; log += \"time-effect-cleared \"; }\n} catch (System.Exception ex) { log += \"player flag restore failed: \" + ex.Message + \" \"; }\nvar spawnRec = d.GetData(\"uimtest.spawnsetting\") as string;\nd.SetData(\"uimtest.spawnsetting\", null);\ntry {\n  if (spawnRec != null) {\n    System.Type umType = null;\n    foreach (var a in d.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") umType = a.GetType(\"Utility_Mod.Main\");\n    var umSet = umType.GetField(\"settings\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null);\n    var spawnParts = spawnRec.Split('|');\n    umSet.GetType().GetField(\"changeSpawn\").SetValue(umSet, spawnParts[0] == \"True\");\n    umSet.GetType().GetField(\"changeSpawnFinal\").SetValue(umSet, spawnParts[1] == \"True\");\n    log += \"custom-spawn-restored \";\n  }\n} catch (System.Exception ex) { log += \"custom spawn restore failed: \" + ex.Message + \" \"; }\nvar releasedRec = d.GetData(\"uimtest.released\") as string;\nd.SetData(\"uimtest.released\", null);\ntry { if (releasedRec != null) { HeroController.BrosReleased = releasedRec == \"1\"; log += \"released-restored \"; } } catch (System.Exception ex) { log += \"released restore failed: \" + ex.Message + \" \"; }\nd.SetData(\"uimtest.hiding\", null);\nd.SetData(\"uimtest.halo\", null);\nd.SetData(\"uimtest.timestop\", null);\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar rec = (d.GetData(\"uimtest.level\") as string) ?? \"0|1\";\nd.SetData(\"uimtest.level\", null);\nvar p = rec.Split('|');\nvar r = Unity_Inspector_Mod.StateModifier.GoToLevel(int.Parse(p[0]), int.Parse(p[1]));\nvar j = Newtonsoft.Json.Linq.JToken.FromObject(r);\nreturn \"loading recorded level \" + rec + \": success=\" + j[\"success\"] + \" \" + j.ToString(Newtonsoft.Json.Formatting.None);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "success=True"
+        ]
+      },
+      "wait": 6000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar f = d.GetData(\"uimtest.found\") as string;\nvar set = Swap_Bros_Mod.Main.settings;\nSwap_Bros_Mod.API.EnsureBroListUpdated();\nvar l = Swap_Bros_Mod.Main.currentBroList;\nstring now = set.alwaysChosen + \"|\" + set.ignoreCurrentUnlocked;\nfor (int i = 0; i < 4; i++) now += \"|\" + l[set.selGridInt[i]];\nd.SetData(\"uimtest.found\", null);\nvar c = HeroController.players[0] == null ? null : HeroController.players[0].character;\nreturn \"settings \" + (now == f ? \"match\" : \"differ: found \" + f + \" now \" + now) + \" speed=\" + UnityEngine.Time.timeScale + \" pause=\" + PauseController.pauseStatus + \" p1=\" + HeroController.IsPlaying(1) + \" hc=\" + GameModeController.IsHardcoreMode + \" locked=\" + !BroMakerLib.Storages.BroSpawnManager.IsBroUnlocked(\"Cobro\") + \" scene=\" + UnityEngine.SceneManagement.SceneManager.GetActiveScene().name + \" level=\" + LevelSelectionController.CurrentLevelNum + \" bro=\" + (c == null ? \"none\" : c.name);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "settings match",
+          "speed=1 ",
+          "pause=UnPaused",
+          "p1=False",
+          "hc=False",
+          "locked=False",
+          "scene=Test Evan2"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar before = d.GetData(\"uimtest.states.ums\") as string;\nd.SetData(\"uimtest.states.ums\", null);\nstring now = (d.GetData(\"uimtest.u3.ums\") ?? \"absent\") + \"/\" + (d.GetData(\"uimtest.u3.ums.found\") ?? \"absent\");\nreturn \"utility mod slots \" + (now == before ? \"as found\" : \"differ: found \" + before + \" now \" + now);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "utility mod slots as found"
+        ]
+      }
+    }
+  ],
+  "cleanup": [
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nd.SetData(\"uimtest.found\", null);\nvar levelRec = d.GetData(\"uimtest.level\") as string;\nd.SetData(\"uimtest.level\", null);\nd.SetData(\"uimtest.states.ums\", null);\nstring log = \"\";\ntry { if (CutsceneController.InCutscene && Cutscene.CurrentCutscene != null) { Cutscene.CurrentCutscene.isFinished = true; log += \"cutscene-finished \"; } } catch (System.Exception ex) { log += \"cutscene finish failed: \" + ex.Message + \" \"; }\ntry { if (PauseController.pauseStatus != PauseStatus.UnPaused) { PauseController.SetPause(PauseStatus.UnPaused); log += \"unpaused \"; } } catch (System.Exception ex) { log += \"unpause failed: \" + ex.Message + \" \"; }\nif (UnityEngine.Time.timeScale != 1f) { UnityEngine.Time.timeScale = 1f; log += \"speed1 \"; }\ntry { if (d.GetData(\"uimtest.joined\") != null && HeroController.IsPlaying(1)) { HeroController.Dropout(1, false); log += \"dropped1 \"; } } catch (System.Exception ex) { log += \"dropout failed: \" + ex.Message + \" \"; }\nd.SetData(\"uimtest.joined\", null);\nvar hc = d.GetData(\"uimtest.ironbro\") as string;\nd.SetData(\"uimtest.ironbro\", null);\ntry {\n  var save = GameState.Instance.currentWorldmapSave;\n  if (hc != null && save != null) {\n    var parts = hc.Split(':');\n    save.worldMapIsHardcoreCampaign = parts[0] == \"1\";\n    save.hardcoreLives = int.Parse(parts[1]);\n    save.hardcoreModeAvailableBros.Clear();\n    foreach (var n in parts[2].Split(',')) if (n.Length > 0) save.hardcoreModeAvailableBros.Add((HeroType)System.Enum.Parse(typeof(HeroType), n));\n    log += \"ironbro-restored \";\n  }\n} catch (System.Exception ex) { log += \"ironbro restore failed: \" + ex.Message + \" \"; }\nvar lk = d.GetData(\"uimtest.lock\") as string;\nd.SetData(\"uimtest.lock\", null);\ntry {\n  if (lk != null) {\n    var fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\n    var t = System.Type.GetType(\"BroMakerLib.Unlocks.BroUnlockManager, BroMakerLib\");\n    var pd = t.GetField(\"progressData\", fl).GetValue(null);\n    var states = pd.GetType().GetProperty(\"BroStates\").GetValue(pd, null) as System.Collections.IDictionary;\n    var st = states[lk];\n    st.GetType().GetProperty(\"IsUnlocked\").SetValue(st, true, null);\n    st.GetType().GetProperty(\"UnlockedDate\").SetValue(st, d.GetData(\"uimtest.lock.date\"), null);\n    var names = t.GetProperty(\"UnlockedBroNames\", fl).GetValue(null, null) as System.Collections.Generic.List<string>;\n    var bros = t.GetProperty(\"UnlockedBros\", fl).GetValue(null, null) as System.Collections.IList;\n    int ni = (int)d.GetData(\"uimtest.lock.ni\"); if (ni < 0 || ni > names.Count) ni = names.Count;\n    if (!names.Contains(lk)) names.Insert(ni, lk);\n    var hero = d.GetData(\"uimtest.lock.hero\");\n    int hi = (int)d.GetData(\"uimtest.lock.hi\"); if (hi < 0 || hi > bros.Count) hi = bros.Count;\n    if (hero != null && !bros.Contains(hero)) bros.Insert(hi, hero);\n    typeof(BroMakerLib.Storages.BroSpawnManager).GetMethod(\"BroStatusChanged\", fl).Invoke(null, null);\n    log += \"unlocked \" + lk + \" \";\n  }\n} catch (System.Exception ex) { log += \"unlock failed: \" + ex.Message + \" \"; }\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); set.selGridInt[i] = ix < 0 ? 0 : ix; }\n    log += \"swap-settings-restored \";\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\ntry {\n  var hc0 = HeroController.players != null && HeroController.players[0] != null ? HeroController.players[0].character : null;\n  if (d.GetData(\"uimtest.hiding\") != null && hc0 != null) { hc0.HidingPlayer = false; log += \"hiding-cleared \"; }\n  if (d.GetData(\"uimtest.halo\") != null && hc0 != null) { hc0.willComeBackToLife = false; if (hc0.halo != null) hc0.halo.Hide(); log += \"halo-cleared \"; }\n  if (d.GetData(\"uimtest.timestop\") != null) { typeof(TimeController).GetField(\"timeStopped\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).SetValue(null, false); UnityEngine.Time.timeScale = 1f; log += \"time-effect-cleared \"; }\n} catch (System.Exception ex) { log += \"player flag restore failed: \" + ex.Message + \" \"; }\nvar spawnRec = d.GetData(\"uimtest.spawnsetting\") as string;\nd.SetData(\"uimtest.spawnsetting\", null);\ntry {\n  if (spawnRec != null) {\n    System.Type umType = null;\n    foreach (var a in d.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") umType = a.GetType(\"Utility_Mod.Main\");\n    var umSet = umType.GetField(\"settings\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null);\n    var spawnParts = spawnRec.Split('|');\n    umSet.GetType().GetField(\"changeSpawn\").SetValue(umSet, spawnParts[0] == \"True\");\n    umSet.GetType().GetField(\"changeSpawnFinal\").SetValue(umSet, spawnParts[1] == \"True\");\n    log += \"custom-spawn-restored \";\n  }\n} catch (System.Exception ex) { log += \"custom spawn restore failed: \" + ex.Message + \" \"; }\nvar releasedRec = d.GetData(\"uimtest.released\") as string;\nd.SetData(\"uimtest.released\", null);\ntry { if (releasedRec != null) { HeroController.BrosReleased = releasedRec == \"1\"; log += \"released-restored \"; } } catch (System.Exception ex) { log += \"released restore failed: \" + ex.Message + \" \"; }\nd.SetData(\"uimtest.hiding\", null);\nd.SetData(\"uimtest.halo\", null);\nd.SetData(\"uimtest.timestop\", null);\nif (levelRec != null) {\n  var lp = levelRec.Split('|');\n  var lr = Unity_Inspector_Mod.StateModifier.GoToLevel(int.Parse(lp[0]), int.Parse(lp[1]));\n  var lj = Newtonsoft.Json.Linq.JToken.FromObject(lr);\n  log += \"loading recorded level \" + levelRec + \": success=\" + lj[\"success\"] + \" \" + lj.ToString(Newtonsoft.Json.Formatting.None);\n}\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      },
+      "wait": 6000
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "utility-mod-save-guard"
+      },
+      "expect": {
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    }
+  ]
+}

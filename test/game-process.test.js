@@ -1,6 +1,7 @@
 import './support/session.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { withNoRealGame } from './support/real-game.js';
 import { spawn } from 'child_process';
 
 import {
@@ -18,13 +19,17 @@ import {
   parseWmicCreationDate,
   resolveLaunchCommand,
   runChild,
+  gameStartTime,
   setProcReader,
+  setWslProbe,
   spawnDetached,
+  LINUX_GAME_COMM,
   STEAM_LAUNCH_URL,
 } from '../lib/game-process.js';
 import { instanceConfig } from '../lib/instance.js';
 import { tokenizeCommand } from '../lib/command-line.js';
 import { fakeProcReader } from './support/fake-proc.js';
+import { NOT_WSL } from './support/session.js';
 
 // The instance launcher is a setting, so the tests name their own program for both settings
 const LAUNCHER = 'game-launcher';
@@ -98,40 +103,30 @@ async function foreignCommandLineNamesGame() {
   return false;
 }
 
-async function skipUnlessNothingNamesTheGame(t) {
-  if (await broforceIsActuallyRunning()) {
-    t.skip('a real Broforce process is running');
-    return true;
-  }
-  if (await foreignCommandLineNamesGame()) {
-    t.skip('a process that is not the game names it on its command line');
-    return true;
-  }
-  return false;
-}
+const somethingNamesTheGame = async () => (await broforceIsActuallyRunning()) || (await foreignCommandLineNamesGame());
 
 test('the process check does not match its own shell', { skip: !isPosix }, async (t) => {
-  if (await skipUnlessNothingNamesTheGame(t)) return;
+  await withNoRealGame(t, somethingNamesTheGame, 'a real Broforce process, or a command line naming the game, is running', async () => {
 
-  const { code, error } = await runChild('sh', ['-c', POSIX_GAME_CHECK_CMD], { capture: false });
-  if (await skipUnlessNothingNamesTheGame(t)) return;
-  assert.equal(error, null);
-  assert.notEqual(code, 0, 'the check must exit non-zero when no game process exists');
+    const { code, error } = await runChild('sh', ['-c', POSIX_GAME_CHECK_CMD], { capture: false });
+    assert.equal(error, null);
+    assert.notEqual(code, 0, 'the check must exit non-zero when no game process exists');
+  });
 });
 
 test('the pid lookups do not match their own shell', { skip: !isPosix }, async (t) => {
-  if (await skipUnlessNothingNamesTheGame(t)) return;
+  await withNoRealGame(t, somethingNamesTheGame, 'a real Broforce process, or a command line naming the game, is running', async () => {
 
-  for (const [name, command] of [
-    ['POSIX_GAME_PID_CMD', POSIX_GAME_PID_CMD],
-    ['POSIX_GAME_CMDLINE_PID_CMD', POSIX_GAME_CMDLINE_PID_CMD],
-  ]) {
-    const { code, stdout, error } = await runChild('sh', ['-c', command]);
-    if (await skipUnlessNothingNamesTheGame(t)) return;
-    assert.equal(error, null, `${name} could not run`);
-    assert.notEqual(code, 0, `${name} must exit non-zero when no game process exists`);
-    assert.equal(stdout.trim(), '', `${name} matched something: ${stdout}`);
-  }
+    for (const [name, command] of [
+      ['POSIX_GAME_PID_CMD', POSIX_GAME_PID_CMD],
+      ['POSIX_GAME_CMDLINE_PID_CMD', POSIX_GAME_CMDLINE_PID_CMD],
+    ]) {
+      const { code, stdout, error } = await runChild('sh', ['-c', command]);
+      assert.equal(error, null, `${name} could not run`);
+      assert.notEqual(code, 0, `${name} must exit non-zero when no game process exists`);
+      assert.equal(stdout.trim(), '', `${name} matched something: ${stdout}`);
+    }
+  });
 });
 
 test('startFromEtimes survives the shapes ps actually emits', () => {
@@ -285,27 +280,43 @@ test('tokenizeCommand handles quoting', () => {
   assert.deepEqual(tokenizeCommand(''), []);
 });
 
-test('BROFORCE_LAUNCH_CMD wins and receives the extra tool args', () => {
-  const launch = resolveLaunchCommand(['--vanilla'], { BROFORCE_LAUNCH_CMD: `${LAUNCHER} --window 800x450` });
+const NO_STEAM = {
+  onPath: async () => false,
+  steamRoots: () => [],
+  registry: async () => null,
+  findSteamGame: async () => ({ gamePath: null, protonPrefix: null, steamapps: null }),
+  profilesRoot: () => '/nonexistent',
+};
+
+test('BROFORCE_LAUNCH_CMD wins and receives the extra tool args', async () => {
+  const launch = await resolveLaunchCommand({ extraArgs: ['-x'] }, { BROFORCE_LAUNCH_CMD: `${LAUNCHER} --window 800x450` });
   assert.equal(launch.source, 'BROFORCE_LAUNCH_CMD');
   assert.equal(launch.command, LAUNCHER);
   // The configured command is run exactly as configured, with the tool's arguments appended
-  assert.deepEqual(launch.args, ['--window', '800x450', '--vanilla']);
+  assert.deepEqual(launch.args, ['--window', '800x450', '-x']);
   assert.deepEqual(launch.ignoredArgs, []);
+  assert.equal(launch.vanilla, false);
+  assert.equal(launch.waitsOnExit, true);
 });
 
-test('the Steam protocol launch is refused while the test marker is in the environment', () => {
-  assert.throws(() => resolveLaunchCommand([], { UNITY_INSPECTOR_TEST: '1' }, 'linux'), /UNITY_INSPECTOR_TEST/);
-  assert.throws(() => resolveLaunchCommand([], { UNITY_INSPECTOR_TEST: '1' }, 'darwin'), /UNITY_INSPECTOR_TEST/);
-  assert.throws(() => resolveLaunchCommand([], { UNITY_INSPECTOR_TEST: '1' }, 'win32'), /UNITY_INSPECTOR_TEST/);
+test('a launch through Steam is refused while the test marker is in the environment', async () => {
+  for (const platform of ['linux', 'darwin', 'win32']) {
+    await assert.rejects(resolveLaunchCommand({}, { UNITY_INSPECTOR_TEST: '1' }, platform, null, NO_STEAM), /UNITY_INSPECTOR_TEST/);
+  }
 
   // A command of the caller's own is what the marker asks for, and is never refused
-  const configured = resolveLaunchCommand([], { UNITY_INSPECTOR_TEST: '1', BROFORCE_LAUNCH_CMD: 'my-launcher' }, 'linux');
+  const configured = await resolveLaunchCommand({}, { UNITY_INSPECTOR_TEST: '1', BROFORCE_LAUNCH_CMD: 'my-launcher' }, 'linux');
   assert.equal(configured.source, 'BROFORCE_LAUNCH_CMD');
 });
 
-test('an agent instance is launched by its own instance mode', () => {
-  const launch = resolveLaunchCommand(
+test('the real Steam lookups are never reached under the test marker, whatever env the test passes', async () => {
+  await assert.rejects(resolveLaunchCommand({}, {}, 'linux'), /Refusing the real Steam .* lookup/);
+  await assert.rejects(resolveLaunchCommand({}, {}, 'win32'), /Refusing the real Steam .* lookup/);
+  await assert.rejects(resolveLaunchCommand({}, {}, 'linux', null, { ...NO_STEAM, onPath: undefined }), /Refusing the real Steam onPath lookup/);
+});
+
+test('an agent instance is launched by its own instance mode', async () => {
+  const launch = await resolveLaunchCommand(
     composeExtraLaunchArgs({ launchArgs: '--window 800x450' }),
     { BROFORCE_LAUNCH_CMD: LAUNCHER },
     'linux',
@@ -313,23 +324,27 @@ test('an agent instance is launched by its own instance mode', () => {
   );
 
   assert.deepEqual(launch.args, ['instance', 'session-one', 'launch', '--window', '800x450']);
+  assert.equal(launch.waitsOnExit, true);
 });
 
-test('an instance and the Steam launch take their own arguments', () => {
-  const instance = resolveLaunchCommand(['--vanilla'], {}, 'linux', agentInstance);
+test('an instance and the Steam launch take their own arguments', async () => {
+  const instance = await resolveLaunchCommand({ vanilla: true }, {}, 'linux', agentInstance);
   assert.deepEqual(instance.args, ['instance', 'session-one', 'launch', '--vanilla']);
+  assert.equal(instance.vanilla, true);
 
   // The Steam protocol launch takes no arguments at all
-  const steam = resolveLaunchCommand(['--vanilla'], {}, 'linux');
-  assert.deepEqual(steam.ignoredArgs, ['--vanilla']);
+  const steam = await resolveLaunchCommand({ vanilla: true, extraArgs: ['-x'] }, {}, 'linux', null, NO_STEAM);
+  assert.deepEqual(steam.ignoredArgs, ['--vanilla', '-x']);
+  assert.equal(steam.vanilla, false);
 });
 
-test('tool launchArgs tokenize and append after the built-in flags', () => {
-  assert.deepEqual(composeExtraLaunchArgs({}), []);
-  assert.deepEqual(composeExtraLaunchArgs({ vanilla: true }), ['--vanilla']);
+test('tool launchArgs tokenize and append after the built-in flags', async () => {
+  assert.deepEqual(composeExtraLaunchArgs({}), { vanilla: false, extraArgs: [] });
+  assert.deepEqual(composeExtraLaunchArgs({ vanilla: true }), { vanilla: true, extraArgs: [] });
 
   const extra = composeExtraLaunchArgs({ vanilla: true, launchArgs: '--window "second arg"' });
-  const launch = resolveLaunchCommand(extra, { BROFORCE_LAUNCH_CMD: `${LAUNCHER} --mode fast` });
+  assert.deepEqual(extra, { vanilla: true, extraArgs: ['--window', 'second arg'] });
+  const launch = await resolveLaunchCommand(extra, { BROFORCE_LAUNCH_CMD: `${LAUNCHER} --mode fast` });
   assert.deepEqual(launch.args, ['--mode', 'fast', '--vanilla', '--window', 'second arg']);
   assert.equal(launch.display, `${LAUNCHER} --mode fast --vanilla --window second arg`);
 
@@ -338,22 +353,25 @@ test('tool launchArgs tokenize and append after the built-in flags', () => {
   assert.throws(() => tokenizeCommand("launcher 'oops"), /Unbalanced single quote/);
 });
 
-test('the default launch is a platform-appropriate Steam protocol launch', () => {
-  const linux = resolveLaunchCommand([], {}, 'linux');
-  assert.equal(linux.command, 'sh');
-  assert.ok(linux.args.join(' ').includes('steam'));
-  assert.ok(linux.args.join(' ').includes('xdg-open'));
-  assert.ok(linux.args.includes(STEAM_LAUNCH_URL));
+test('with no Steam executable, and always on macOS, the launch is the platform\'s Steam protocol launch', async () => {
+  const linux = await resolveLaunchCommand({}, {}, 'linux', null, NO_STEAM);
+  assert.equal(linux.command, 'xdg-open');
+  assert.deepEqual(linux.args, [STEAM_LAUNCH_URL]);
 
-  const win = resolveLaunchCommand([], {}, 'win32');
+  const win = await resolveLaunchCommand({}, {}, 'win32', null, NO_STEAM);
   assert.equal(win.command, 'cmd');
   assert.deepEqual(win.args, ['/c', 'start', '', STEAM_LAUNCH_URL]);
 
-  const mac = resolveLaunchCommand([], {}, 'darwin');
+  const mac = await resolveLaunchCommand({}, {}, 'darwin');
   assert.equal(mac.command, 'open');
   assert.deepEqual(mac.args, [STEAM_LAUNCH_URL]);
 
-  assert.deepEqual(resolveLaunchCommand(['--vanilla'], {}, 'linux').ignoredArgs, ['--vanilla']);
+  for (const launch of [linux, win, mac]) {
+    assert.equal(launch.source, 'steam-protocol');
+    assert.equal(launch.vanilla, false);
+    assert.equal(launch.waitsOnExit, true);
+  }
+  assert.deepEqual((await resolveLaunchCommand({ vanilla: true }, {}, 'linux', null, NO_STEAM)).ignoredArgs, ['--vanilla']);
 });
 
 test('spawnDetached rejects on a missing binary instead of crashing the process', async () => {
@@ -361,4 +379,38 @@ test('spawnDetached rejects on a missing binary instead of crashing the process'
     spawnDetached('definitely-not-a-real-command-xyz', []),
     (err) => err.code === 'ENOENT',
   );
+});
+
+const USER_GAME = { isAgentInstance: false, instancesRoot: '/srv/instances' };
+const RUNNING_USER_GAME = { 900: { comm: LINUX_GAME_COMM, cwd: '/home/player/Broforce' } };
+
+test('a game process that has exited but is not yet reaped is not running', { skip: process.platform !== 'linux' }, async (t) => {
+  setProcReader(fakeProcReader({ 900: { ...RUNNING_USER_GAME[900], state: 'Z' } }));
+  t.after(() => setProcReader(null));
+  assert.equal(await isGameRunning(USER_GAME), false);
+});
+
+test('on WSL the user\'s game is unknown to process detection, and stop_game says it cannot stop it', { skip: process.platform !== 'linux' }, async (t) => {
+  setProcReader(fakeProcReader(RUNNING_USER_GAME));
+  setWslProbe(() => true);
+  t.after(() => { setWslProbe(NOT_WSL); setProcReader(null); });
+
+  assert.equal(await isGameRunning(USER_GAME), null);
+  assert.equal(await gameStartTime(USER_GAME), null);
+  const stop = await killGame({ config: USER_GAME });
+  assert.equal(stop.unknown, true);
+  assert.equal(stop.killed, false);
+  assert.match(stop.detail, /runs on Windows, outside WSL/);
+});
+
+test('UNITY_INSPECTOR_HOST naming another machine leaves the user\'s game unknown; a loopback host does not', { skip: process.platform !== 'linux' }, async (t) => {
+  setProcReader(fakeProcReader(RUNNING_USER_GAME));
+  t.after(() => { delete process.env.UNITY_INSPECTOR_HOST; setProcReader(null); });
+
+  process.env.UNITY_INSPECTOR_HOST = '192.168.1.40';
+  assert.equal(await isGameRunning(USER_GAME), null);
+  assert.match((await killGame({ config: USER_GAME })).detail, /runs on 192\.168\.1\.40 \(UNITY_INSPECTOR_HOST\)/);
+
+  process.env.UNITY_INSPECTOR_HOST = '127.0.0.1';
+  assert.equal(await isGameRunning(USER_GAME), true);
 });

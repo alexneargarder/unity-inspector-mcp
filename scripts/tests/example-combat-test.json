@@ -3,6 +3,34 @@
   "description": "Test combat actions and special abilities",
   "steps": [
     {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar sc = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;\nvar camp = LevelSelectionController.currentCampaign;\nstring key = sc + \"|\" + (camp == null ? \"\" : camp.name) + \"|\" + LevelSelectionController.CurrentLevelNum;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nfloat now = UnityEngine.Time.realtimeSinceStartup;\nvar last = d.GetData(\"uimtest.settle\") as string;\nint cut = last == null ? -1 : last.LastIndexOf('|');\nif (last == null || last.Substring(0, cut) != key) {\n  d.SetData(\"uimtest.settle\", key + \"|\" + now.ToString(ic));\n  return \"waiting: \" + sc + \" just came up\";\n}\nfloat since = now - float.Parse(last.Substring(cut + 1), ic);\nif (sc == \"LoadingScreen\") return \"waiting: loading\";\nif (LevelSelectionController.IsCampaignScene) {\n  if (HeroController.Instance == null || Map.Instance == null || GameModeController.Instance == null) return \"waiting: the level is still being built\";\n  var wt = typeof(GameModeController).GetField(\"winTimer\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\n  if (GameModeController.IsLevelFinished() && (float)wt.GetValue(GameModeController.Instance) < 999999f) return \"waiting: the level finished and is moving on\";\n}\nif (since < 4f) return \"waiting: \" + sc + \" unchanged for \" + since.ToString(\"0.0\", ic) + \" s\";\nreturn \"settled in \" + sc;"
+      },
+      "until": {
+        "timeout": 90,
+        "interval": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "settled in"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nstring lv = \"0|1\";\nif (LevelSelectionController.IsCampaignScene && LevelSelectionController.currentCampaign != null) {\n  var all = typeof(Unity_Inspector_Mod.StateModifier).GetField(\"CampaignNames\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null) as string[];\n  for (int i = 0; i < all.Length; i++) if (string.Equals(all[i], LevelSelectionController.currentCampaign.name, System.StringComparison.OrdinalIgnoreCase)) lv = i + \"|\" + LevelSelectionController.CurrentLevelNum;\n}\nd.SetData(\"uimtest.level\", lv);\nd.SetData(\"uimtest.settle\", null);\nreturn \"recorded level=\" + lv;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "recorded level="
+        ]
+      }
+    },
+    {
       "command": "go_to_level",
       "params": {
         "campaignIndex": 1,
@@ -39,6 +67,45 @@
     },
     {
       "command": "take_screenshot"
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar rec = (d.GetData(\"uimtest.level\") as string) ?? \"0|1\";\nd.SetData(\"uimtest.level\", null);\nvar p = rec.Split('|');\nvar r = Unity_Inspector_Mod.StateModifier.GoToLevel(int.Parse(p[0]), int.Parse(p[1]));\nvar j = Newtonsoft.Json.Linq.JToken.FromObject(r);\nreturn \"loading recorded level \" + rec + \": success=\" + j[\"success\"] + \" \" + j.ToString(Newtonsoft.Json.Formatting.None);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "success=True"
+        ]
+      },
+      "wait": 6000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    }
+  ],
+  "cleanup": [
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar rec = d.GetData(\"uimtest.level\") as string;\nd.SetData(\"uimtest.level\", null);\nif (rec == null) return \"no level recorded\";\nvar p = rec.Split('|');\nvar r = Unity_Inspector_Mod.StateModifier.GoToLevel(int.Parse(p[0]), int.Parse(p[1]));\nvar j = Newtonsoft.Json.Linq.JToken.FromObject(r);\nreturn \"loading recorded level \" + rec + \": success=\" + j[\"success\"] + \" \" + j.ToString(Newtonsoft.Json.Formatting.None);"
+      },
+      "expect": {
+        "notContains": [
+          "failed"
+        ]
+      },
+      "wait": 6000
     }
   ]
 }

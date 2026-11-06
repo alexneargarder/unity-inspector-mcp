@@ -1,6 +1,6 @@
 {
   "name": "Scenario: level run",
-  "description": "Loads a level and drives player 1 through it with the scenario-level-run driver: movement, jump, fire, special, melee, one forced death and a respawn, the level's own mechanics, and the exit, or a timeout with a progress figure. Utility Mod's disableEnemySpawn is off for the run. survey=true scans the level instead of driving it. The default level, Intro level 1, finishes in about 25 s with five enemies, a door, a ladder and a cage.",
+  "description": "Loads a level and drives player 1 through it with the scenario-level-run driver: movement, jump, fire, special, melee, one forced death and a respawn, the level's own mechanics, and the exit, or a timeout with a progress figure. Utility Mod's disableEnemySpawn is off for the run. The run's GameObject must be tagged Unpausable, and 3 s after a run that reaches the exit the level must still be finished with its outcome held, never run (not switching level, its outcome timer held), the save's start level for the territory must be the one it had at the load, and the bro rescues the run makes (Intro level 1's cage on the default route among them) must leave the progress's freed-bro count and unlocked bros as they were. Needs a save slot holding a campaign. survey=true scans the level instead of driving it. The default level, Intro level 1, finishes in about 25 s with five enemies, a door, a ladder and a cage.",
   "args": {
     "campaign": { "default": 0, "description": "Campaign index, as go_to_level takes it" },
     "level": { "default": 0, "description": "Level index within the campaign" },
@@ -10,6 +10,34 @@
   },
   "steps": [
     {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar sc = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;\nvar camp = LevelSelectionController.currentCampaign;\nstring key = sc + \"|\" + (camp == null ? \"\" : camp.name) + \"|\" + LevelSelectionController.CurrentLevelNum;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nfloat now = UnityEngine.Time.realtimeSinceStartup;\nvar last = d.GetData(\"uimtest.settle\") as string;\nint cut = last == null ? -1 : last.LastIndexOf('|');\nif (last == null || last.Substring(0, cut) != key) {\n  d.SetData(\"uimtest.settle\", key + \"|\" + now.ToString(ic));\n  return \"waiting: \" + sc + \" just came up\";\n}\nfloat since = now - float.Parse(last.Substring(cut + 1), ic);\nif (sc == \"LoadingScreen\") return \"waiting: loading\";\nif (LevelSelectionController.IsCampaignScene) {\n  if (HeroController.Instance == null || Map.Instance == null || GameModeController.Instance == null) return \"waiting: the level is still being built\";\n  var wt = typeof(GameModeController).GetField(\"winTimer\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\n  if (GameModeController.IsLevelFinished() && (float)wt.GetValue(GameModeController.Instance) < 999999f) return \"waiting: the level finished and is moving on\";\n}\nif (since < 4f) return \"waiting: \" + sc + \" unchanged for \" + since.ToString(\"0.0\", ic) + \" s\";\nreturn \"settled in \" + sc;"
+      },
+      "until": {
+        "timeout": 90,
+        "interval": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "settled in"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nstring lv = \"0|1\";\nif (LevelSelectionController.IsCampaignScene && LevelSelectionController.currentCampaign != null) {\n  var all = typeof(Unity_Inspector_Mod.StateModifier).GetField(\"CampaignNames\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null) as string[];\n  for (int i = 0; i < all.Length; i++) if (string.Equals(all[i], LevelSelectionController.currentCampaign.name, System.StringComparison.OrdinalIgnoreCase)) lv = i + \"|\" + LevelSelectionController.CurrentLevelNum;\n}\nd.SetData(\"uimtest.level\", lv);\nd.SetData(\"uimtest.settle\", null);\nreturn \"recorded level=\" + lv;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "recorded level="
+        ]
+      }
+    },
+    {
       "command": "execute_script",
       "params": {
         "path": "scenario-level-run",
@@ -18,22 +46,75 @@
       "expect": { "success": true }
     },
     {
+      "command": "execute_code",
+      "params": { "code": "return ScenarioLevelRun.Runner.gameObject.tag;" },
+      "expect": { "contains": ["\"result\": \"Unpausable\""] }
+    },
+    {
       "command": "go_to_level",
       "params": { "campaignIndex": "{{campaign}}", "levelIndex": "{{level}}" }
     },
     {
       "command": "execute_code",
+      "params": { "code": "var d = System.AppDomain.CurrentDomain;\nvar save = GameState.Instance == null ? null : GameState.Instance.currentWorldmapSave;\nvar wp = save == null ? null : save.currentWorldMapProgress;\nvar tp = wp == null || string.IsNullOrEmpty(wp.currentTerritoryName) ? null : wp.GetTerritoryProgress(wp.currentTerritoryName);\nd.SetData(\"uimtest.lr.startlevel\", tp == null ? null : wp.currentTerritoryName + \"|\" + tp.startLevel);\nvar pp = PlayerProgress.Instance;\nd.SetData(\"uimtest.lr.progress\", pp == null ? null : pp.freedBros + \"|\" + System.Linq.Enumerable.Count(System.Linq.Enumerable.Union(pp.unlockedHeroes, pp.yetToBePlayedUnlockedHeroes)));\nreturn \"start level \" + (tp == null ? \"unrecorded\" : wp.currentTerritoryName + \" \" + tp.startLevel) + \", progress \" + (pp == null ? \"unrecorded\" : pp.freedBros + \" freed, \" + System.Linq.Enumerable.Count(System.Linq.Enumerable.Union(pp.unlockedHeroes, pp.yetToBePlayedUnlockedHeroes)) + \" bros unlocked\");" },
+      "expect": { "contains": ["start level ", ", progress "], "notContains": ["unrecorded"] }
+    },
+    {
+      "command": "execute_code",
       "params": { "code": "return ScenarioLevelRun.Done;" },
       "until": { "timeout": 600, "interval": 2 },
-      "expect": { "contains": ["\"result\": true"] }
+      "expect": { "contains": ["\"result\": true"] },
+      "wait": 3000
+    },
+    {
+      "command": "execute_code",
+      "params": { "code": "var d = System.AppDomain.CurrentDomain;\nvar sl = d.GetData(\"uimtest.lr.startlevel\") as string;\nd.SetData(\"uimtest.lr.startlevel\", null);\nstring held;\nif (ScenarioLevelRun.Outcome != \"finished\") held = \"outcome \" + ScenarioLevelRun.Outcome + \", no finish to hold\";\nelse {\n  var g = GameModeController.Instance;\n  var bf = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;\n  bool finished = GameModeController.IsLevelFinished();\n  bool switching = g != null && (bool)typeof(GameModeController).GetField(\"switchingLevel\", bf).GetValue(g);\n  float timer = g == null ? -1f : (float)typeof(GameModeController).GetField(\"winTimer\", bf).GetValue(g);\n  held = finished && !switching && timer > 1000f ? \"outcome held\" : \"outcome ran: levelFinished=\" + finished + \", switchingLevel=\" + switching + \", winTimer=\" + timer;\n}\nstring start;\nif (sl == null) start = \"startLevel unrecorded\";\nelse {\n  var sp = sl.Split('|');\n  var save = GameState.Instance.currentWorldmapSave;\n  var tp = save == null || save.currentWorldMapProgress == null ? null : save.currentWorldMapProgress.GetTerritoryProgress(sp[0]);\n  start = tp == null ? \"startLevel unreadable\" : tp.startLevel.ToString() == sp[1] ? \"startLevel kept\" : \"startLevel changed from \" + sp[1] + \" to \" + tp.startLevel;\n}\nvar pr = d.GetData(\"uimtest.lr.progress\") as string;\nd.SetData(\"uimtest.lr.progress\", null);\nvar pq = PlayerProgress.Instance;\nstring now = pq == null ? null : pq.freedBros + \"|\" + System.Linq.Enumerable.Count(System.Linq.Enumerable.Union(pq.unlockedHeroes, pq.yetToBePlayedUnlockedHeroes));\nstring progress = pr == null || now == null ? \"progress unrecorded\" : pr == now ? \"progress kept\" : \"progress changed: freed|unlocked from \" + pr + \" to \" + now;\nreturn held + \"; \" + start + \"; \" + progress;" },
+      "expect": { "contains": ["startLevel kept", "progress kept"], "notContains": ["outcome ran"] }
     },
     {
       "command": "execute_code",
       "params": { "code": "return ScenarioLevelRun.ReportJson;" },
       "report": true
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar rec = (d.GetData(\"uimtest.level\") as string) ?? \"0|1\";\nd.SetData(\"uimtest.level\", null);\nvar p = rec.Split('|');\nvar r = Unity_Inspector_Mod.StateModifier.GoToLevel(int.Parse(p[0]), int.Parse(p[1]));\nvar j = Newtonsoft.Json.Linq.JToken.FromObject(r);\nreturn \"loading recorded level \" + rec + \": success=\" + j[\"success\"] + \" \" + j.ToString(Newtonsoft.Json.Formatting.None);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "success=True"
+        ]
+      },
+      "wait": 6000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
     }
   ],
   "cleanup": [
-    { "command": "unload_script", "params": { "name": "scenario-level-run" } }
+    { "command": "unload_script", "params": { "name": "scenario-level-run" } },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar rec = d.GetData(\"uimtest.level\") as string;\nd.SetData(\"uimtest.level\", null);\nif (rec == null) return \"no level recorded\";\nvar p = rec.Split('|');\nvar r = Unity_Inspector_Mod.StateModifier.GoToLevel(int.Parse(p[0]), int.Parse(p[1]));\nvar j = Newtonsoft.Json.Linq.JToken.FromObject(r);\nreturn \"loading recorded level \" + rec + \": success=\" + j[\"success\"] + \" \" + j.ToString(Newtonsoft.Json.Formatting.None);"
+      },
+      "expect": {
+        "notContains": [
+          "failed"
+        ]
+      },
+      "wait": 6000
+    }
   ]
 }

@@ -90,9 +90,10 @@ test('a wrapper whose stderr died with its parent still stops the instance on st
   w.proc.stdin.end();
   const code = await done;
   const elapsed = Date.now() - started;
+  assert.ok(await w.waitForReaper(), 'the reaper never finished');
 
   assert.equal(code, 0);
-  assert.ok(elapsed < 5000, `the wrapper took ${elapsed}ms to exit`);
+  assert.ok(elapsed < 1500, `the wrapper took ${elapsed}ms to exit`);
   assert.deepEqual((await launcherCalls()).filter((call) => call === STOP_CALL), [STOP_CALL]);
   await assertQuietLog(w, 'stdin end');
 });
@@ -109,9 +110,10 @@ test('a wrapper whose stderr died with its parent still stops the instance on SI
   w.proc.kill('SIGTERM');
   const code = await done;
   const elapsed = Date.now() - started;
+  assert.ok(await w.waitForReaper(), 'the reaper never finished');
 
   assert.equal(code, 0);
-  assert.ok(elapsed < 2000, `the wrapper took ${elapsed}ms to exit`);
+  assert.ok(elapsed < 1500, `the wrapper took ${elapsed}ms to exit`);
   assert.deepEqual((await launcherCalls()).filter((call) => call === STOP_CALL), [STOP_CALL]);
   await assertQuietLog(w, 'SIGTERM');
 });
@@ -129,9 +131,10 @@ test('a wrapper whose parent took both streams with it still stops the instance 
   w.proc.stdin.end();
   const code = await done;
   const elapsed = Date.now() - started;
+  assert.ok(await w.waitForReaper(), 'the reaper never finished');
 
   assert.equal(code, 0);
-  assert.ok(elapsed < 5000, `the wrapper took ${elapsed}ms to exit`);
+  assert.ok(elapsed < 1500, `the wrapper took ${elapsed}ms to exit`);
   assert.deepEqual((await launcherCalls()).filter((call) => call === STOP_CALL), [STOP_CALL]);
   await assertQuietLog(w, 'stdin end', 2);
   const log = await fs.readFile(w.logFile, 'utf8');

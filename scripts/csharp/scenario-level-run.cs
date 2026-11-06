@@ -1,8 +1,8 @@
 // #name Scenario Level Run
-// #description Level-run scenario driver: arm it before go_to_level, poll ScenarioLevelRun.Done, then read ScenarioLevelRun.ReportJson. survey=true only scans and reports the level
+// #description Level-run scenario driver: arm it before go_to_level, poll ScenarioLevelRun.Done, then read ScenarioLevelRun.ReportJson. survey=true only scans and reports the level. A run that reaches the exit leaves the level finished, its outcome held so nothing is saved, until the next load; from arming until the run's level is left, a won level's outcome, a campaign finish and a rescue's or unlock's progress record are skipped
 // #tags scenario
 // #args players: comma list of player numbers to drive (default 0)
-// #args timeoutSec: wall-clock budget once driving starts (default 240)
+// #args timeoutSec: seconds of driving, the pause menu excluded, before the run times out (default 240)
 // #args durationSec: drive for N seconds with no exit or death goal (default 0, off)
 // #args livesAtStart: lives set when driving starts, before the forced death (default 2)
 // #args forceDeath: auto (10 s after driving starts, or 20 % of a shorter budget), off, or seconds after driving starts (default auto)
@@ -22,6 +22,7 @@ public static class ScenarioLevelRun
     public static bool Done;
     public static bool Passed;
     public static string ReportJson = "";
+    public static string Outcome;
     public static string HoldStatus = "idle";
 
     internal static Action<string> Log = delegate { };
@@ -47,6 +48,7 @@ public static class ScenarioLevelRun
         Done = false;
         Passed = false;
         ReportJson = "";
+        Outcome = null;
         HoldStatus = "idle";
         Errors.Clear();
         AddedAgents.Clear();
@@ -64,8 +66,10 @@ public static class ScenarioLevelRun
 
         Patch(ScriptContext.Harmony);
         TurnOffEnemySuppression();
+        PatchSuppressionSave(ScriptContext.Harmony);
 
         var go = new GameObject("ScenarioLevelRun");
+        go.tag = "Unpausable";
         UnityEngine.Object.DontDestroyOnLoad(go);
         ScriptContext.GameObjects.Add(go);
         Runner = go.AddComponent<ScenarioLevelRunner>();
@@ -138,6 +142,11 @@ public static class ScenarioLevelRun
         return true;
     }
 
+    private static void RefusalAwarePostfix(object __instance, object[] __args, MethodBase __originalMethod, bool __result)
+    {
+        if (__result) MechanicPostfix(__instance, __args, __originalMethod);
+    }
+
     private static void MechanicPostfix(object __instance, object[] __args, MethodBase __originalMethod)
     {
         try
@@ -168,50 +177,120 @@ public static class ScenarioLevelRun
         }
     }
 
-    internal static void PatchKit(Type type)
+    private static bool OutcomePrefix()
     {
-        if (kitHarmony == null) return;
-        const BindingFlags flags = BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public;
-        foreach (var name in new[] { "UseSpecial", "StartMelee" })
+        try
         {
-            try
-            {
-                MethodInfo m = AccessTools.Method(type, name);
-                if (m == null) { NoteError("no " + type.Name + "." + name + " to watch"); continue; }
-                // A custom bro's UseSpecial or StartMelee need not call the base one, so the bro's own override is patched
-                // Harmony patches a method on its declaring type, so an inherited one is patched once for every bro sharing it
-                m = AccessTools.DeclaredMethod(m.DeclaringType, name);
-                if (!KitPatched.Add(m)) continue;
-                if (name == "UseSpecial")
-                    kitHarmony.Patch(m, new HarmonyMethod(typeof(ScenarioLevelRun).GetMethod("SpecialPrefix", flags)),
-                        new HarmonyMethod(typeof(ScenarioLevelRun).GetMethod("SpecialPostfix", flags)));
-                else
-                    kitHarmony.Patch(m, null, new HarmonyMethod(typeof(ScenarioLevelRun).GetMethod("MeleePostfix", flags)));
-            }
-            catch (Exception e)
-            {
-                NoteError("patching " + name + " for " + type.Name + ": " + e.Message);
-            }
+            if (Runner == null || !Runner.HoldsSave() || GameModeController.GetLevelResult() != LevelResult.Success) return true;
+            Log("skipped the won level's outcome, which writes the save");
+            return false;
+        }
+        catch (Exception e)
+        {
+            NoteError("outcome prefix: " + e.Message);
+            return true;
         }
     }
 
-    private static void SpecialPrefix(object __instance, out int __state)
+    private static bool ProgressPrefix(MethodBase __originalMethod)
     {
-        var bro = __instance as TestVanDammeAnim;
-        __state = bro == null ? 0 : bro.SpecialAmmo;
+        try
+        {
+            if (Runner == null || !Runner.HoldsSave()) return true;
+            Log("skipped " + __originalMethod.DeclaringType.Name + "." + __originalMethod.Name + ", which changes progress and writes the save");
+            return false;
+        }
+        catch (Exception e)
+        {
+            NoteError("progress prefix: " + e.Message);
+            return true;
+        }
+    }
+
+    internal static void PatchKit(TestVanDammeAnim bro, object ability)
+    {
+        if (kitHarmony == null) return;
+        foreach (var name in new[] { "UseSpecial", "PressSpecial", "StartMelee" }) PatchKitMethod(bro.GetType(), name);
+        if (ability != null) PatchKitMethod(ability.GetType(), "UseSpecial");
+    }
+
+    private static void PatchKitMethod(Type type, string name)
+    {
+        const BindingFlags flags = BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public;
+        try
+        {
+            MethodInfo m = AccessTools.Method(type, name, Type.EmptyTypes);
+            if (m == null) { NoteError("no " + type.Name + "." + name + " to watch"); return; }
+            // A custom bro's UseSpecial, PressSpecial or StartMelee need not call the base one, so the bro's own override is patched
+            // Harmony patches a method on its declaring type, so an inherited one is patched once for every bro sharing it
+            m = AccessTools.DeclaredMethod(m.DeclaringType, name, Type.EmptyTypes);
+            if (m == null || m.IsAbstract || !KitPatched.Add(m)) return;
+            if (name == "UseSpecial")
+                kitHarmony.Patch(m, new HarmonyMethod(typeof(ScenarioLevelRun).GetMethod("SpecialPrefix", flags)),
+                    new HarmonyMethod(typeof(ScenarioLevelRun).GetMethod("SpecialPostfix", flags)));
+            else if (name == "PressSpecial")
+                kitHarmony.Patch(m, new HarmonyMethod(typeof(ScenarioLevelRun).GetMethod("PressPrefix", flags)));
+            else
+                kitHarmony.Patch(m, null, new HarmonyMethod(typeof(ScenarioLevelRun).GetMethod("MeleePostfix", flags)));
+        }
+        catch (Exception e)
+        {
+            NoteError("patching " + name + " for " + type.Name + ": " + e.Message);
+        }
+    }
+
+    private static int flashes;
+
+    private static void SpecialPrefix(out int __state)
+    {
+        __state = flashes;
     }
 
     private static void SpecialPostfix(object __instance, int __state)
     {
         try
         {
-            // With no ammo UseSpecial only flashes the ammo bar, in the base game and BroMaker's bros alike
-            if (__state > 0 && Runner != null) Runner.OnKitCall(__instance, true);
+            // A UseSpecial that refuses, for want of ammo or on a cooldown, flashes the ammo bar, in the base game and BroMaker's bros alike
+            if (flashes == __state && Runner != null) Runner.OnKitCall(__instance, true);
         }
         catch (Exception e)
         {
             NoteError("special postfix: " + e.Message);
         }
+    }
+
+    private static void PressPrefix(TestVanDammeAnim __instance)
+    {
+        try
+        {
+            if (Runner != null) Runner.OnSpecialPress(__instance);
+        }
+        catch (Exception e)
+        {
+            NoteError("press prefix: " + e.Message);
+        }
+    }
+
+    private static void AmmoPrefix(TestVanDammeAnim __instance, out int __state)
+    {
+        __state = __instance._specialAmmo;
+    }
+
+    private static void AmmoPostfix(TestVanDammeAnim __instance, int __state)
+    {
+        try
+        {
+            if (__state > 0 && __instance._specialAmmo < __state && Runner != null) Runner.OnAmmoSpent(__instance, __state - __instance._specialAmmo);
+        }
+        catch (Exception e)
+        {
+            NoteError("special ammo postfix: " + e.Message);
+        }
+    }
+
+    private static void FlashPrefix()
+    {
+        flashes++;
     }
 
     private static void MeleePostfix(object __instance)
@@ -243,8 +322,21 @@ public static class ScenarioLevelRun
         harmony.Patch(AccessTools.Method(typeof(Player), "GetInput"), null, input);
         harmony.Patch(AccessTools.Method(typeof(HeroController), "CheckRescueBros"),
             new HarmonyMethod(typeof(ScenarioLevelRun).GetMethod("RescuePrefix", flags)));
+        var outcome = new HarmonyMethod(typeof(ScenarioLevelRun).GetMethod("OutcomePrefix", flags));
+        outcome.priority = Priority.First;
+        harmony.Patch(AccessTools.Method(typeof(GameModeController), "DetermineLevelOutcome"), outcome);
+        var progress = new HarmonyMethod(typeof(ScenarioLevelRun).GetMethod("ProgressPrefix", flags));
+        progress.priority = Priority.First;
+        harmony.Patch(AccessTools.Method(typeof(WorldMapProgressController), "FinishCampaign"), progress);
+        harmony.Patch(AccessTools.Method(typeof(PlayerProgress), "FreeBro"), progress);
+        harmony.Patch(AccessTools.Method(typeof(PlayerProgress), "UnlockHero"), progress);
+        harmony.Patch(AccessTools.Method(typeof(PlayerProgress), "SetLastArcadeFinishedLevel"), progress);
+        harmony.Patch(AccessTools.PropertySetter(typeof(TestVanDammeAnim), "SpecialAmmo"),
+            new HarmonyMethod(typeof(ScenarioLevelRun).GetMethod("AmmoPrefix", flags)), new HarmonyMethod(typeof(ScenarioLevelRun).GetMethod("AmmoPostfix", flags)));
+        harmony.Patch(AccessTools.Method(typeof(HeroController), "FlashSpecialAmmo"), new HarmonyMethod(typeof(ScenarioLevelRun).GetMethod("FlashPrefix", flags)));
 
         var mech = new HarmonyMethod(typeof(ScenarioLevelRun).GetMethod("MechanicPostfix", flags));
+        var mechResult = new HarmonyMethod(typeof(ScenarioLevelRun).GetMethod("RefusalAwarePostfix", flags));
         var targets = new[]
         {
             new[] { "ZipLine", "AttachUnit", "zipline" },
@@ -261,19 +353,41 @@ public static class ScenarioLevelRun
         };
         foreach (var t in targets)
         {
-            try
+            Type type = AccessTools.TypeByName(t[0]);
+            MethodInfo m = type == null ? null : AccessTools.DeclaredMethod(type, t[1]);
+            if (m == null) { NoteError("no " + t[0] + "." + t[1] + " to detect " + t[2]); continue; }
+            foreach (var method in WithOverrides(type, m))
             {
-                Type type = AccessTools.TypeByName(t[0]);
-                MethodInfo m = type == null ? null : AccessTools.DeclaredMethod(type, t[1]);
-                if (m == null) { NoteError("no " + t[0] + "." + t[1] + " to detect " + t[2]); continue; }
-                harmony.Patch(m, null, mech);
-                PatchKinds[t[0] + "." + t[1]] = t[2];
-            }
-            catch (Exception e)
-            {
-                NoteError("patching " + t[0] + "." + t[1] + ": " + e.Message);
+                try
+                {
+                    // A bool result is the method refusing, as TeleportDoor.Activate does with an enemy near
+                    harmony.Patch(method, null, method.ReturnType == typeof(bool) ? mechResult : mech);
+                    PatchKinds[method.DeclaringType.Name + "." + method.Name] = t[2];
+                }
+                catch (Exception e)
+                {
+                    NoteError("patching " + method.DeclaringType.Name + "." + method.Name + ": " + e.Message);
+                }
             }
         }
+    }
+
+    private static List<MethodInfo> WithOverrides(Type type, MethodInfo method)
+    {
+        var found = new List<MethodInfo> { method };
+        Type[] parameters = method.GetParameters().Select(p => p.ParameterType).ToArray();
+        Type[] types;
+        try { types = type.Assembly.GetTypes(); }
+        catch (ReflectionTypeLoadException e) { types = e.Types.Where(x => x != null).ToArray(); }
+        // An override that skips base never reaches the base method's patch
+        foreach (var sub in types)
+        {
+            if (sub == type || sub.ContainsGenericParameters || !type.IsAssignableFrom(sub)) continue;
+            MethodInfo o = sub.GetMethod(method.Name, BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic
+                | BindingFlags.DeclaredOnly, null, parameters, null);
+            if (o != null && !o.IsAbstract) found.Add(o);
+        }
+        return found;
     }
 
     private static void TurnOffEnemySuppression()
@@ -313,6 +427,40 @@ public static class ScenarioLevelRun
             suppressionChanged = true;
             Log("Utility Mod disableEnemySpawn turned off in memory for this run");
         }
+    }
+
+    private static void PatchSuppressionSave(Harmony harmony)
+    {
+        if (!suppressionChanged) return;
+        const BindingFlags flags = BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public;
+        var prefix = new HarmonyMethod(typeof(ScenarioLevelRun).GetMethod("SuppressionSavePrefix", flags));
+        var finalizer = new HarmonyMethod(typeof(ScenarioLevelRun).GetMethod("SuppressionSaveFinalizer", flags));
+        int patched = 0;
+        foreach (var m in suppressionSettings.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+        {
+            if (!m.Name.StartsWith("Save") || m.IsAbstract) continue;
+            try
+            {
+                harmony.Patch(m, prefix, null, null, finalizer);
+                patched++;
+            }
+            catch (Exception e)
+            {
+                NoteError("patching Utility Mod's " + m.Name + ": " + e.Message);
+            }
+        }
+        Suppression["savePatched"] = patched > 0;
+        if (patched == 0) NoteError("no Utility Mod settings save to patch: a settings save during the run would write disableEnemySpawn off");
+    }
+
+    private static void SuppressionSavePrefix()
+    {
+        if (suppressionChanged) suppressionField.SetValue(suppressionSettings, true);
+    }
+
+    private static void SuppressionSaveFinalizer()
+    {
+        if (suppressionChanged) suppressionField.SetValue(suppressionSettings, false);
     }
 
     internal static void RestoreEnemySuppression()
@@ -428,6 +576,8 @@ public class ScenarioLevelRunner : MonoBehaviour
     private static readonly string[] ActionNames = { "fire", "jump", "special", "melee" };
     private const int FireSlot = 0, SpecialSlot = 2, MeleeSlot = 3;
     private static readonly FieldInfo UsingSpecialField = AccessTools.Field(typeof(TestVanDammeAnim), "usingSpecial");
+    private static readonly FieldInfo DoingMeleeField = AccessTools.Field(typeof(TestVanDammeAnim), "doingMelee");
+    private const int CallSignal = 1, StateSignal = 2;
     private static readonly int[] ActionIndex = { Fire, Jump, Special, Melee };
     private static readonly HashSet<string> DrivableKinds = new HashSet<string>
         { "ladder", "zipline", "wormTunnel", "switch", "mech", "elevator", "teleportDoor", "door", "hatch", "cage", "pickup", "quicksand", "bouncy" };
@@ -458,8 +608,93 @@ public class ScenarioLevelRunner : MonoBehaviour
         public string Kind;
         public Vector2 Pos;
         public Component Target;
+        public bool Drivable = true;
         public bool Attempted;
         public bool Used;
+    }
+
+    private class SpecialCount
+    {
+        public int Runs;
+        public bool On;
+        private bool open, credited;
+        private int lastFrame = -100;
+        private float lastAt = -100f;
+
+        public void Press(int frame, float now)
+        {
+            open = true;
+            credited = false;
+            lastFrame = frame;
+            lastAt = now;
+        }
+
+        public void Signal(int frame, float now)
+        {
+            if (!open || credited || !Live(frame, now)) return;
+            credited = true;
+            Runs++;
+        }
+
+        public void Track(bool on, bool held, int frame, float now)
+        {
+            On = on;
+            if (!open) return;
+            if (on || held)
+            {
+                lastFrame = frame;
+                lastAt = now;
+            }
+            else if (!Live(frame, now)) open = false;
+        }
+
+        private bool Live(int frame, float now)
+        {
+            return frame - lastFrame <= 3 || now - lastAt < 0.5f;
+        }
+    }
+
+    private class MeleeCount
+    {
+        public int Runs;
+        public bool On;
+        private int kinds;
+        private int lastFrame = -100;
+        private float lastAt = -100f;
+        private int callFrame = -1;
+
+        public void Signal(int kind, int frame, float now)
+        {
+            if (kind == CallSignal)
+            {
+                // An override that calls the base one runs two patched methods in one frame.
+                if (callFrame == frame) return;
+                callFrame = frame;
+            }
+            if (kinds == 0 || (kinds & kind) != 0 || !Open(frame, now))
+            {
+                Runs++;
+                kinds = 0;
+            }
+            kinds |= kind;
+            lastFrame = frame;
+            lastAt = now;
+        }
+
+        public void Track(bool on, int frame, float now)
+        {
+            if (on && kinds != 0 && Open(frame, now))
+            {
+                lastFrame = frame;
+                lastAt = now;
+            }
+            On = on;
+        }
+
+        private bool Open(int frame, float now)
+        {
+            return frame - lastFrame <= 3 || now - lastAt < 0.25f;
+        }
     }
 
     private class CharRecord
@@ -475,12 +710,10 @@ public class ScenarioLevelRunner : MonoBehaviour
         public float EndT;
         public string EndedBy;
         public readonly int[] Presses = new int[4];
-        public int SpecialRuns;
-        public int MeleeRuns;
-        public int SpecialFrame = -1;
-        public int MeleeFrame = -1;
+        public readonly SpecialCount Special = new SpecialCount();
+        public readonly MeleeCount Melee = new MeleeCount();
+        public object Ability;
         public int AmmoSpent;
-        public int LastAmmo = -1;
     }
 
     private class KitHold
@@ -524,6 +757,10 @@ public class ScenarioLevelRunner : MonoBehaviour
         public float StepUntil;
         public float StepStart;
         public int StuckIndex = -1;
+        public Vector2 StuckPos;
+        public int ResumeLevel;
+        public int ResumeIndex = -1;
+        public float ResumeAt = -100f;
         public float NextPathAt;
         public int PathCol = int.MinValue, PathRow = int.MinValue;
         public int WaypointBoost;
@@ -547,6 +784,10 @@ public class ScenarioLevelRunner : MonoBehaviour
     private Dictionary<string, string> argsEcho = new Dictionary<string, string>();
 
     private string phase = "armed";
+    private float gameNow;
+    private float realNow;
+    private bool driveStarted;
+    private string armWait;
     private object armedHero;
     private float armStartReal;
     private float nextArmCheck;
@@ -593,6 +834,11 @@ public class ScenarioLevelRunner : MonoBehaviour
     private float patrolFlipAt;
     private readonly Dictionary<int, Unit> seenEnemies = new Dictionary<int, Unit>();
     private readonly HashSet<int> killedEnemies = new HashSet<int>();
+    private readonly HashSet<int> despawnedEnemies = new HashSet<int>();
+    private bool directCall;
+    private int lastMechFrame = -1;
+    private object lastMechInstance;
+    private string lastMechKind;
     private float nextEnemyScan;
     private readonly List<object> events = new List<object>();
     private readonly List<object> stuckEvents = new List<object>();
@@ -652,7 +898,7 @@ public class ScenarioLevelRunner : MonoBehaviour
         else if (float.TryParse(forceDeath, NumberStyles.Float, CultureInfo.InvariantCulture, out seconds)) forceDeathAt = seconds;
         else forceDeathAt = -1f;
 
-        armStartReal = Time.realtimeSinceStartup;
+        armStartReal = realNow;
         armedHero = HeroController.Instance;
         isFinalField = AccessTools.Field(typeof(CheckPoint), "isFinal");
     }
@@ -673,7 +919,9 @@ public class ScenarioLevelRunner : MonoBehaviour
 
     private void Update()
     {
-        if (phase == "done") return;
+        if (phase == "done" || PauseController.Paused) return;
+        gameNow += Time.deltaTime;
+        realNow += Time.unscaledDeltaTime;
         try
         {
             if (phase == "armed") TickArmed();
@@ -689,41 +937,54 @@ public class ScenarioLevelRunner : MonoBehaviour
 
     private float Elapsed()
     {
-        return Time.realtimeSinceStartup - driveStartReal;
+        return realNow - driveStartReal;
     }
 
     private float T()
     {
-        return Mathf.Round((Time.realtimeSinceStartup - driveStartReal) * 10f) / 10f;
+        return Mathf.Round((realNow - driveStartReal) * 10f) / 10f;
     }
 
     private void TickArmed()
     {
-        if (Time.realtimeSinceStartup - armStartReal > ArmTimeoutSec)
+        if (realNow - armStartReal > ArmTimeoutSec)
         {
-            Finish("error", "no level with a spawned hero within " + ArmTimeoutSec + " s of arming");
+            Finish("error", (armWait ?? "no level with a spawned hero") + " within " + ArmTimeoutSec + " s of arming");
             return;
         }
-        if (Time.realtimeSinceStartup < nextArmCheck) return;
-        nextArmCheck = Time.realtimeSinceStartup + 0.25f;
+        if (realNow < nextArmCheck) return;
+        nextArmCheck = realNow + 0.25f;
         var hero = HeroController.Instance;
         if (hero == null || ReferenceEquals(hero, armedHero) || Map.Instance == null || !LevelSelectionController.CurrentlyInGame) return;
+        var waiting = new List<string>();
         foreach (int n in players)
         {
             var p = HeroController.players[n];
-            if (p == null || !p.IsAliveAndSpawnedHero()) return;
+            if (!HeroController.IsPlaying(n)) waiting.Add("player " + n + " is not playing");
+            else if (p == null || !p.IsAliveAndSpawnedHero()) waiting.Add("player " + n + " has no spawned hero");
+        }
+        if (waiting.Count > 0)
+        {
+            armWait = "a level loaded, but " + string.Join(" and ", waiting.ToArray());
+            return;
+        }
+        if (!survey && GameModeController.IsHardcoreMode)
+        {
+            Finish("error", "the level is on an IronBro save, whose lives and dead bros a run would write; only survey=true runs there");
+            return;
         }
         runHero = hero;
         phase = "settling";
-        spawnSeenAt = Time.time;
+        spawnSeenAt = gameNow;
     }
 
     private void TickSettling()
     {
         // CheckPoint marks itself final on its first Update, so the scan waits after the spawn
-        if (Time.time - spawnSeenAt < 1.5f) return;
-        driveStartReal = Time.realtimeSinceStartup;
-        driveStartTime = Time.time;
+        if (gameNow - spawnSeenAt < 1.5f) return;
+        driveStartReal = realNow;
+        driveStartTime = gameNow;
+        driveStarted = true;
         context = BuildContext();
         Scan();
         if (survey)
@@ -744,8 +1005,8 @@ public class ScenarioLevelRunner : MonoBehaviour
             d.LastChar = ch;
             d.LastCharObj = ch;
             d.Anchor = new Vector2(ch.X, ch.Y);
-            d.AnchorAt = Time.time;
-            d.SpawnedAt = Time.time;
+            d.AnchorAt = gameNow;
+            d.SpawnedAt = gameNow;
             EnsureAgent(ch);
             NewRecord(d, ch, "start");
             driven.Add(d);
@@ -784,9 +1045,9 @@ public class ScenarioLevelRunner : MonoBehaviour
         TickHold();
 
         TrackFlagsAndRescues();
-        if (Time.time >= nextEnemyScan) { nextEnemyScan = Time.time + 0.5f; ScanEnemies(); }
+        if (gameNow >= nextEnemyScan) { nextEnemyScan = gameNow + 0.5f; ScanEnemies(); }
         if (!deathForced && forceDeathAt >= 0f && Elapsed() >= forceDeathAt) TryForceDeath();
-        if (deathForced && !forcedDeathSeen && !gibFallback && Time.time - deathForcedAt > 1f) GibFallback();
+        if (deathForced && !forcedDeathSeen && !gibFallback && gameNow - deathForcedAt > 1f) GibFallback();
     }
 
     private bool LevelFinished()
@@ -800,6 +1061,7 @@ public class ScenarioLevelRunner : MonoBehaviour
         {
             try { helicopterVictory = GameModeController.IsHelicopterVictory(); } catch { }
             if (helicopterVictory) RecordExercise("helicopter", "walk", null);
+            HoldOutcome();
             Finish("finished", null);
         }
         else
@@ -807,6 +1069,22 @@ public class ScenarioLevelRunner : MonoBehaviour
             Finish("level-failed", "level finished with " + result);
         }
         return true;
+    }
+
+    private static readonly FieldInfo WinTimerField = AccessTools.Field(typeof(GameModeController), "winTimer");
+
+    private static void HoldOutcome()
+    {
+        if (WinTimerField == null) { ScenarioLevelRun.NoteError("no GameModeController.winTimer to hold the level's outcome"); return; }
+        // The outcome of a won world-map level writes the save: the territory's start level, a finished campaign
+        WinTimerField.SetValue(GameModeController.Instance, 999999f);
+    }
+
+    internal bool HoldsSave()
+    {
+        if (runHero == null) return phase != "done";
+        var hero = HeroController.Instance;
+        return hero != null && ReferenceEquals(hero, runHero);
     }
 
     private void TickPlayer(Driven d)
@@ -817,56 +1095,65 @@ public class ScenarioLevelRunner : MonoBehaviour
         TestVanDammeAnim bro = player == null ? null : player.character;
         TrackCharacter(d, player, bro);
 
-        if (bro == null || bro.health <= 0 || !bro.enabled || bro.isOnHelicopter)
+        // A piloting bro is disabled and the mech reads the player's input
+        TestVanDammeAnim mech = bro == null || bro.health <= 0 ? null : bro.pilottedUnit as TestVanDammeAnim;
+        if (mech == null && (bro == null || bro.health <= 0 || !bro.enabled || bro.isOnHelicopter))
         {
-            if (bro != null && !bro.enabled && d.TunnelStart < 0f && IsTransported(bro)) d.TunnelStart = Time.time;
+            if (bro != null && !bro.enabled && d.TunnelStart < 0f && IsTransported(bro)) d.TunnelStart = gameNow;
             ApplyPulses(d, want);
             return;
         }
+        TestVanDammeAnim body = mech ?? bro;
         if (d.TunnelStart >= 0f)
         {
             Dictionary<string, object> ride;
-            if (exercised.TryGetValue("wormTunnel", out ride)) ride["rideSeconds"] = Time.time - d.TunnelStart;
-            else RecordExercise("wormTunnel", "walk", new Dictionary<string, object> { { "rideSeconds", Time.time - d.TunnelStart } });
+            if (exercised.TryGetValue("wormTunnel", out ride)) ride["rideSeconds"] = gameNow - d.TunnelStart;
+            else RecordExercise("wormTunnel", "walk", new Dictionary<string, object> { { "rideSeconds", gameNow - d.TunnelStart } });
             d.TunnelStart = -1f;
         }
 
         if (d == driven[0])
         {
-            furthestX = Mathf.Max(furthestX, bro.X);
-            TrackProgress(bro);
+            furthestX = Mathf.Max(furthestX, body.X);
+            TrackProgress(body);
         }
         var rec = d.Record;
-        if (rec != null && !rec.Ended && ReferenceEquals(bro, rec.Char))
-        {
-            if (rec.LastAmmo >= 0 && bro.SpecialAmmo < rec.LastAmmo) rec.AmmoSpent += rec.LastAmmo - bro.SpecialAmmo;
-            rec.LastAmmo = bro.SpecialAmmo;
-        }
+        if (rec != null && !rec.Ended && ReferenceEquals(bro, rec.Char)) TrackKit(rec, bro);
 
         ReadMechanicStates(d, bro);
 
-        Vector2 goal = Goal(bro, d == driven[0]);
-        int dir = Mathf.Abs(goal.x - bro.X) < 6f ? 0 : (goal.x > bro.X ? 1 : -1);
+        if (!ScenarioLevelRun.InputAllowed(player))
+        {
+            d.Anchor = new Vector2(body.X, body.Y);
+            d.AnchorAt = gameNow;
+            return;
+        }
+        if (mech != null) EnsureAgent(mech);
 
-        if (!float.IsNaN(d.LoopX) && Mathf.Abs(bro.X - d.LoopX) < 48f)
+        Vector2 goal = Goal(body, d == driven[0]);
+        int dir = Mathf.Abs(goal.x - body.X) < 6f ? 0 : (goal.x > body.X ? 1 : -1);
+
+        if (!float.IsNaN(d.LoopX) && Mathf.Abs(body.X - d.LoopX) < 48f)
         {
             float loopX = d.LoopX;
             d.LoopX = float.NaN;
             d.LastDeathX = float.NaN;
             d.DeathRepeats = 0;
-            Teleport(d, bro, Map.GetCollumn(loopX), goal.x >= loopX ? 1 : -1, 16, d.LoopStuckIndex);
+            Teleport(d, body, Map.GetCollumn(loopX), goal.x >= loopX ? 1 : -1, 16, d.LoopStuckIndex);
             ApplyPulses(d, want);
             return;
         }
 
-        if (!StuckStep(d, bro, goal, dir, want))
+        if (!StuckStep(d, body, goal, dir, want))
         {
-            Move(d, bro, goal, dir, want);
-            UseMechanicOnArrival(d, bro, want);
+            Move(d, body, goal, dir, want);
+            UseMechanicOnArrival(d, body, want);
         }
-        Combat(d, bro, want);
-        if (hold != null && hold.Player == d.N && hold.Rec == d.Record) DriveHold(d, bro);
+        Combat(d, body, want);
+        if (hold != null && hold.Player == d.N && hold.Rec == d.Record) DriveHold(d, bro, want);
         ApplyPulses(d, want);
+        // Fire cancels a running special for some custom bros, refunding its ammo
+        if (want[Special] || (rec != null && !rec.Ended && rec.Special.On)) want[Fire] = false;
         CountActions(d, want);
     }
 
@@ -881,7 +1168,7 @@ public class ScenarioLevelRunner : MonoBehaviour
             && ((live != null && (bro.health <= 0 || bro.actionState == ActionState.Dead)) || live == null || livesLost))
         {
             d.DeathRecorded = true;
-            d.DeathAt = Time.time;
+            d.DeathAt = gameNow;
             EndRecord(d, "died");
             d.ForcedPending = deathForced && !forcedDeathSeen && d == driven[0];
             if (d.ForcedPending) forcedDeathSeen = true;
@@ -904,7 +1191,7 @@ public class ScenarioLevelRunner : MonoBehaviour
 
         if (d.DeathRecorded)
         {
-            float delay = Time.time - d.DeathAt;
+            float delay = gameNow - d.DeathAt;
             if (d.ForcedPending)
             {
                 forcedRespawnSeen = true;
@@ -928,9 +1215,9 @@ public class ScenarioLevelRunner : MonoBehaviour
         d.LastCharObj = bro;
         d.LastChar = bro;
         d.Anchor = new Vector2(bro.X, bro.Y);
-        d.AnchorAt = Time.time;
-        d.SpawnedAt = Time.time;
-        d.StuckLevel = 0;
+        d.AnchorAt = gameNow;
+        d.SpawnedAt = gameNow;
+        EndStuck(d);
         d.PathCol = int.MinValue;
         EnsureAgent(bro);
     }
@@ -972,7 +1259,7 @@ public class ScenarioLevelRunner : MonoBehaviour
     {
         if (primary && mechTarget != null)
         {
-            if (Time.time < mechTargetUntil && !mechTarget.Used) return mechTarget.Pos;
+            if (gameNow < mechTargetUntil && !mechTarget.Used) return mechTarget.Pos;
             GiveUpMechanic();
         }
         if (durationSec <= 0f)
@@ -982,7 +1269,7 @@ public class ScenarioLevelRunner : MonoBehaviour
             var p = Portal();
             if (p != null) return p.transform.position;
         }
-        if (primary && Time.time >= nextMechPick) PickMechanic(bro);
+        if (primary && gameNow >= nextMechPick) PickMechanic(bro);
         if (primary && mechTarget != null) return mechTarget.Pos;
 
         CheckPoint final = FinalFlag();
@@ -1015,14 +1302,14 @@ public class ScenarioLevelRunner : MonoBehaviour
             patrolAnchor = anchor;
             patrolBack = startX <= anchor.x ? -1 : 1;
             patrolAway = true;
-            patrolFlipAt = Time.time + PatrolLegSec;
+            patrolFlipAt = gameNow + PatrolLegSec;
             AddEvent("patrol", "no target ahead; pacing near " + Mathf.Round(anchor.x) + "," + Mathf.Round(anchor.y));
         }
         float legX = patrolAway ? patrolAnchor.x + patrolBack * PatrolSpanPx : patrolAnchor.x;
-        if (primary && (Mathf.Abs(bro.X - legX) < 12f || Time.time >= patrolFlipAt))
+        if (primary && (Mathf.Abs(bro.X - legX) < 12f || gameNow >= patrolFlipAt))
         {
             patrolAway = !patrolAway;
-            patrolFlipAt = Time.time + PatrolLegSec;
+            patrolFlipAt = gameNow + PatrolLegSec;
             legX = patrolAway ? patrolAnchor.x + patrolBack * PatrolSpanPx : patrolAnchor.x;
         }
         return new Vector2(Mathf.Clamp(legX, 16f, RightCol() * 16f), patrolAnchor.y);
@@ -1049,9 +1336,9 @@ public class ScenarioLevelRunner : MonoBehaviour
 
     private HeroLevelExitPortal Portal()
     {
-        if (Time.time >= nextPortalLook)
+        if (gameNow >= nextPortalLook)
         {
-            nextPortalLook = Time.time + 1f;
+            nextPortalLook = gameNow + 1f;
             portal = UnityEngine.Object.FindObjectOfType<HeroLevelExitPortal>();
         }
         return portal;
@@ -1094,13 +1381,13 @@ public class ScenarioLevelRunner : MonoBehaviour
             bool waypointMoved = Mathf.Abs(wpCol - d.PathCol) > 4 || Mathf.Abs(wpRow - d.PathRow) > 3;
             PathPoint node = agent.CurrentNode;
             bool midManoeuvre = agent.CurrentPath != null && (!bro.IsOnGround() || (node != null && node.moveMode != PathMoveMode.Normal));
-            if (Time.time >= d.NextPathAt && !midManoeuvre && (agent.CurrentPath == null || waypointMoved || Time.time - d.NextPathAt > 2f))
+            if (gameNow >= d.NextPathAt && !midManoeuvre && (agent.CurrentPath == null || waypointMoved || gameNow - d.NextPathAt > 2f))
             {
                 NavPath path = PathfindingController.FindPath(new GridPoint(col, row), new GridPoint(wpCol, wpRow), agent.capabilities, 10f);
                 if (path != null && !OnMapFloor(path)) agent.CurrentPath = path;
                 d.PathCol = wpCol;
                 d.PathRow = wpRow;
-                d.NextPathAt = Time.time + (agent.CurrentPath == null ? 0.25f : 0.5f);
+                d.NextPathAt = gameNow + (agent.CurrentPath == null ? 0.25f : 0.5f);
             }
             if (agent.CurrentPath != null)
             {
@@ -1151,32 +1438,48 @@ public class ScenarioLevelRunner : MonoBehaviour
     private bool StuckStep(Driven d, TestVanDammeAnim bro, Vector2 goal, int dir, bool[] want)
     {
         Vector2 pos = new Vector2(bro.X, bro.Y);
-        bool busy = bro.actionState == ActionState.ClimbingLadder || bro.attachedToZipline != null || bro.pilottedUnit != null
+        bool busy = bro.actionState == ActionState.ClimbingLadder || bro.attachedToZipline != null
             || bro.IsParachuteActive || (d == driven[0] && mechArrivedAt >= 0f);
         bool moved = Mathf.Abs(pos.x - d.Anchor.x) > 16f || (bro.IsOnGround() && Mathf.Abs(pos.y - d.Anchor.y) > 24f);
         if (busy || moved)
         {
-            if (d.StuckLevel > 0 && !busy && d.StuckIndex >= 0)
+            if (d.StuckLevel > 0 && d.StuckLevel < StuckSteps.Length && !busy && d.StuckIndex >= 0)
             {
                 ((Dictionary<string, object>)stuckEvents[d.StuckIndex])["recoveredBy"] = StuckSteps[d.StuckLevel - 1];
             }
             d.Anchor = pos;
-            d.AnchorAt = Time.time;
-            d.StuckLevel = 0;
-            d.StuckIndex = -1;
+            d.AnchorAt = gameNow;
+            EndStuck(d);
             d.WaypointBoost = 0;
             return false;
         }
-        if (d.StuckLevel == 0 && Time.time - d.AnchorAt < StuckWindowSec) return false;
-        if (d.StuckLevel == 0 || Time.time >= d.StepUntil)
+        if (d.StuckLevel == 0 && gameNow - d.AnchorAt < StuckWindowSec) return false;
+        if (d.StuckLevel == 0 && gameNow - d.ResumeAt < 20f && Vector2.Distance(pos, d.StuckPos) < 48f)
         {
+            d.StuckLevel = d.ResumeLevel;
+            d.StuckIndex = d.ResumeIndex;
+            if (d.StuckIndex >= 0)
+            {
+                var ev = (Dictionary<string, object>)stuckEvents[d.StuckIndex];
+                ev["recoveredBy"] = null;
+                ev["repeats"] = (int)ev["repeats"] + 1;
+            }
+            d.StepUntil = 0f;
+        }
+        if (d.StuckLevel == 0 || gameNow >= d.StepUntil)
+        {
+            bool opening = d.StuckLevel == 0;
             if (d.StuckLevel >= StuckSteps.Length) d.StuckLevel = 0;
             d.StuckLevel++;
-            d.StepStart = Time.time;
-            d.StepUntil = Time.time + StepSec;
-            if (d.StuckLevel == 1)
+            d.StepStart = gameNow;
+            d.StepUntil = gameNow + StepSec;
+            if (opening)
             {
-                var ev = new Dictionary<string, object> { { "t", T() }, { "player", d.N }, { "x", Mathf.Round(bro.X) }, { "y", Mathf.Round(bro.Y) }, { "recoveredBy", null } };
+                d.StuckPos = pos;
+                var ev = new Dictionary<string, object>
+                {
+                    { "t", T() }, { "player", d.N }, { "x", Mathf.Round(bro.X) }, { "y", Mathf.Round(bro.Y) }, { "recoveredBy", null }, { "repeats", 0 }
+                };
                 if (stuckEvents.Count < MaxEvents) { stuckEvents.Add(ev); d.StuckIndex = stuckEvents.Count - 1; }
             }
             if (StuckSteps[d.StuckLevel - 1] == "repath-further") { d.WaypointBoost += 6; d.PathCol = int.MinValue; d.NextPathAt = 0f; }
@@ -1187,14 +1490,26 @@ public class ScenarioLevelRunner : MonoBehaviour
         if (step == "repath-further") return false;
         if (step == "jump") { Hold(want, toward); Press(d, Jump, 15); }
         else if (step == "wall-climb") { Hold(want, toward); want[Jump] = true; }
-        else if (step == "reverse") Hold(want, Time.time - d.StepStart < 0.6f ? -toward : toward);
+        else if (step == "reverse") Hold(want, gameNow - d.StepStart < 0.6f ? -toward : toward);
         else if (step == "dig")
         {
             want[Down] = true;
             want[Fire] = true;
-            if (Time.time - d.StepStart > 0.8f) Press(d, Special, 3);
+            if (gameNow - d.StepStart > 0.8f) Press(d, Special, 3);
         }
         return true;
+    }
+
+    private void EndStuck(Driven d)
+    {
+        if (d.StuckLevel > 0)
+        {
+            d.ResumeLevel = d.StuckLevel;
+            d.ResumeIndex = d.StuckIndex;
+            d.ResumeAt = gameNow;
+        }
+        d.StuckLevel = 0;
+        d.StuckIndex = -1;
     }
 
     private void NoteNaturalDeath(Driven d, TestVanDammeAnim dead)
@@ -1231,9 +1546,10 @@ public class ScenarioLevelRunner : MonoBehaviour
             if (stuckIndex >= 0) ((Dictionary<string, object>)stuckEvents[stuckIndex])["recoveredBy"] = "teleport";
             AddEvent("teleport", "player " + d.N + " to " + Mathf.Round(x) + "," + Mathf.Round(y));
             d.Anchor = new Vector2(x, y);
-            d.AnchorAt = Time.time;
+            d.AnchorAt = gameNow;
             d.StuckLevel = 0;
             d.StuckIndex = -1;
+            d.ResumeAt = -100f;
             d.PathCol = int.MinValue;
             return;
         }
@@ -1260,10 +1576,10 @@ public class ScenarioLevelRunner : MonoBehaviour
         if (Map.IsEnemyUnitNearby(n, bro.X, bro.Y, facing, 128f, 16f, false, true)) want[Fire] = true;
         else if (Map.IsEnemyUnitNearby(n, bro.X, bro.Y, -facing, 64f, 16f, false, true)) { d.TurnFrames = 4; d.TurnDir = -facing; }
         if (Map.IsEnemyUnitNearby(n, bro.X, bro.Y, 20f, 16f, false)) Press(d, Melee, 3);
-        if (bro.SpecialAmmo > 0 && Time.time - d.LastSpecialAt > 4f && Map.IsEnemyUnitNearby(n, bro.X, bro.Y, 128f, 32f, false))
+        if (bro.SpecialAmmo > 0 && gameNow - d.LastSpecialAt > 4f && Map.IsEnemyUnitNearby(n, bro.X, bro.Y, 128f, 32f, false))
         {
             Press(d, Special, 3);
-            d.LastSpecialAt = Time.time;
+            d.LastSpecialAt = gameNow;
         }
     }
 
@@ -1310,11 +1626,11 @@ public class ScenarioLevelRunner : MonoBehaviour
         var rec = new CharRecord
         {
             Index = characters.Count, Player = d.N, Name = DisplayName(bro), Type = bro.GetType().Name, How = how, Char = bro,
-            StartT = T(), LastAmmo = bro.SpecialAmmo
+            StartT = T(), Ability = SpecialAbility(bro)
         };
         characters.Add(rec);
         d.Record = rec;
-        ScenarioLevelRun.PatchKit(bro.GetType());
+        ScenarioLevelRun.PatchKit(bro, rec.Ability);
     }
 
     private void EndRecord(Driven d, string how)
@@ -1349,34 +1665,69 @@ public class ScenarioLevelRunner : MonoBehaviour
         return bro.heroType.ToString();
     }
 
-    public void OnKitCall(object instance, bool special)
+    private CharRecord KitRecord(object instance, bool ability)
     {
-        if (phase != "driving") return;
+        if (phase != "driving") return null;
         foreach (var d in driven)
         {
             var rec = d.Record;
-            if (rec == null || rec.Ended || !ReferenceEquals(instance, rec.Char)) continue;
-            // An override that calls the base one runs two patched methods in one frame.
-            int frame = Time.frameCount;
-            if (special)
-            {
-                if (rec.SpecialFrame == frame) return;
-                rec.SpecialFrame = frame;
-                rec.SpecialRuns++;
-            }
-            else
-            {
-                if (rec.MeleeFrame == frame) return;
-                rec.MeleeFrame = frame;
-                rec.MeleeRuns++;
-            }
-            return;
+            if (rec != null && !rec.Ended && (ReferenceEquals(instance, rec.Char) || (ability && rec.Ability != null && ReferenceEquals(instance, rec.Ability))))
+                return rec;
         }
+        return null;
+    }
+
+    public void OnKitCall(object instance, bool special)
+    {
+        var rec = KitRecord(instance, special);
+        if (rec == null) return;
+        if (special) rec.Special.Signal(Time.frameCount, gameNow);
+        else rec.Melee.Signal(CallSignal, Time.frameCount, gameNow);
+    }
+
+    public void OnSpecialPress(TestVanDammeAnim bro)
+    {
+        var rec = KitRecord(bro, false);
+        if (rec != null) rec.Special.Press(Time.frameCount, gameNow);
+    }
+
+    public void OnAmmoSpent(TestVanDammeAnim bro, int spent)
+    {
+        var rec = KitRecord(bro, false);
+        if (rec == null) return;
+        rec.AmmoSpent += spent;
+        rec.Special.Signal(Time.frameCount, gameNow);
+    }
+
+    private static object SpecialAbility(TestVanDammeAnim bro)
+    {
+        foreach (var itf in bro.GetType().GetInterfaces())
+        {
+            if (itf.Name != "IAbilityOwner") continue;
+            PropertyInfo p = itf.GetProperty("SpecialAbility");
+            return p == null ? null : p.GetValue(bro, null);
+        }
+        return null;
+    }
+
+    private void TrackKit(CharRecord rec, TestVanDammeAnim bro)
+    {
+        int frame = Time.frameCount;
+        object ability = SpecialAbility(bro);
+        if (!ReferenceEquals(ability, rec.Ability))
+        {
+            rec.Ability = ability;
+            ScenarioLevelRun.PatchKit(bro, ability);
+        }
+        rec.Special.Track(UsingSpecialField != null && (bool)UsingSpecialField.GetValue(bro), bro.special, frame, gameNow);
+        bool melee = DoingMeleeField != null && (bool)DoingMeleeField.GetValue(bro);
+        if (melee && !rec.Melee.On) rec.Melee.Signal(StateSignal, frame, gameNow);
+        rec.Melee.Track(melee, frame, gameNow);
     }
 
     public string StartHold(string check, int player, string bro, float seconds)
     {
-        var h = new KitHold { Check = check, Bro = bro, Player = player, Seconds = seconds, StartReal = Time.realtimeSinceStartup };
+        var h = new KitHold { Check = check, Bro = bro, Player = player, Seconds = seconds, StartReal = realNow };
         holds.Add(h);
         if (phase != "driving") return EndHold(h, "refused", "the run was " + phase + ", not driving, when the hold was asked for");
         Driven d = driven.FirstOrDefault(x => x.N == player);
@@ -1448,7 +1799,7 @@ public class ScenarioLevelRunner : MonoBehaviour
 
     private static bool KitDone(CharRecord r)
     {
-        return r.Presses[FireSlot] > 0 && r.SpecialRuns > 0 && r.MeleeRuns > 0;
+        return r.Presses[FireSlot] > 0 && r.Special.Runs > 0 && r.Melee.Runs > 0;
     }
 
     private void TickHold()
@@ -1457,18 +1808,25 @@ public class ScenarioLevelRunner : MonoBehaviour
         var r = hold.Rec;
         if (KitDone(r)) EndHold(hold, "ran", null);
         else if (r.Ended) EndHold(hold, "changed", null);
-        else if (Time.realtimeSinceStartup - hold.StartReal >= hold.Seconds) EndHold(hold, "timeout", null);
+        else if (realNow - hold.StartReal >= hold.Seconds) EndHold(hold, "timeout", null);
     }
 
-    private void DriveHold(Driven d, TestVanDammeAnim bro)
+    private void DriveHold(Driven d, TestVanDammeAnim bro, bool[] want)
     {
         var r = hold.Rec;
-        float now = Time.realtimeSinceStartup;
-        bool inSpecial = UsingSpecialField != null && (bool)UsingSpecialField.GetValue(bro);
+        float now = realNow;
+        bool inSpecial = r.Special.On;
+        if (r.Special.Runs == 0 && r.Presses[FireSlot] > 0 && r.Melee.Runs > 0)
+        {
+            // Some custom bros arm their special with one press and fire it with the next: fire disarms it and a melee blocks the press
+            want[Fire] = false;
+            d.PressFrames[Melee] = 0;
+        }
         if (r.Presses[FireSlot] == 0 && now - hold.LastForced[FireSlot] > 0.5f) Force(d, FireSlot, Fire, now);
         // The game ignores a melee press while a special is running
-        if (r.MeleeRuns == 0 && !inSpecial && now - hold.LastForced[MeleeSlot] > 0.6f) Force(d, MeleeSlot, Melee, now);
-        if (r.SpecialRuns == 0 && !inSpecial && now - hold.LastForced[SpecialSlot] > 1.2f && (r.MeleeRuns > 0 || hold.Forced[MeleeSlot] >= 2))
+        if (r.Melee.Runs == 0 && !inSpecial && now - hold.LastForced[MeleeSlot] > 0.6f) Force(d, MeleeSlot, Melee, now);
+        // It ignores a special press while a melee runs too, reading it as a new press on every frame it is held
+        if (r.Special.Runs == 0 && !inSpecial && !r.Melee.On && now - hold.LastForced[SpecialSlot] > 1.2f && (r.Melee.Runs > 0 || hold.Forced[MeleeSlot] >= 2))
         {
             if (bro.SpecialAmmo <= 0 && !hold.AmmoToppedUp)
             {
@@ -1476,7 +1834,7 @@ public class ScenarioLevelRunner : MonoBehaviour
                 hold.AmmoToppedUp = true;
             }
             Force(d, SpecialSlot, Special, now);
-            d.LastSpecialAt = Time.time;
+            d.LastSpecialAt = gameNow;
         }
     }
 
@@ -1491,7 +1849,7 @@ public class ScenarioLevelRunner : MonoBehaviour
     private string EndHold(KitHold h, string result, string detail)
     {
         h.Result = result;
-        h.EndReal = Time.realtimeSinceStartup;
+        h.EndReal = realNow;
         h.Detail = detail ?? HoldDetail(h);
         if (hold == h) hold = null;
         if (h.Player >= 0 && h.Player < rescuesHeld.Length) rescuesHeld[h.Player] = false;
@@ -1504,12 +1862,12 @@ public class ScenarioLevelRunner : MonoBehaviour
         var r = h.Rec;
         string who = h.Bro + " (character " + r.Index + ", " + r.Type + ")";
         string held = Mathf.Round((h.EndReal - h.StartReal) * 10f) / 10f + " s";
-        string kit = "special ran " + r.SpecialRuns + " (" + h.Forced[SpecialSlot] + " forced presses" + (h.AmmoToppedUp ? ", special ammo topped up to 1" : "")
-            + "), melee ran " + r.MeleeRuns + " (" + h.Forced[MeleeSlot] + " forced presses), fire presses " + r.Presses[FireSlot]
+        string kit = "special ran " + r.Special.Runs + " (" + h.Forced[SpecialSlot] + " forced presses" + (h.AmmoToppedUp ? ", special ammo topped up to 1" : "")
+            + "), melee ran " + r.Melee.Runs + " (" + h.Forced[MeleeSlot] + " forced presses), fire presses " + r.Presses[FireSlot]
             + " (" + h.Forced[FireSlot] + " forced)" + (h.RescueHeld ? "; a rescue was held off" : "");
         var missing = new List<string>();
-        if (r.SpecialRuns == 0) missing.Add("no special run");
-        if (r.MeleeRuns == 0) missing.Add("no melee run");
+        if (r.Special.Runs == 0) missing.Add("no special run (no special press led to a UseSpecial that did not flash the ammo bar or to special ammo spent)");
+        if (r.Melee.Runs == 0) missing.Add("no melee run");
         if (r.Presses[FireSlot] == 0) missing.Add("no fire press");
         string gaps = string.Join(" and ", missing.ToArray());
         if (h.Result == "ran") return who + " had fire pressed and ran its special and melee within " + held + ": " + kit;
@@ -1526,7 +1884,7 @@ public class ScenarioLevelRunner : MonoBehaviour
         {
             { "index", r.Index }, { "player", r.Player }, { "name", r.Name }, { "type", r.Type }, { "how", r.How }, { "t", r.StartT },
             { "endedAt", r.Ended ? (object)r.EndT : null }, { "endedBy", r.EndedBy }, { "presses", presses },
-            { "specialRan", r.SpecialRuns }, { "meleeRan", r.MeleeRuns }, { "specialAmmoSpent", r.AmmoSpent }
+            { "specialRan", r.Special.Runs }, { "meleeRan", r.Melee.Runs }, { "specialAmmoSpent", r.AmmoSpent }
         };
     }
 
@@ -1554,15 +1912,25 @@ public class ScenarioLevelRunner : MonoBehaviour
             {
                 foreach (var u in units.ToArray())
                 {
-                    if (u != null && u.IsEnemy && u.health > 0) seenEnemies[u.GetInstanceID()] = u;
+                    if (Hostile(u, driven[0].N) && u.health > 0) seenEnemies[u.GetInstanceID()] = u;
                 }
             }
         }
         foreach (var kv in seenEnemies)
         {
-            if (killedEnemies.Contains(kv.Key)) continue;
-            if (kv.Value == null || kv.Value.health <= 0) killedEnemies.Add(kv.Key);
+            if (killedEnemies.Contains(kv.Key) || despawnedEnemies.Contains(kv.Key)) continue;
+            if (kv.Value == null) despawnedEnemies.Add(kv.Key);
+            else if (kv.Value.health <= 0) killedEnemies.Add(kv.Key);
         }
+    }
+
+    private static bool Hostile(Unit u, int playerNum)
+    {
+        // IsEnemy is only "not a hero and not a rescue bro", which villagers, animals and empty mechs pass
+        if (u == null || !u.IsEnemy || u is Animal) return false;
+        if (!GameModeController.DoesPlayerNumDamage(playerNum, u.playerNum)) return false;
+        var mech = u as MookArmouredGuy;
+        return mech == null || mech.pilotUnit != null;
     }
 
     private void TryForceDeath()
@@ -1570,14 +1938,20 @@ public class ScenarioLevelRunner : MonoBehaviour
         var d = driven[0];
         var player = HeroController.players[d.N];
         var bro = player == null ? null : player.character;
+        if (bro != null && bro.pilottedUnit != null)
+        {
+            // The mech's special ejects its pilot
+            Press(d, Special, 3);
+            return;
+        }
         // Damage on a bro that has just respawned does not kill it.
-        if (bro == null || !player.IsAliveAndSpawnedHero() || bro.IsParachuteActive || !bro.enabled || Time.time - d.SpawnedAt < 1.5f) return;
+        if (bro == null || !player.IsAliveAndSpawnedHero() || bro.IsParachuteActive || !bro.enabled || gameNow - d.SpawnedAt < 1.5f) return;
         // A natural death earlier may have left one life, and a death with none left reloads the level.
         if (livesAtStart > 0 && player.Lives < livesAtStart) HeroController.SetLives(d.N, livesAtStart);
         forcedLivesBefore = player.Lives;
         d.LastLives = forcedLivesBefore;
         deathForced = true;
-        deathForcedAt = Time.time;
+        deathForcedAt = gameNow;
         AddEvent("force-death", "player " + d.N + " lives " + player.Lives + ", Damage(9999, Bullet)");
         bro.Damage(9999, DamageType.Bullet, 0f, 0f, 0, bro, bro.X, bro.Y);
     }
@@ -1602,7 +1976,8 @@ public class ScenarioLevelRunner : MonoBehaviour
 
     private void ScanGrid()
     {
-        int w = Mathf.Min(Map.Width, Map.blocks.GetLength(0)), h = Mathf.Min(Map.Height, Map.blocks.GetLength(1));
+        // A level loaded from a super checkpoint is shifted by the load offsets, and the cells past them have no block data
+        int w = Mathf.Min(Map.Width - Map.lastXLoadOffset, Map.blocks.GetLength(0)), h = Mathf.Min(Map.Height - Map.lastYLoadOffset, Map.blocks.GetLength(1));
         var ladder = new bool[w, h];
         var quick = new bool[w, h];
         var bouncy = new bool[w, h];
@@ -1624,18 +1999,18 @@ public class ScenarioLevelRunner : MonoBehaviour
         AddComponents("ladder", ladder);
         AddComponents("quicksand", quick);
         AddComponents("bouncy", bouncy);
-        AddComponents("pickup", crate);
+        AddComponents("pickup", crate, false);
         tunnelReps.Clear();
         Components(tunnel, tunnelReps);
     }
 
-    private void AddComponents(string kind, bool[,] grid)
+    private void AddComponents(string kind, bool[,] grid, bool drivable = true)
     {
         var reps = new List<Vector2>();
         int count = Components(grid, reps);
         if (count == 0) return;
         Count(kind, count);
-        foreach (var p in reps) mechs.Add(new Mech { Kind = kind, Pos = p });
+        foreach (var p in reps) mechs.Add(new Mech { Kind = kind, Pos = p, Drivable = drivable });
     }
 
     private static int Components(bool[,] grid, List<Vector2> reps)
@@ -1673,7 +2048,7 @@ public class ScenarioLevelRunner : MonoBehaviour
 
     private void ScanRegistries()
     {
-        AddObjects("switch", Map.switches == null ? null : Map.switches.Cast<Component>());
+        AddObjects("switch", Map.switches == null ? null : Map.switches.Cast<Component>().Where(sw => !IsMechSwitch(sw)));
         AddObjects("teleportDoor", Map.teleportDoors == null ? null : Map.teleportDoors.Cast<Component>());
         AddObjects("cage", Map.cages == null ? null : Map.cages.Cast<Component>());
         AddObjects("zipline", UnityEngine.Object.FindObjectsOfType<ZipLine>().Cast<Component>());
@@ -1688,6 +2063,12 @@ public class ScenarioLevelRunner : MonoBehaviour
         flagsTotal = Map.checkPoints == null ? 0 : Map.checkPoints.Count(cp => cp != null);
         if (flagsTotal > 0) Count("checkpoint", flagsTotal);
         if (Map.newestHelicopter != null) Count("helicopter", 1);
+    }
+
+    private static bool IsMechSwitch(object instance)
+    {
+        var c = instance as Component;
+        return c != null && c.GetComponentInParent<MookArmouredGuy>() != null;
     }
 
     private void AddObjects(string kind, IEnumerable<Component> objects)
@@ -1763,7 +2144,13 @@ public class ScenarioLevelRunner : MonoBehaviour
 
     public void OnMechanicCall(string kind, string method, object instance, object[] args)
     {
-        if (phase != "driving") return;
+        if (phase != "driving" || directCall) return;
+        if (kind == "switch" && IsMechSwitch(instance)) return;
+        // An override that calls its base runs two patched methods on one call
+        if (lastMechFrame == Time.frameCount && ReferenceEquals(lastMechInstance, instance) && lastMechKind == kind) return;
+        lastMechFrame = Time.frameCount;
+        lastMechInstance = instance;
+        lastMechKind = kind;
         bool byDriven = false;
         if (args != null)
         {
@@ -1861,7 +2248,7 @@ public class ScenarioLevelRunner : MonoBehaviour
 
     private void PickMechanic(TestVanDammeAnim bro)
     {
-        nextMechPick = Time.time + 1f;
+        nextMechPick = gameNow + 1f;
         Vector2 here = new Vector2(bro.X, bro.Y);
         CheckPoint final = FinalFlag();
         float dir = final != null && final.X < bro.X ? -1f : 1f;
@@ -1869,9 +2256,10 @@ public class ScenarioLevelRunner : MonoBehaviour
         float bestD = float.MaxValue;
         foreach (var m in mechs)
         {
-            if (m.Attempted || m.Used || !DrivableKinds.Contains(m.Kind)) continue;
+            if (m.Attempted || m.Used || !m.Drivable || !DrivableKinds.Contains(m.Kind)) continue;
             if (!exerciseAll && exercised.ContainsKey(m.Kind)) continue;
-            if (m.Target != null && !m.Target.gameObject.activeInHierarchy) continue;
+            // A destroyed target compares equal to null but keeps its reference
+            if (!ReferenceEquals(m.Target, null) && (m.Target == null || !m.Target.gameObject.activeInHierarchy)) continue;
             float ahead = (m.Pos.x - here.x) * dir;
             if (ahead < -32f || ahead > 240f || Mathf.Abs(m.Pos.y - here.y) > 160f) continue;
             float dist = Vector2.Distance(m.Pos, here);
@@ -1880,7 +2268,7 @@ public class ScenarioLevelRunner : MonoBehaviour
         if (best == null) return;
         mechTarget = best;
         best.Attempted = true;
-        mechTargetUntil = Time.time + MechanicGiveUpSec;
+        mechTargetUntil = gameNow + MechanicGiveUpSec;
         mechArrivedAt = -1f;
     }
 
@@ -1905,6 +2293,7 @@ public class ScenarioLevelRunner : MonoBehaviour
     {
         var bro = driven[0].LastChar;
         if (bro == null || m.Target == null) return false;
+        directCall = true;
         try
         {
             if (m.Kind == "zipline") ((ZipLine)m.Target).AttachUnit(bro);
@@ -1917,10 +2306,12 @@ public class ScenarioLevelRunner : MonoBehaviour
             ScenarioLevelRun.NoteError("direct " + m.Kind + ": " + e.Message);
             return false;
         }
+        finally
+        {
+            directCall = false;
+        }
         m.Used = true;
-        Dictionary<string, object> entry;
-        if (exercised.TryGetValue(m.Kind, out entry)) entry["via"] = "direct";
-        else RecordExercise(m.Kind, "direct", null);
+        RecordExercise(m.Kind, "direct", null);
         return true;
     }
 
@@ -1930,7 +2321,7 @@ public class ScenarioLevelRunner : MonoBehaviour
         var m = mechTarget;
         bool arrived = Mathf.Abs(m.Pos.x - bro.X) < 16f && Mathf.Abs(m.Pos.y - bro.Y) < 24f;
         if (!arrived && mechArrivedAt < 0f) return;
-        if (mechArrivedAt < 0f) mechArrivedAt = Time.time;
+        if (mechArrivedAt < 0f) mechArrivedAt = gameNow;
         int face = m.Pos.x >= bro.X ? 1 : -1;
         switch (m.Kind)
         {
@@ -1946,7 +2337,7 @@ public class ScenarioLevelRunner : MonoBehaviour
             case "zipline":
             case "bouncy": Press(d, Jump, 12); break;
             case "quicksand":
-                if (Time.time - mechArrivedAt > 1f) Press(d, Jump, 12);
+                if (gameNow - mechArrivedAt > 1f) Press(d, Jump, 12);
                 break;
             case "wormTunnel": Hold(want, face); break;
         }
@@ -1981,7 +2372,7 @@ public class ScenarioLevelRunner : MonoBehaviour
         s["theme"] = Map.MapData == null ? null : Map.MapData.theme.ToString();
         s["onlyTriggersCanWinLevel"] = Map.MapData != null && Map.MapData.onlyTriggersCanWinLevel;
         int enemies = 0;
-        if (Map.units != null) enemies = Map.units.Count(u => u != null && u.gameObject.activeInHierarchy && u.IsEnemy && u.health > 0);
+        if (Map.units != null) enemies = Map.units.Count(u => u != null && u.gameObject.activeInHierarchy && Hostile(u, players[0]) && u.health > 0);
         s["enemies"] = enemies;
         s["bosses"] = UnityEngine.Object.FindObjectsOfType<Boss>().Select(b => b.GetType().Name).Distinct().ToArray();
         s["checkpoints"] = flagsTotal;
@@ -1993,9 +2384,11 @@ public class ScenarioLevelRunner : MonoBehaviour
         s["finalFlag"] = final == null ? null : new Dictionary<string, object> { { "x", Mathf.Round(final.X) }, { "y", Mathf.Round(final.Y) } };
         if (final != null)
         {
-            var path = PathfindingController.FindPath(new GridPoint(bro.collumn, bro.row),
-                new GridPoint(Map.GetCollumn(final.X), Map.GetRow(final.Y + 4f)), NewCapabilities(), 1000f);
-            s["pathToFinalFlag"] = path != null;
+            int goalCol = Map.GetCollumn(final.X), goalRow = Map.GetRow(final.Y + 4f);
+            var path = PathfindingController.FindPath(new GridPoint(bro.collumn, bro.row), new GridPoint(goalCol, goalRow), NewCapabilities(), 1000f);
+            // FindPath answers an unreachable goal, or one past its time limit, with the best partial path
+            PathPoint end = path == null || path.points.Count == 0 ? null : path.points[path.points.Count - 1];
+            s["pathToFinalFlag"] = end != null && end.collumn == goalCol && end.row == goalRow;
             s["pathNodes"] = path == null ? 0 : path.points.Count;
         }
         else
@@ -2020,6 +2413,7 @@ public class ScenarioLevelRunner : MonoBehaviour
         if (phase == "done") return;
         phase = "done";
         outcome = how;
+        ScenarioLevelRun.Outcome = how;
         outcomeDetail = detail;
         if (hold != null) EndHold(hold, KitDone(hold.Rec) ? "ran" : "run-ended", null);
         ReleaseRescues();
@@ -2046,7 +2440,7 @@ public class ScenarioLevelRunner : MonoBehaviour
     {
         var checks = new List<object>();
         bool surveyMode = outcome == "survey";
-        if (!surveyMode && driveStartReal > 0f)
+        if (!surveyMode && driveStarted)
         {
             if (durationSec <= 0f)
             {
@@ -2070,9 +2464,10 @@ public class ScenarioLevelRunner : MonoBehaviour
                 if (actionCounts[i] == 0) allUsed = false;
             }
             checks.Add(Check("actionsUsed", allUsed, string.Join(", ", parts.ToArray()) + "; special ammo spent " + characters.Sum(c => c.AmmoSpent)
-                + "; special ran " + characters.Sum(c => c.SpecialRuns) + ", melee ran " + characters.Sum(c => c.MeleeRuns)));
+                + "; special ran " + characters.Sum(c => c.Special.Runs) + ", melee ran " + characters.Sum(c => c.Melee.Runs)));
             if (swapped) checks.Add(Check("drivenAfterSwap", actionsSinceSwap > 0, actionsSinceSwap + " action presses since the last character swap"));
-            checks.Add(Check("enemiesEngaged", seenEnemies.Count > 0, "seen " + seenEnemies.Count + ", killed " + killedEnemies.Count));
+            checks.Add(Check("enemiesEngaged", seenEnemies.Count > 0, "seen " + seenEnemies.Count + ", killed " + killedEnemies.Count
+                + ", gone without a death seen " + despawnedEnemies.Count));
             if (required.Count > 0)
             {
                 var gaps = new List<string>();
@@ -2132,7 +2527,7 @@ public class ScenarioLevelRunner : MonoBehaviour
         report["scenario"] = surveyMode ? "level-survey" : "level-run";
         report["passed"] = passed;
         report["outcome"] = outcome;
-        report["durationSec"] = driveStartReal > 0f ? T() : 0f;
+        report["durationSec"] = driveStarted ? T() : 0f;
         report["args"] = argsEcho;
         report["context"] = context;
         report["checks"] = checks;

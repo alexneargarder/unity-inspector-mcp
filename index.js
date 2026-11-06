@@ -13,27 +13,34 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import { HANDSHAKE_TIMEOUT, UNITY_PRODUCT_DIR, UnityInspectorClient, defaultPort, isHandshakeRefusal, tokenSearchIn, toolCommand, unityDataDirs } from './lib/unity-client.js';
-import { captureCommandHelp, composeExtraLaunchArgs, detectActiveProfile, forgetCommandHelp, gameStartTime, instanceModeChecked, invalidateGameProcessScan, isGameRunning, killGame, listInstances, ownedGameProcesses, probeInstanceMode, readValidatedPidfile, removeInstance, resolveLaunchCommand, runCommandCapture, spawnDetached } from './lib/game-process.js';
+import { COMMAND_CANCELLED, COMMAND_TIMEOUT, HANDSHAKE_TIMEOUT, UNITY_PRODUCT_DIR, UnityInspectorClient, cancelledError, defaultPort, isHandshakeRefusal, simulateInputProblem, tokenSearchIn, toolCommand, unityDataDirs } from './lib/unity-client.js';
+import { captureCommandHelp, parseStatStartTicks, composeExtraLaunchArgs, detectActiveProfile, forgetCommandHelp, gameBuild, gameStartTime, instanceModeChecked, instanceProbeFailure, invalidateGameProcessScan, isGameRunning, isWsl, killGame, listInstances, ownedGameProcesses, probeInstanceMode, readValidatedPidfile, removeInstance, resolveLaunchCommand, runCommandCapture, spawnDetached, userGameOutOfReach } from './lib/game-process.js';
 import { NO_INSTANCE_REASONS, instanceConfig, launcherConfig, steamConfig, withRoot } from './lib/instance.js';
+import { LAUNCH_REFUSED, preflightSteamLaunch, prepareSteamLaunch } from './lib/steam-launch.js';
 import { tokenizeCommand } from './lib/command-line.js';
-import { CAPTURE_FILE, CAPTURE_STATES_DIR, DEFAULT_SETTLE_MS, DEFAULT_STATES_PATH, DEFAULT_SWAP_SETTLE_MS, DEFAULT_SWAP_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, REPORT_FILE, STATES_COPY_NAME, formatLogTail, parseLevel, runCapture, teardownGame } from './lib/animation-capture.js';
+import { CAPTURE_FILE, CAPTURE_STATES_DIR, DEFAULT_SETTLE_MS, DEFAULT_STATES_PATH, DEFAULT_SWAP_SETTLE_MS, DEFAULT_SWAP_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, REPORT_FILE, STATES_COPY_NAME, claimLeaseMs, formatLogTail, isAbsoluteGamePath, outDirProblem, parseLevel, releaseClaim, runCapture, teardownGame } from './lib/animation-capture.js';
 import {
+  argumentTypeProblems,
   buildScriptCatalog,
   compactTestScriptReply,
   listCSharpScripts,
   listTestScripts,
   readScriptSource,
+  loadedScriptName,
   runTestScript,
+  unknownArgumentsProblem,
+  withoutNullArguments,
 } from './lib/script-library.js';
-import { isPlayerLogName } from './lib/log-delta.js';
+import { START_TIME_TOLERANCE_MS, fileIdOf, isPlayerLogName, linesBackward, readGuard, sameLogRun, sameRun } from './lib/log-delta.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const NEW_LINES_MAX_BYTES = 64 * 1024;
+const READ_LOG_MAX_BYTES = 64 * 1024;
 const LAUNCH_LOG_TAIL_LINES = 20;
 const LAUNCH_STDERR_LIMIT_BYTES = 4096;
+const LAUNCH_LOG_TAIL_BYTES = 64 * 1024;
 // The launcher prefixes its own lines with a timestamp; the game's stdout lands in the same file
 const LAUNCH_LOG_LINE_RE = /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] /;
 const LAUNCH_POLL_TIMEOUT_MS = 60000;
@@ -55,6 +62,27 @@ const ROOT_DISCOVERY_TIMEOUT_MS = 4000;
 const LAUNCHER_RETRY_MS = 15000;
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+function throwIfCancelled(signal, what) {
+  if (signal?.aborted) throw cancelledError(what);
+}
+
+async function within(promise, ms, signal = null, fallback = undefined) {
+  let expire;
+  const expired = new Promise((resolve) => { expire = () => resolve(fallback); });
+  const timer = setTimeout(expire, ms);
+  // A listener added to a signal already aborted never fires
+  if (signal?.aborted) expire();
+  signal?.addEventListener('abort', expire, { once: true });
+  try {
+    return await Promise.race([promise, expired]);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', expire);
+  }
+}
+
+const pause = (ms, signal = null) => within(new Promise(() => {}), ms, signal);
 
 // Derived on first use, never at import: a test scrubs CLAUDE_SESSION_ID before it asks anything.
 // Neither carries a path until the launcher has reported the root every instance path hangs off
@@ -83,12 +111,22 @@ function launcherIsUsable() {
   return serverPlatform === 'linux' && sessionLauncher().launchCommand !== null;
 }
 
+function refuseUserGameUnderWsl(action) {
+  if (!isWsl()) return;
+  throw new Error(
+    `${action} cannot reach the user's game from WSL: the game runs on Windows, where this server can ` +
+    `neither see nor signal its process. Start or stop it on Windows; the server connects to it as it is.`
+  );
+}
+
 export function userGame() {
   return (userGameMemo ??= steamConfig());
 }
 
 // One explicit target, resolved once and changed only by launch_game
 let currentTarget = null;
+let targetPending = null;
+let targetGeneration = 0;
 
 export function activeTarget() {
   return (currentTarget ??= sessionInstance().isAgentInstance ? 'instance' : 'steam');
@@ -102,14 +140,88 @@ export function targetDescription(target = activeTarget()) {
   return target === 'instance' ? `the game of instance ${sessionInstance().id}` : "the user's game";
 }
 
+function reportedTarget() {
+  return targetPending === null ? activeTarget() : null;
+}
+
+function pendingRefusal() {
+  return asSentence(
+    `This server has no target yet: this session has instance ${sessionInstance().id} of its own, and ` +
+    `${targetPending}. Nothing was sent to any game; the launcher is asked again ` +
+    `${LAUNCHER_RETRY_MS / 1000}s after its last failure`
+  );
+}
+
+const boundCalls = [];
+
+function refuseWhileBound(nextTarget) {
+  if (boundCalls.length === 0) return;
+  throw new Error(
+    `Cannot switch to ${targetDescription(nextTarget)} while ${boundCalls.join(', ')} ` +
+    `${boundCalls.length === 1 ? 'is' : 'are'} still running on ${reportedTarget() === null ? 'no target' : targetDescription()}: ` +
+    `its remaining commands would reach the other game. Wait for ${boundCalls.length === 1 ? 'it' : 'them'} to finish and try again.`
+  );
+}
+
+let instanceOpTail = Promise.resolve();
+
+function acquireInstanceOp() {
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  const prior = instanceOpTail;
+  instanceOpTail = prior.then(() => held);
+  let released = false;
+  return prior.then(() => () => {
+    if (released) return;
+    released = true;
+    release();
+  });
+}
+
+const vanillaGames = new Map();
+const targetOf = (config) => (config.isAgentInstance ? 'instance' : 'steam');
+
+async function launchedWithoutMods(config) {
+  const target = targetOf(config);
+  const record = vanillaGames.get(target);
+  if (!record) return false;
+  if ((await isGameRunning(config)) === false) {
+    vanillaGames.delete(target);
+    return false;
+  }
+  if (record.startMs !== null) {
+    const started = await gameStartTime(config);
+    if (started !== null && Math.abs(started - record.startMs) > 1000) {
+      vanillaGames.delete(target);
+      return false;
+    }
+  }
+  return true;
+}
+
+const capitalized = (text) => text.charAt(0).toUpperCase() + text.slice(1);
+
+function vanillaMessage(config) {
+  return `${capitalized(targetDescription(targetOf(config)))} was launched without mods (vanilla), so no ` +
+    `inspector runs in it. Relaunch it with launch_game { restart: true } to drive it.`;
+}
+
 // The waits a unit test cannot afford to sit through in real seconds
 const launchTiming = {
   probeRetryMs: LAUNCHER_RETRY_MS,
   rootRetryMs: LAUNCHER_RETRY_MS,
   vanillaExitWaitMs: VANILLA_EXIT_WAIT_MS,
+  startConfirmMs: 15000,
+  startStableMs: 2000,
+  startPollMs: 500,
+  steamStartMs: 120000,
+  // Wine's shutdown gives system processes 2s, then closes within 4s of that stage's start, and Valve's Wine starts that stage at once
+  wineserverExitMs: 10000,
+  wineserverPollMs: 250,
   capPollMs: 5000,
   capWaitMs: 120000,
   portWaitMs: 10000,
+  portReservationMs: 180000,
   instanceBudgetMs: INSTANCE_LAUNCH_POLL_TIMEOUT_MS,
 };
 
@@ -120,11 +232,13 @@ export function configureLaunchTiming(overrides = {}) {
 
 const R2_PROFILES_SUFFIX = 'r2modmanPlus-local/Broforce/profiles';
 const UMM_LOG_IN_PROFILE = 'UMM/Core/Log.txt';
-const DIRECT_INSTALL_LOGS = ['Mods/UnityModManager/Log.txt', 'Mods/Log.txt'];
+// UMM writes its log beside its own assembly
+const DIRECT_INSTALL_LOGS = ['Broforce_Data/Managed/UnityModManager/Log.txt'];
 // Unity only settled on Player.log in 2018.3; this game is 2017.4 and writes output_log.txt on Windows
 const WINDOWS_PLAYER_LOGS = ['Player.log', 'output_log.txt'];
-// etimes reports whole seconds, so a log written in the game's start second can read as older than it
-const STALE_TOLERANCE_MS = 3000;
+const STALE_TOLERANCE_MS = START_TIME_TOLERANCE_MS;
+const SAME_RUN_WINDOW_MS = 60000;
+const ONLY_NEW_BASELINE_LINES = 20;
 
 function r2ProfileRoots() {
   const roots = [path.join(os.homedir(), '.config', R2_PROFILES_SUFFIX)];
@@ -133,7 +247,16 @@ function r2ProfileRoots() {
   return [...new Set(roots)];
 }
 
+async function detectLogPlatform() {
+  try {
+    await unityClient.detectPlatform();
+  } catch (err) {
+    console.error(`Game path detection failed while looking for the log: ${err.message}`);
+  }
+}
+
 async function playerLogPaths() {
+  await detectLogPlatform();
   const home = os.homedir();
   const { linux, windows } = await unityDataDirs({
     home,
@@ -167,15 +290,15 @@ function logOverride() {
 
 async function ummLogSearch() {
   const override = logOverride();
-  if (override) return { paths: [override], displays: [override], override: true };
+  if (override) return { paths: [override], ummPaths: [], playerPaths: [], displays: [override], override: true };
 
   const config = activeConfig();
   if (config.isAgentInstance) {
-    const paths = [config.ummLog, config.playerLog];
-    return { paths, displays: [...paths], override: false };
+    const paths = [config.playerLog, config.ummLog];
+    return { paths, ummPaths: [config.ummLog], playerPaths: [config.playerLog], displays: [...paths], override: false };
   }
 
-  const paths = [];
+  const ummPaths = [];
   const displays = [];
 
   for (const root of r2ProfileRoots()) {
@@ -195,38 +318,40 @@ async function ummLogSearch() {
     }
     for (const profile of profiles) {
       const candidate = path.join(root, profile, UMM_LOG_IN_PROFILE);
-      paths.push(candidate);
+      ummPaths.push(candidate);
       displays.push(candidate);
     }
   }
 
-  try {
-    await unityClient.detectPlatform();
-  } catch (err) {
-    console.error(`Game path detection failed while looking for the log: ${err.message}`);
-  }
+  await detectLogPlatform();
   if (unityClient.gamePath) {
     for (const relative of DIRECT_INSTALL_LOGS) {
       const candidate = path.join(unityClient.gamePath, relative);
-      paths.push(candidate);
+      ummPaths.push(candidate);
       displays.push(candidate);
     }
   }
 
-  for (const candidate of await playerLogPaths()) {
-    paths.push(candidate);
-    displays.push(candidate);
-  }
+  const playerPaths = await playerLogPaths();
+  displays.push(...playerPaths);
 
-  return { paths: [...new Set(paths)], displays: [...new Set(displays)], override: false };
+  return {
+    paths: [...new Set([...playerPaths, ...ummPaths])],
+    ummPaths: [...new Set(ummPaths)],
+    playerPaths,
+    displays: [...new Set(displays)],
+    override: false,
+  };
 }
 
-let newLinesOffset = 0;
-let newLinesPath = null;
-// Unity rotates Player.log at launch, so the path alone cannot tell one run's log from the next
-let newLinesFileId = null;
+let newLinesState = null;
+let newLinesQueue = Promise.resolve();
 
-const fileIdOf = (stat) => `${stat.dev}:${stat.ino}`;
+function serializeNewLines(read) {
+  const run = newLinesQueue.then(read, read);
+  newLinesQueue = run.catch(() => {});
+  return run;
+}
 
 async function statLogFile(candidate) {
   try {
@@ -248,33 +373,46 @@ async function newestExisting(candidates, minMtimeMs = null) {
   return best;
 }
 
-export async function resolveLogFile(detectProfile = detectActiveProfile, startTime = gameStartTime) {
+async function preferredLog(playerPaths, ummPaths, liveSince) {
+  const player = await newestExisting(playerPaths, liveSince);
+  const umm = await newestExisting(ummPaths, liveSince);
+  if (!player || !umm) return player ?? umm;
+  // Player.log gets every UMM line the moment it is logged, and Unity's own output besides
+  return liveSince === null && umm.mtimeMs - player.mtimeMs > SAME_RUN_WINDOW_MS ? umm : player;
+}
+
+async function stuckLog(stickTo, paths, started, liveSince) {
+  if (!stickTo?.path || !paths.includes(stickTo.path) || !sameRun(stickTo.started, started)) return null;
+  const stat = await statLogFile(stickTo.path);
+  if (!stat || (liveSince !== null && stat.mtimeMs < liveSince)) return null;
+  return { path: stickTo.path, mtimeMs: stat.mtimeMs };
+}
+
+async function selectLogs(detectProfile, startTime, stickTo) {
   const config = activeConfig();
-  const { paths, override } = await ummLogSearch();
+  const search = await ummLogSearch();
 
   const started = await startTime(config);
   const liveSince = Number.isFinite(started) ? started - STALE_TOLERANCE_MS : null;
 
-  let chosen = override ? await newestExisting(paths) : null;
-
-  if (!override && config.isAgentInstance) {
-    chosen = liveSince === null
-      ? await newestExisting(paths)
-      : (await newestExisting([config.ummLog], liveSince))
-        ?? (await newestExisting([config.playerLog], liveSince))
-        ?? (await newestExisting(paths));
-  } else if (!override) {
-    const profile = await detectProfile(config);
-    if (profile) {
-      chosen = liveSince === null
-        ? await newestExisting([...profileLogPaths(profile), ...(await playerLogPaths())])
-        : (await newestExisting(profileLogPaths(profile), liveSince))
-          ?? (await newestExisting(await playerLogPaths(), liveSince));
-    }
-
-    if (!chosen) chosen = await newestExisting(paths);
+  if (search.override) {
+    return { config, search, started, liveSince, chosen: await newestExisting(search.paths), ummPaths: [] };
   }
 
+  let ummPaths = search.ummPaths;
+  if (!config.isAgentInstance) {
+    const profile = await detectProfile(config);
+    if (profile) ummPaths = profileLogPaths(profile);
+  }
+
+  const chosen = (await stuckLog(stickTo, search.paths, started, liveSince))
+    ?? (await preferredLog(search.playerPaths, ummPaths, liveSince))
+    ?? (await newestExisting(search.paths));
+  return { config, search, started, liveSince, chosen, ummPaths };
+}
+
+export async function resolveLogFile(detectProfile = detectActiveProfile, startTime = gameStartTime, { stickTo = null } = {}) {
+  const { config, search, started, liveSince, chosen } = await selectLogs(detectProfile, startTime, stickTo);
   if (!chosen) return null;
 
   const modifiedAt = new Date(chosen.mtimeMs).toISOString();
@@ -282,47 +420,103 @@ export async function resolveLogFile(detectProfile = detectActiveProfile, startT
     return {
       ...chosen,
       modifiedAt,
+      started,
       stale: true,
       warning:
         `${chosen.path} was last written ${modifiedAt}, before the running game started ` +
         `(${new Date(started).toISOString()}) — the running game is not writing to it. ` +
         (config.isAgentInstance
-          ? chosen.path === config.playerLog
-            ? `That is instance ${config.id}'s own player log, and no log of its is fresher, so the ` +
-              `game has written nothing since it started.`
-            : `Instance ${config.id}'s profile log may be absent or appear late, while its player log ` +
-              `at ${config.playerLog} carries the same lines.`
-          : override
+          ? `Neither of instance ${config.id}'s logs has been written since it started, so its game ` +
+            `has logged nothing since.`
+          : search.override
             ? `UNITY_INSPECTOR_LOG selected this file; unset it to search for the live log, ` +
               `or repoint it at the log the game is writing.`
-            : `On a doorstop launch UMM's own log may be absent or appear late, while Unity's ` +
-              `player log carries the same lines; set UNITY_INSPECTOR_LOG if the live log is ` +
-              `somewhere else.`),
+            : `No player log this server searches has been written since then either; set ` +
+              `UNITY_INSPECTOR_LOG if the live log is somewhere else.`),
     };
   }
 
-  return { ...chosen, modifiedAt, stale: false };
+  return { ...chosen, modifiedAt, started, stale: false };
 }
 
-async function readLogTail(resolved, args) {
-  const logContent = await fs.readFile(resolved.path, 'utf-8');
-  const allLines = logContent.split('\n');
-  let lines = allLines;
-
-  if (args.filter) {
-    const filterLower = args.filter.toLowerCase();
-    lines = lines.filter(l => l.toLowerCase().includes(filterLower));
-  }
-
-  const requested = Number(args.lines ?? 50);
-  const count = Number.isFinite(requested) ? Math.max(1, Math.floor(requested)) : 50;
-  lines = lines.slice(-count);
-
+function tailReply(resolved, kept, available, readerCut) {
+  const newest = newestLinesWithin(kept, READ_LOG_MAX_BYTES, available);
+  if (readerCut && newest.returned > 0) newest.cut = true;
   return {
     ...logFileInfo(resolved),
-    totalLines: allLines.length,
-    returnedLines: lines.length,
-    content: lines.join('\n'),
+    returnedLines: newest.returned,
+    content: newest.content,
+    ...(newest.dropped > 0 || newest.cut
+      ? {
+          truncated: true,
+          droppedLines: newest.dropped,
+          message: readLogTruncation(newest),
+        }
+      : {}),
+  };
+}
+
+async function readLogTail(resolved, { count, filter }) {
+  if (filter) {
+    const wanted = filter.toLowerCase();
+    const matches = [];
+    let matchBytes = 0;
+    let total = 0;
+    const handle = await fs.open(resolved.path, 'r');
+    try {
+      for await (const line of handle.readLines({ crlfDelay: Infinity })) {
+        if (!line.toLowerCase().includes(wanted)) continue;
+        total++;
+        matches.push(line);
+        matchBytes += Buffer.byteLength(line) + 1;
+        while (matches.length > count || (matches.length > 1 && matchBytes - Buffer.byteLength(matches[0]) - 1 >= READ_LOG_MAX_BYTES)) {
+          matchBytes -= Buffer.byteLength(matches.shift()) + 1;
+        }
+      }
+    } finally {
+      await handle.close();
+    }
+    return tailReply(resolved, matches, Math.min(total, count), false);
+  }
+
+  const newestFirst = [];
+  let keptBytes = 0;
+  let full = false;
+  let available = 0;
+  for await (const line of linesBackward(resolved.path, { maxLineBytes: READ_LOG_MAX_BYTES })) {
+    available++;
+    const cost = Buffer.byteLength(line.text) + (newestFirst.length > 0 ? 1 : 0);
+    if (!full && (newestFirst.length === 0 || keptBytes + cost <= READ_LOG_MAX_BYTES)) {
+      newestFirst.push(line);
+      keptBytes += cost;
+    } else {
+      full = true;
+    }
+    if (available >= count) break;
+  }
+  return tailReply(resolved, newestFirst.reverse().map(line => line.text), available, newestFirst.at(-1)?.cut === true);
+}
+
+async function readRange(filePath, from, to) {
+  const handle = await fs.open(filePath, 'r');
+  try {
+    const buffer = Buffer.alloc(Math.max(0, to - from));
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, from);
+    return buffer.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
+  }
+}
+
+const splitLogLines = (buffer) => buffer.toString('utf-8').replace(/\r?\n$/, '').split(/\r?\n/);
+
+async function rememberNewLines(resolved, stat, offset) {
+  newLinesState = {
+    path: resolved.path,
+    fileId: fileIdOf(stat),
+    offset,
+    guard: await readGuard(resolved.path, offset),
+    started: resolved.started ?? null,
   };
 }
 
@@ -330,12 +524,9 @@ async function readNewLogLines(resolved, reset) {
   const logPath = resolved.path;
   const stat = await fs.stat(logPath);
   const fileSize = stat.size;
-  const fileId = fileIdOf(stat);
 
   if (reset) {
-    newLinesOffset = fileSize;
-    newLinesPath = logPath;
-    newLinesFileId = fileId;
+    await rememberNewLines(resolved, stat, fileSize);
     return {
       ...logFileInfo(resolved),
       isBaseline: true,
@@ -344,12 +535,20 @@ async function readNewLogLines(resolved, reset) {
     };
   }
 
-  if (newLinesPath !== logPath || newLinesFileId !== fileId || newLinesOffset > fileSize) {
-    const logContent = await fs.readFile(logPath, 'utf-8');
-    const lines = logContent.split('\n').slice(-20);
-    newLinesOffset = fileSize;
-    newLinesPath = logPath;
-    newLinesFileId = fileId;
+  const continuing = newLinesState?.path === logPath
+    && (await sameLogRun(logPath, newLinesState, stat, resolved.started ?? null));
+
+  if (!continuing) {
+    const from = Math.max(0, fileSize - NEW_LINES_MAX_BYTES);
+    const window = await readRange(logPath, from, fileSize);
+    let start = 0;
+    if (from > 0) {
+      const newline = window.indexOf(0x0a);
+      start = newline === -1 ? window.length : newline + 1;
+    }
+    const end = Math.max(start, window.lastIndexOf(0x0a) + 1);
+    const lines = end > start ? splitLogLines(window.subarray(start, end)).slice(-ONLY_NEW_BASELINE_LINES) : [];
+    await rememberNewLines(resolved, stat, from + end);
     return {
       ...logFileInfo(resolved),
       isBaseline: true,
@@ -358,7 +557,26 @@ async function readNewLogLines(resolved, reset) {
     };
   }
 
-  if (newLinesOffset === fileSize) {
+  let readFrom = newLinesState.offset;
+  let skippedBytes = 0;
+  if (fileSize - readFrom > NEW_LINES_MAX_BYTES) {
+    skippedBytes = fileSize - readFrom - NEW_LINES_MAX_BYTES;
+    readFrom = fileSize - NEW_LINES_MAX_BYTES;
+  }
+  let chunk = await readRange(logPath, readFrom, fileSize);
+  let chunkStart = readFrom;
+  if (skippedBytes > 0) {
+    const newline = chunk.indexOf(0x0a);
+    if (newline !== -1) {
+      skippedBytes += newline + 1;
+      chunk = chunk.subarray(newline + 1);
+      chunkStart += newline + 1;
+    }
+  }
+
+  const lastNewline = chunk.lastIndexOf(0x0a);
+  const complete = lastNewline === -1 && chunk.length < NEW_LINES_MAX_BYTES ? Buffer.alloc(0) : chunk.subarray(0, lastNewline === -1 ? chunk.length : lastNewline + 1);
+  if (complete.length === 0) {
     return {
       ...logFileInfo(resolved),
       isBaseline: false,
@@ -367,63 +585,40 @@ async function readNewLogLines(resolved, reset) {
       message: "No new log entries",
     };
   }
+  await rememberNewLines(resolved, stat, chunkStart + complete.length);
 
-  let readFrom = newLinesOffset;
-  let skippedBytes = 0;
-  if (fileSize - readFrom > NEW_LINES_MAX_BYTES) {
-    skippedBytes = fileSize - readFrom - NEW_LINES_MAX_BYTES;
-    readFrom = fileSize - NEW_LINES_MAX_BYTES;
-  }
-  const bytesToRead = fileSize - readFrom;
-
-  let newContent;
-  const fh = await fs.open(logPath, 'r');
-  try {
-    const buffer = Buffer.alloc(bytesToRead);
-    const { bytesRead } = await fh.read(buffer, 0, bytesToRead, readFrom);
-    newContent = buffer.subarray(0, bytesRead).toString('utf-8');
-  } finally {
-    await fh.close();
-  }
-  newLinesOffset = fileSize;
-  newLinesPath = logPath;
-  newLinesFileId = fileId;
-
-  const newLines = newContent.split('\n').filter(l => l.length > 0);
+  const lines = splitLogLines(complete);
   return {
     ...logFileInfo(resolved),
     isBaseline: false,
-    newLines: newLines.length,
-    content: newContent.trimEnd(),
+    newLines: lines.filter(l => l.length > 0).length,
+    content: lines.join('\n').trimEnd(),
     ...(skippedBytes > 0
       ? {
           truncated: true,
           skippedBytes,
-          message: `Output truncated: skipped ${skippedBytes} earlier bytes, showing the last ${NEW_LINES_MAX_BYTES} bytes. Use read_log without onlyNew for the full log.`,
+          message: `Output truncated: skipped ${skippedBytes} earlier bytes, showing the last ${NEW_LINES_MAX_BYTES} bytes. Use read_log without onlyNew, with a filter, to reach the earlier lines.`,
         }
       : {}),
   };
 }
 
-// Unity rotates Player.log at launch, so a stat or read can land on a path that just vanished
-async function withResolvedLog(use) {
-  let resolved = await resolveLogFile();
+async function withResolvedLog(use, options = {}) {
+  let resolved = await resolveLogFile(detectActiveProfile, gameStartTime, options);
   if (!resolved) throw await logNotFoundError();
 
   try {
     return await use(resolved);
   } catch (err) {
     if (err?.code !== 'ENOENT') throw err;
-    resolved = await resolveLogFile();
+    resolved = await resolveLogFile(detectActiveProfile, gameStartTime, options);
     if (!resolved) throw await logNotFoundError();
     return await use(resolved);
   }
 }
 
 export function resetPlatformDetection() {
-  unityClient.platform = null;
-  unityClient.gamePath = null;
-  unityClient.protonPrefix = null;
+  unityClient.resetDetection();
 }
 
 export function logFileInfo(resolved) {
@@ -434,29 +629,32 @@ export function logFileInfo(resolved) {
   };
 }
 
-// The two logs the target writes, named whether or not a game is answering
-export async function targetLogPaths(config = activeConfig()) {
+export async function targetLogPaths({ detectProfile = detectActiveProfile, startTime = gameStartTime } = {}) {
+  const config = activeConfig();
   if (config.isAgentInstance) return { umm: config.ummLog, player: config.playerLog };
 
-  const override = (process.env.UNITY_INSPECTOR_LOG || '').trim();
-  if (override) return { umm: override, player: null };
-
-  let profile = null;
+  let selection;
   try {
-    profile = await detectActiveProfile(config);
-  } catch {}
+    selection = await selectLogs(detectProfile, startTime, null);
+  } catch {
+    return { umm: null, player: null };
+  }
+  const { search, ummPaths, liveSince, chosen } = selection;
+  const newestPlayer = async (paths) => (await newestExisting(paths, liveSince))?.path ?? null;
 
-  return {
-    umm: profile ? (await newestExisting(profileLogPaths(profile)))?.path ?? null : null,
-    player: (await newestExisting(await playerLogPaths()))?.path ?? null,
-  };
-}
-
-export async function testScriptLogPaths() {
-  const paths = await targetLogPaths();
   const override = logOverride();
-  if (override && paths.umm === override && isPlayerLogName(override)) return { umm: null, player: override };
-  return paths;
+  if (override) {
+    if (isPlayerLogName(override)) return { umm: null, player: override };
+    return { umm: override, player: await newestPlayer(await playerLogPaths()) };
+  }
+
+  const pick = async (paths) => (chosen && paths.includes(chosen.path) ? chosen : null)
+    ?? (liveSince !== null ? await newestExisting(paths, liveSince) : null)
+    ?? (await newestExisting(paths));
+  return {
+    umm: (await pick(ummPaths))?.path ?? null,
+    player: await newestPlayer(search.playerPaths),
+  };
 }
 
 export async function findLogPath(detectProfile = detectActiveProfile, startTime = gameStartTime) {
@@ -476,10 +674,10 @@ async function logNotFoundError() {
     );
   }
   if (override) {
-    return new Error(`UMM log file not found: UNITY_INSPECTOR_LOG points at ${displays[0]}, which does not exist.`);
+    return new Error(`Log file not found: UNITY_INSPECTOR_LOG points at ${displays[0]}, which does not exist.`);
   }
   return new Error(
-    `UMM log file not found. Looked in:\n  ${displays.join('\n  ')}\n` +
+    `Log file not found. Looked in:\n  ${displays.join('\n  ')}\n` +
     `Set UNITY_INSPECTOR_LOG to the log path if it lives elsewhere.`
   );
 }
@@ -489,6 +687,7 @@ export const unityClient = new UnityInspectorClient();
 
 // Nothing user-facing ever prints a null port
 export function noPortMessage(config = activeConfig()) {
+  if (vanillaGames.has(targetOf(config))) return vanillaMessage(config);
   return config.isAgentInstance
     ? `No inspector port is known for instance ${config.id} yet — the launcher has not allocated one, ` +
       `or no game of this instance is running. Use launch_game to start it.`
@@ -571,7 +770,11 @@ function pointClient(port, config) {
 
 export async function pointClientAtTarget() {
   const config = activeConfig();
-  const port = await targetPort(config);
+  let port = await targetPort(config);
+  if (await launchedWithoutMods(config)) port = null;
+  if (config.isAgentInstance && config.ownerFile && (startupClaimPending || (await instanceOwnsGame(config)))) {
+    await claimInstance(config);
+  }
   pointClient(port, config);
   return port;
 }
@@ -732,6 +935,13 @@ function argsHelpQuote(block) {
     "\n```";
 }
 
+function steamArgumentHelp(withSteamFlag) {
+  const lead = withSteamFlag ? 'With steam: true ' : '';
+  return serverPlatform === 'darwin'
+    ? `\n\n${lead}${withSteamFlag ? 'the' : 'The'} Steam protocol launch takes no arguments, so launchArgs are not accepted.`
+    : `\n\n${lead}launchArgs follow the Doorstop arguments of Steam's -applaunch; the Steam protocol launch, used only when no Steam executable is found, takes none.`;
+}
+
 function renderArgumentHelp(instance, launch) {
   const known = (capture) => capture !== null && capture !== UNSETTLED && !capture.unknown;
   const blockFor = (capture, launchLabel) => capture.sections[launchLabel] ?? capture.sections.unlabelled ?? null;
@@ -739,7 +949,7 @@ function renderArgumentHelp(instance, launch) {
 
   if (instance === null) {
     if (launch === null) {
-      return "\n\nThe Steam protocol launch takes no arguments, so launchArgs are not accepted.";
+      return steamArgumentHelp(false);
     }
     if (!known(launch)) return '';
     const block = blockFor(launch, 'plain');
@@ -761,7 +971,7 @@ function renderArgumentHelp(instance, launch) {
       ? "\n\nThe configured instance launcher publishes no argument help, so launchArgs pass through to the instance launch as given."
       : "\n\nArguments the instance launch accepts, in the instance launcher's own words:" + argsHelpQuote(instanceBlock);
   if (launch === null) {
-    return forInstance + "\n\nWith steam: true the Steam protocol launch takes no arguments, so launchArgs are not accepted.";
+    return forInstance + steamArgumentHelp(true);
   }
   if (!known(launch)) return forInstance;
   const launchBlock = blockFor(launch, 'plain');
@@ -900,7 +1110,9 @@ export async function discoverInstancesRoot() {
     }
 
     if (reason !== null) {
-      console.error(`No instance for this session: ${reason}. Serving the user's game instead.`);
+      console.error(sessionInstance().isAgentInstance
+        ? `No target for this session's instance yet: ${reason}. It is asked again ${launchTiming.rootRetryMs / 1000}s later.`
+        : `The launcher's instances cannot be placed: ${reason}. Serving the user's game, which is not stopped by signal until they can.`);
       const result = { instancesRoot: null, stageRoot: null, reason };
       // Asked again after the cooldown, so a launcher that recovers is not written off for good
       rootDiscoveryFailure = { result, at: Date.now() };
@@ -911,18 +1123,34 @@ export async function discoverInstancesRoot() {
     // A stage root that is not an absolute path is no place to hang a stage off, so the session
     // has none at all rather than one resolved against whatever this process's cwd happens to be
     const stageRoot = typeof summary.stageRoot === 'string' && path.isAbsolute(summary.stageRoot)
-      ? summary.stageRoot
+      ? await canonicalPath(summary.stageRoot)
       : null;
+    const instancesRoot = await canonicalPath(summary.instancesRoot);
     const applied = { stageRoot };
     // Assigned into the memos rather than replacing them: a config handed out before the root was
     // known — the client's `gameConfig`, a caller's local — is the same object and gains it too
-    Object.assign(sessionInstance(), withRoot(sessionInstance(), summary.instancesRoot, applied));
+    Object.assign(sessionInstance(), withRoot(sessionInstance(), instancesRoot, applied));
     // The user's game is every Broforce process outside the instances root, so it takes the same
     // answer even when this session has no instance of its own
-    Object.assign(userGame(), withRoot(userGame(), summary.instancesRoot, applied));
-    return { instancesRoot: summary.instancesRoot, stageRoot, reason: null };
+    Object.assign(userGame(), withRoot(userGame(), instancesRoot, applied));
+    return { instancesRoot, stageRoot, reason: null };
   })();
   return rootDiscovery;
+}
+
+async function canonicalPath(target) {
+  const rest = [];
+  for (let existing = target; ;) {
+    try {
+      // /proc/<pid>/cwd always reads the resolved path, so a root reported through a symlink would own nothing
+      return path.join(await fs.realpath(existing), ...rest);
+    } catch {
+      const parent = path.dirname(existing);
+      if (parent === existing) return target;
+      rest.unshift(path.basename(existing));
+      existing = parent;
+    }
+  }
 }
 
 // Asked whenever a launcher is configured, whatever this session's own id says
@@ -932,20 +1160,22 @@ export async function launcherRootKnown() {
   return (await discoverInstancesRoot()).instancesRoot !== null;
 }
 
-// The pid-scoped kill on the user's game is every Broforce process this server does not know to be
-// an instance's — which, with the instances root unknown, is another session's game as well as the
-// user's. A launcher with an instance mode and no readable root is the one case that can happen in
+function unansweredHelp() {
+  const how = instanceProbeFailure();
+  return `the configured launcher did not answer \`--help\`${how ? ` (${how})` : ''}`;
+}
+
 // Why this server cannot place the launcher's instances, and so cannot tell another session's game
 // from the user's. Null when it can, or when there is nothing to tell apart. Asking is also what
 // drives the probe's and the discovery's own retries
-export async function unplaceableInstancesReason() {
-  if (activeTarget() === 'instance' || !launcherIsUsable()) return null;
+export async function unplaceableInstancesReason(target = activeTarget()) {
+  if (target === 'instance' || !launcherIsUsable()) return null;
 
   if (!(await instanceModeAvailable())) {
     // Only a clean answer lifts this: a launcher that says it has no instance mode runs none, while
     // one that could not answer has said nothing about the instances it may be running
     if (instanceModeChecked() === false) return null;
-    return `the configured launcher did not answer \`--help\`, so whether it runs instances of its own — ` +
+    return `${unansweredHelp()}, so whether it runs instances of its own — ` +
       `and where — is unknown (it is asked again ${LAUNCHER_RETRY_MS / 1000}s later)`;
   }
 
@@ -968,6 +1198,15 @@ export async function instanceTargetReady() {
   return known && sessionInstance().isAgentInstance;
 }
 
+async function targetPendingReason() {
+  if (!launcherIsUsable() || !sessionInstance().isAgentInstance) return null;
+  if (!(await instanceModeAvailable())) {
+    return instanceModeChecked() === false ? null : `${unansweredHelp()}, so whether it can run that instance is unknown`;
+  }
+  const { instancesRoot, reason } = await discoverInstancesRoot();
+  return instancesRoot === null ? reason : null;
+}
+
 let targetResolution = null;
 
 // Resolved before the first command acts on anything, and never flipped again on its own
@@ -982,35 +1221,54 @@ export function resetTargetResolution() {
   userGameMemo = null;
   launcherMemo = null;
   currentTarget = null;
+  targetPending = null;
+  targetGeneration++;
+  startupClaimPending = false;
+  boundCalls.length = 0;
+  vanillaGames.clear();
   launcherReadiness = { settled: false, value: UNSETTLED, promise: null };
 }
 
 export async function resolveTarget() {
   targetResolution ??= (async () => {
-    currentTarget = (await instanceTargetReady()) ? 'instance' : 'steam';
-    if (currentTarget === 'instance') {
-      // The root is known now, and nothing else stands between it and the claim: a server
-      // reconnecting on /mcp has to win the id back before the old wrapper's wait runs out
-      const config = sessionInstance();
-      const claimed = (await instanceOwnsGame(config)) ? (await writeOwnerFile(config)) !== null : false;
-      await adoptRunningInstance({ claimed });
-    } else {
-      await pointClientAtTarget();
+    const generation = targetGeneration;
+    const ready = await instanceTargetReady();
+    const pending = ready ? null : await targetPendingReason();
+    if (generation !== targetGeneration) return reportedTarget();
+    if (pending !== null) {
+      targetPending = pending;
+      targetResolution = null;
+      return null;
     }
+    targetPending = null;
+    currentTarget = ready ? 'instance' : 'steam';
+    if (ready) {
+      const config = sessionInstance();
+      if ((await claimInstance(config)) === null && !(await instanceDirExists(config))) startupClaimPending = true;
+    }
+    await pointClientAtTarget();
     return currentTarget;
   })();
   return targetResolution;
 }
 
+// A server that outlives its wrapper is reparented, and process.ppid read after that names init or a subreaper
+const WRAPPER_PID = process.ppid;
+let wrapperIdentity = null;
+
 // The wrapper this server runs under, as owner.pid records it: its pid and field 22 of
 // /proc/<pid>/stat, so a recycled pid is not mistaken for the wrapper that claimed the instance
-export async function ownerIdentity(pid = process.ppid) {
+export async function ownerIdentity() {
+  if (wrapperIdentity !== null) return wrapperIdentity;
   try {
-    const stat = await fs.readFile(`/proc/${pid}/stat`, 'utf8');
+    const stat = await fs.readFile(`/proc/${WRAPPER_PID}/stat`, 'utf8');
     // comm is parenthesised and may hold spaces, so the fields after it are what gets counted
     const afterComm = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
     const startTime = afterComm[19];
-    return /^\d+$/.test(String(startTime)) ? `${pid} ${startTime}` : null;
+    if (!/^\d+$/.test(String(startTime))) return null;
+    if (process.ppid !== WRAPPER_PID) return null;
+    wrapperIdentity = `${WRAPPER_PID} ${startTime}`;
+    return wrapperIdentity;
   } catch {
     return null;
   }
@@ -1022,16 +1280,59 @@ export async function ownerIdentity(pid = process.ppid) {
 // and a directory holding nothing but owner.pid reads to it as an instance that already exists
 export async function writeOwnerFile(config = sessionInstance()) {
   if (!config.isAgentInstance || !config.ownerFile) return null;
+  if (process.ppid !== WRAPPER_PID && !shutdownClaimGrace) return null;
   if (!(await instanceDirExists(config))) return null;
   const line = await ownerIdentity();
   if (line === null) return null;
   try {
-    await fs.writeFile(config.ownerFile, `${line}\n`);
+    await writeFileAtomic(config.ownerFile, `${line}\n`);
   } catch {
     return null;
   }
+  startupClaimPending = false;
   await recordOwnerClaim(config.ownerFile);
   return line;
+}
+
+let startupClaimPending = false;
+let shutdownClaimGrace = false;
+
+async function writeFileAtomic(file, text, options = {}) {
+  const temp = `${file}.${process.pid}.tmp`;
+  try {
+    await fs.writeFile(temp, text, options);
+    await fs.rename(temp, file);
+  } catch (err) {
+    await fs.rm(temp, { force: true }).catch(() => {});
+    throw err;
+  }
+}
+
+async function claimMayBeReplaced(current, ours) {
+  const recorded = /^(\d+) (\d+)$/.exec(current);
+  if (!recorded) return true;
+  let liveStart = null;
+  try {
+    liveStart = parseStatStartTicks(await fs.readFile(`/proc/${recorded[1]}/stat`, 'utf8'));
+  } catch {}
+  if (liveStart === null || String(liveStart) !== recorded[2]) return true;
+  return Number(recorded[2]) < Number(ours.split(' ')[1]);
+}
+
+export async function claimInstance(config = sessionInstance()) {
+  if (!config.isAgentInstance || !config.ownerFile) return null;
+  const line = await ownerIdentity();
+  if (line === null) return null;
+  let current = null;
+  try {
+    current = (await fs.readFile(config.ownerFile, 'utf8')).trim();
+  } catch {}
+  if (current === line) {
+    startupClaimPending = false;
+    return line;
+  }
+  if (current !== null && !(await claimMayBeReplaced(current, line))) return null;
+  return writeOwnerFile(config);
 }
 
 // The wrapper hardcodes no instances root and never asks the launcher for one, so the server tells
@@ -1044,7 +1345,7 @@ async function recordOwnerClaim(ownerFile) {
   const file = claimFile();
   if (!file) return;
   try {
-    await fs.writeFile(file, `${ownerFile}\n`);
+    await writeFileAtomic(file, `${ownerFile}\n`, { mode: 0o600 });
   } catch (err) {
     console.error(`Could not record the instance claim in ${file}: ${err.message}`);
   }
@@ -1058,15 +1359,23 @@ export async function instanceDirExists(config = sessionInstance()) {
   }
 }
 
-// A first launch has no directory to claim yet: the launcher creates it, and the id is claimed as
-// soon as it appears. The launch command's own end stops the watch, so a launcher that creates
-// nothing leaves nothing polling behind it
+let creationWatch = null;
+
 export async function claimInstanceWhenCreated(config, launchEnded) {
   if (!config.isAgentInstance) return null;
+  creationWatch = config;
+  try {
+    return await watchForCreation(config, launchEnded);
+  } finally {
+    if (creationWatch === config) creationWatch = null;
+  }
+}
+
+async function watchForCreation(config, launchEnded) {
   let running = true;
   const ended = Promise.resolve(launchEnded).then(() => { running = false; }, () => { running = false; });
   for (;;) {
-    if (await instanceDirExists(config)) return await writeOwnerFile(config);
+    if (await instanceDirExists(config)) return await claimInstance(config);
     if (!running) return null;
     let timer;
     await Promise.race([
@@ -1095,27 +1404,40 @@ export async function removeOwnerFile(config = sessionInstance()) {
 
 // A server started while its own instance is already running serves it rather than waiting to be told,
 // and claims the id as it does, so the wrapper it belongs to is the one that stops the game
-export async function adoptRunningInstance({ claimed = false } = {}) {
-  const config = sessionInstance();
-  if (!config.isAgentInstance) return null;
-  if (!claimed && (await instanceOwnsGame(config))) await writeOwnerFile(config);
+export async function adoptRunningInstance() {
+  if (!sessionInstance().isAgentInstance) return null;
   return await pointClientAtTarget();
 }
 
 export async function setTarget(next) {
   if (next !== 'instance' && next !== 'steam') throw new Error(`Unknown target: ${next}`);
-  const changed = next !== activeTarget();
+  const changed = targetPending !== null || next !== activeTarget();
   currentTarget = next;
+  targetPending = null;
+  targetGeneration++;
   // An explicit target is the resolution: the startup probe must not put the old one back
   targetResolution = Promise.resolve(next);
-  if (changed) unityClient.disconnect();
+  if (changed) unityClient.disconnect('The server switched to another game before this command was answered');
   return { changed, port: await pointClientAtTarget() };
 }
 
+function snapshotTarget() {
+  return { currentTarget, targetPending, targetResolution };
+}
+
+async function restoreTarget(snapshot) {
+  if (snapshot.currentTarget === currentTarget && snapshot.targetPending === targetPending) return;
+  currentTarget = snapshot.currentTarget;
+  targetPending = snapshot.targetPending;
+  targetResolution = snapshot.targetResolution;
+  targetGeneration++;
+  unityClient.disconnect();
+  if (targetPending === null && currentTarget !== null) await pointClientAtTarget();
+}
+
 async function runningInstanceReport() {
-  const config = sessionInstance();
-  if (!config.isAgentInstance || instanceModeChecked() !== true) return null;
-  const summary = await listInstances(config);
+  if (!(await launcherRootKnown())) return null;
+  const summary = await listInstances(sessionLauncher());
   return summary ? summary.running : null;
 }
 
@@ -1140,7 +1462,7 @@ export async function instanceField() {
     return {
       instance: null,
       instanceReason:
-        `the configured launcher did not answer \`--help\`, so whether it has an instance mode is ` +
+        `${unansweredHelp()}, so whether it has an instance mode is ` +
         `unknown (it is asked again ${LAUNCHER_RETRY_MS / 1000}s later)`,
     };
   }
@@ -1152,7 +1474,7 @@ export async function instanceField() {
   return {
     instance: {
       id: config.id,
-      port: await readInstancePort(config),
+      port: await targetPort(config),
       root: config.root,
       // Where this session stages its own build; null from a launcher whose list header reports
       // no stage root
@@ -1163,17 +1485,56 @@ export async function instanceField() {
 
 // Every reply that can arrive without a game behind it still says what this server is pointed at
 export async function serverStateFields({ withInstanceList = false } = {}) {
+  const pending = targetPending !== null;
   const fields = {
-    target: activeTarget(),
-    port: await targetPort(),
+    target: reportedTarget(),
+    port: pending ? null : await targetPort(),
     ...(await instanceField()),
-    logs: await targetLogPaths(),
+    logs: pending ? { umm: null, player: null } : await targetLogPaths(),
   };
-  if (withInstanceList && activeTarget() === 'instance') {
+  if (withInstanceList) {
     const running = await runningInstanceReport();
     if (running) fields.runningInstances = running;
   }
   return fields;
+}
+
+const GAME_VERSION_QUERY = 'return VersionNumber.version + " " + VersionNumber.versionDateString;';
+const GAME_VERSION_TIMEOUT_MS = 15000;
+const gameVersions = new WeakMap();
+
+function runningGameVersion() {
+  const socket = unityClient.socket;
+  if (!socket || !unityClient.isConnected()) return Promise.resolve(null);
+  if (!gameVersions.has(socket)) {
+    gameVersions.set(socket, unityClient.sendCommand('execute_code', { code: GAME_VERSION_QUERY }, GAME_VERSION_TIMEOUT_MS)
+      .then((reply) => {
+        if (reply?.success === false) {
+          gameVersions.delete(socket);
+          return null;
+        }
+        const text = typeof reply?.result === 'string' ? reply.result.trim() : '';
+        const match = /^(\d+)(?:\s+(.+))?$/.exec(text);
+        return match ? { version: Number(match[1]), buildDate: match[2] ?? null } : null;
+      }, () => {
+        gameVersions.delete(socket);
+        return null;
+      }));
+  }
+  return gameVersions.get(socket);
+}
+
+async function targetBuild({ answered }) {
+  const disk = await gameBuild(activeConfig()).catch(() => null);
+  const version = answered ? await runningGameVersion() : null;
+  if (disk === null && version === null) return null;
+  return {
+    store: disk?.store ?? null,
+    storeBuild: disk?.storeBuild ?? null,
+    gameDir: disk?.gameDir ?? null,
+    version: version?.version ?? null,
+    buildDate: version?.buildDate ?? null,
+  };
 }
 
 export const SERVER_CAPABILITIES = {
@@ -1191,10 +1552,23 @@ const server = new Server(
 
 // Define available tools
 export async function buildToolList() {
+  return toolDefinitions({ launchHelp: await launchArgumentHelp() });
+}
+
+let toolArgumentsMemo = null;
+
+export function toolArguments() {
+  toolArgumentsMemo ??= new Map(
+    toolDefinitions().map((tool) => [tool.name, tool.inputSchema.properties ?? {}])
+  );
+  return toolArgumentsMemo;
+}
+
+function toolDefinitions({ launchHelp = "" } = {}) {
   return [
       {
         name: "ping",
-        description: "Test connection to Unity Inspector",
+        description: "Test the connection; 'mainThreadAnswered' false means the game is hung or busy.",
         inputSchema: {
           type: "object",
           properties: {},
@@ -1202,59 +1576,60 @@ export async function buildToolList() {
       },
       {
         name: "list_gameobjects",
-        description: "List all GameObjects in the scene",
+        description: "Root GameObjects of the loaded scenes, DontDestroyOnLoad included; 'truncatedBy' names a cut.",
         inputSchema: {
           type: "object",
           properties: {
             includeInactive: { type: "boolean", default: true },
-            maxResults: { type: "number", default: 100 },
+            maxResults: { type: "integer", default: 100 },
           },
         },
       },
       {
         name: "inspect_gameobject",
-        description: "Inspect a specific GameObject by path",
+        description: "A GameObject by path or instanceId: at most 100 children ('childrenTruncated'); 'detailed' members cut near 30,000 characters ('truncated').",
         inputSchema: {
           type: "object",
           properties: {
             path: { type: "string", description: "e.g. '/Player'" },
-            detailed: { type: "boolean", description: "Include full component details", default: false },
+            instanceId: { type: "integer" },
+            detailed: { type: "boolean", default: false },
           },
-          required: ["path"],
         },
       },
       {
         name: "inspect_component",
-        description: "Inspect a component's fields and properties, instance and static, plus its declared instance methods. 'memberPath' reads one member instead, a dotted path into nested members; a miss answers 'suggestions'.",
+        description: "A component's fields and properties, instance and static, and its declared instance methods. 'memberPath' reads one member: a dotted path, numbers indexing lists; a miss answers 'suggestions'.",
         inputSchema: {
           type: "object",
           properties: {
             path: { type: "string", description: "GameObject path" },
+            instanceId: { type: "integer" },
             componentType: { type: "string" },
             memberPath: {
               type: "string",
               description: "One member instead of the whole component, e.g. 'weapon.damage'",
             },
           },
-          required: ["path", "componentType"],
+          required: ["componentType"],
         },
       },
       {
         name: "query_gameobjects",
-        description: "Search for GameObjects by name pattern, component type, or both. componentType matches base types and interfaces, so 'Projectile' finds its subclasses. The reply has count, totalFound, results, resolvedType, scanned and scanTruncated.",
+        description: "Search scene GameObjects by name pattern, component type, or both. componentType matches base types and interfaces, so 'Projectile' finds its subclasses. The reply has resolvedType, scanned, scanTruncated, truncatedBy.",
         inputSchema: {
           type: "object",
           properties: {
-            namePattern: { type: "string" },
+            namePattern: { type: "string", description: "* or ? glob, else substring" },
             componentType: { type: "string" },
             includeInactive: { type: "boolean", default: true },
-            maxResults: { type: "number", default: 100 },
+            maxResults: { type: "integer", default: 100 },
           },
         },
       },
       {
         name: "inspect_player",
-        description: "Get detailed information about the player(s)",
+        description: "Each player slot's bro, position and state",
         inputSchema: {
           type: "object",
           properties: {},
@@ -1262,7 +1637,7 @@ export async function buildToolList() {
       },
       {
         name: "list_enemies",
-        description: "Live enemies in the loaded level by the game's own classification: vehicles, tank weapons, boss pieces included. Entries: name, type, isMook, position, health, isAlive, plus RocketLib's unitType and category. mapLoaded says a level is loaded; when empty, enemySpawnSuppressed/suppressedBy report a live suppressor and enemySpawnPrefixOwners mods that could.",
+        description: "Enemies in the loaded level by the game's own classification: enemy vehicles, tank weapons, boss pieces and corpses (isAlive false) included; aliveCount the live ones. Entries: name, type, isMook, position, health, isAlive, plus RocketLib's unitType and category. mapLoaded says a level is loaded; with one, enemySpawnSuppressed/suppressedBy report a live suppressor and enemySpawnPrefixOwners mods that could.",
         inputSchema: {
           type: "object",
           properties: {},
@@ -1270,7 +1645,7 @@ export async function buildToolList() {
       },
       {
         name: "take_screenshot",
-        description: "Take a screenshot of the game; returns the saved path. An optional `highlight` outlines a target for that frame only: the reply has `highlighted` or `highlightError`, and the screenshot succeeds either way.",
+        description: "Screenshot the game; returns the saved path. An optional `highlight` outlines a target for that frame only: the reply has `highlighted` or `highlightError`, and the screenshot succeeds either way.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1283,14 +1658,14 @@ export async function buildToolList() {
                 height: { type: "number" },
               },
               description:
-                "A GameObject path, or a rectangle in world units, x/y its bottom-left corner. An inactive, boundless or off-camera target is a highlightError.",
+                "A GameObject path, {instanceId}, or a rectangle in world units, x/y its bottom-left corner. An inactive, boundless or off-camera target is a highlightError.",
             },
           },
         },
       },
       {
         name: "execute_code",
-        description: "Run C# in the Unity context: statements, local declarations, and a trailing 'return expr;' (a return before the final statement does not compile) or expression, whose value comes back. Locals do not persist between calls; use static members for that. Types from a script loaded with execute_script are in scope. The result is resultSet:true with the value in 'result'; success:true, resultSet:false when it ran and returned nothing; or success:false with 'error', plus 'stackTrace', 'position' and 'statement' when the code threw.",
+        description: "Run C# in the Unity context: statements, local declarations, and 'return expr;' statements or a trailing expression, whose value comes back. Locals do not persist between calls; use static members for that. Types from a script loaded with execute_script are in scope. The result is resultSet:true with the value in 'result'; success:true, resultSet:false when it ran and returned nothing; or success:false with 'error', plus 'stackTrace', 'position' and 'statement' when the code threw. Code still running after 9s is stopped at its next loop iteration or method call.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1301,11 +1676,12 @@ export async function buildToolList() {
       },
       {
         name: "modify_component",
-        description: "Write a component's fields and properties, public or private, instance or static. 'modifiedProperties' lists what was written, 'errors' each failure with a 'reason': 'not-found' (with 'suggestions'), 'read-only' or 'error'. 'success' is false when nothing was written.",
+        description: "Write a component's fields and properties (public, private, static). 'values' reads each back; 'errors' gives a 'reason': 'not-found' (with 'suggestions'), 'read-only', 'not-kept' or 'error'; 'reverted' is what the game undid by the next frame. 'success' is false when nothing was written.",
         inputSchema: {
           type: "object",
           properties: {
             path: { type: "string", description: "GameObject path" },
+            instanceId: { type: "integer" },
             component: { type: "string", description: "Component type" },
             properties: {
               type: "object",
@@ -1313,12 +1689,12 @@ export async function buildToolList() {
               description: "Properties to write; keys may be dotted paths into nested members, e.g. 'gun.damage'",
             },
           },
-          required: ["path", "component", "properties"],
+          required: ["component", "properties"],
         },
       },
       {
         name: "teleport_player",
-        description: "Teleport a player to a specific position",
+        description: "Teleport a player to x, y, zeroing velocity; playerNum -1 lists skipped slots, and `z` is ignored.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1326,7 +1702,7 @@ export async function buildToolList() {
             y: { type: "number" },
             z: { type: "number" },
             playerNum: {
-              type: "number",
+              type: "integer",
               description: "Player index 0-3, or -1 for all active players (default: 0)",
             },
           },
@@ -1335,13 +1711,13 @@ export async function buildToolList() {
       },
       {
         name: "set_player_health",
-        description: "Set a player's health",
+        description: "Set a player's health; 0 or less kills the bro and replies `killed`.",
         inputSchema: {
           type: "object",
           properties: {
-            health: { type: "number" },
+            health: { type: "integer" },
             playerNum: {
-              type: "number",
+              type: "integer",
               description: "Player index 0-3, or -1 for all active players (default: 0)",
             },
           },
@@ -1350,13 +1726,13 @@ export async function buildToolList() {
       },
       {
         name: "spawn_entity",
-        description: "Spawn a unit at a world position; a level must be loaded. The prefab comes from the level's theme or the shared assets: a type this theme has no prefab for fails saying so — try a level whose theme has it. `Baneling` is the theme's mosquito and `Screecher` its baneling; `Bro` is refused — use swap_bro. Success returns `type`, `unitType`, `prefab`, `name`, `instanceId`, `networked`; a failure returns `error`, with `availableTypes` on an unknown name.",
+        description: "Spawn a unit at a world position; a level must be loaded. `Baneling` is the theme's mosquito and `Screecher` its baneling; `Bro` is refused — use swap_bro. Success returns `unitType`, `instanceId` and `networked`; a failure returns `error`, with `availableTypes` on an unknown name.",
         inputSchema: {
           type: "object",
           properties: {
             type: {
               type: "string",
-              description: "A RocketLib UnitType, by enum name (SuicideMook) or display name (Suicide Mook); case, spaces and punctuation are ignored",
+              description: "A RocketLib UnitType, by enum or display name; case, spaces and punctuation are ignored",
             },
             x: { type: "number" },
             y: { type: "number" },
@@ -1390,14 +1766,14 @@ export async function buildToolList() {
               },
               description: "Default: all but Map.PlaceDoodad",
             },
-            since: { type: "number" },
+            since: { type: "integer" },
           },
           required: ["action"],
         },
       },
       {
         name: "set_game_speed",
-        description: "Set the game speed (time scale)",
+        description: "Set the time scale, verified a frame later; a scene load or cutscene resets it to 1, and the game's slow motion overrides it.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1408,7 +1784,7 @@ export async function buildToolList() {
       },
       {
         name: "list_campaigns",
-        description: "List all available campaigns with their indices",
+        description: "List the campaigns with their indices",
         inputSchema: {
           type: "object",
           properties: {},
@@ -1416,12 +1792,12 @@ export async function buildToolList() {
       },
       {
         name: "go_to_level",
-        description: "Go to a campaign level. An out-of-range campaignIndex is rejected; a levelIndex past the campaign's last level loads the Victory map.",
+        description: "Go to a campaign level; replies once in play, or once a cutscene holds it (named in `cutscene`), else fails after 60s. An out-of-range campaignIndex is rejected; a levelIndex past the campaign's end loads the Victory map. A `warning` says when enemy-spawn suppression skips its enemies, or that `simulate_input` `start` skips the cutscene.",
         inputSchema: {
           type: "object",
           properties: {
-            campaignIndex: { type: "number", description: "0-27" },
-            levelIndex: { type: "number", description: "0-based" },
+            campaignIndex: { type: "integer", description: "0-25" },
+            levelIndex: { type: "integer", description: "0-based" },
           },
           required: ["campaignIndex", "levelIndex"],
         },
@@ -1429,12 +1805,12 @@ export async function buildToolList() {
       {
         name: "swap_bro",
         description:
-          "Swap a player's bro mid-level: kills the current bro and spawns the new one at the same position. Requires Swap Bros Mod, and is refused when it is not active. A name that matches nothing answers `availableBros` plus the full `allNormal`, `allExpendabros` and `allUnfinished` rosters.",
+          "Swap a player's bro: recalls the current bro and spawns the new one at the same position, failing if the slot does not keep it. Requires Swap Bros Mod, and is refused when it is not active. A name that matches nothing answers `availableBros` plus the full `allNormal`, `allExpendabros` and `allUnfinished` rosters.",
         inputSchema: {
           type: "object",
           properties: {
             broName: { type: "string", description: "e.g. 'Rambro'; see list_bros" },
-            playerNum: { type: "number", description: "Player number 0-3 (default: 0)" },
+            playerNum: { type: "integer", description: "Player number 0-3 (default: 0)" },
             ignoreUnlocks: {
               type: "boolean",
               description: "Allow locked bros for this swap, including every installed custom bro, locked or disabled; reply adds ignoredUnlocks",
@@ -1450,18 +1826,18 @@ export async function buildToolList() {
       {
         name: "list_bros",
         description:
-          "List the bros swap_bro can use, with the selected bro for the given player (currentBro) and for all active players (currentBros). Requires Swap Bros Mod, and is refused when it is not active.",
+          "List the bros swap_bro can use, with currentBro (the bro in the player's slot), selectedBro (Swap Bros Mod's pick) and currentBros (both, per active player). Requires Swap Bros Mod, and is refused when it is not active.",
         inputSchema: {
           type: "object",
           properties: {
-            playerNum: { type: "number", description: "Player number 0-3 (default: 0)" },
+            playerNum: { type: "integer", description: "Player number 0-3 (default: 0)" },
           },
         },
       },
       {
         name: "restart_level",
         description:
-          "Restart the current level from the beginning. Clears checkpoints and trigger state for a full reset.",
+          "Restart the current level, clearing checkpoints and trigger state; replies once it is in play again, or once a cutscene holds it (named in `cutscene`, with a `warning`).",
         inputSchema: {
           type: "object",
           properties: {},
@@ -1469,7 +1845,7 @@ export async function buildToolList() {
       },
       {
         name: "simulate_input",
-        description: "Simulate keyboard/controller input. Exactly one of 'action' (one press or hold) or 'sequence' (an ordered list of steps the game runs back to back) must be given. 'highFive' is the interact button: it high-fives a rescued prisoner, melees, and activates the first registered switch within 16 units horizontally and 24 vertically, which includes switch-driven pickups and item boxes (MobileSwitch objects), so teleport next to one and press highFive. A teleport door in range, a live grenade within 20 units or a citizen within 32 units takes the press first, and a held grenade or mook or a running special blocks it. Input reaches every player: 'player' is accepted and echoed but does not narrow it. A plan over 60 seconds in total is refused before anything is pressed.",
+        description: "Simulate input: exactly one of 'action' (press or hold), 'binding' (a key binding, '<mod id>/<binding name>') or 'sequence' (steps). Replies when the plan ends; 'framesRead' counts the frames that read each press, and an unread press fails. 'highFive' is the interact button: it high-fives a prisoner, melees and activates the first switch within 16 units across, 24 up or down. A teleport door in range, a live grenade within 20 units or a citizen within 32 units takes the press first, and a held grenade or mook or a running special blocks it. Only 'player''s controller or binding entry reads it.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1477,21 +1853,23 @@ export async function buildToolList() {
               type: "string",
               description: "up, down, left, right, fire, jump, special, highFive, gesture, sprint, start or escape",
             },
+            binding: { type: "string" },
             sequence: {
               type: "array",
               items: {
                 type: "object",
                 properties: {
                   action: { type: "string", description: "Omit for a pure pause" },
-                  duration: { type: "number", description: "Ms held (default: 50)" },
-                  wait: { type: "number", description: "Ms paused afterwards (default: 0)" },
+                  binding: { type: "string" },
+                  duration: { type: "integer", description: "Ms held (default: 50)" },
+                  wait: { type: "integer", description: "Ms paused afterwards (default: 0)" },
                 },
               },
             },
-            duration: { type: "number", description: "Ms held, per press with count (default: 50)" },
-            count: { type: "number", description: "Number of presses" },
-            interval: { type: "number", description: "Ms between presses (default: 200)" },
-            player: { type: "number" },
+            duration: { type: "integer", description: "Ms held, per press with count (default: 50)" },
+            count: { type: "integer", description: "Number of presses" },
+            interval: { type: "integer", description: "Ms between presses (default: 200)" },
+            player: { type: "integer" },
           },
           required: [],
         },
@@ -1506,7 +1884,7 @@ export async function buildToolList() {
       },
       {
         name: "wait_for_game",
-        description: "Poll until the game's inspector answers a ping or the timeout is reached. On failure 'state' names how it failed (no-process, connection-refused, connected-unresponsive, connection-dropped, unknown, no-port, or handshake-refused, which ends the wait at once) and 'message' explains it.",
+        description: "Poll until the game's inspector answers a ping or the timeout is reached. On failure 'state' names how it failed and 'message' explains it.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1517,7 +1895,7 @@ export async function buildToolList() {
       },
       {
         name: "game_state",
-        description: "The loaded level, game mode, player status and bro type. 'scene' is the Unity scene: a level is always the one gameplay scene, the world map, victory screen and cutscenes scenes of their own, and 'isCampaignScene' tells them apart. The level is 'campaignName' (list_campaigns' 'name'), 'campaignDisplay' (its 'displayName'), 'levelName' (or null), 'levelIndex' (0-based) and 'levelNumber' (1-based). Every reply also carries `target` (`instance` or `steam`), `port`, `instance` (id, port, directory, stage, else an `instanceReason`), the `logs` read_log uses, and `runningInstances`.",
+        description: "The loaded level, game mode, player status and bro type. 'scene' is the Unity scene: every level is the one gameplay scene, and 'isCampaignScene' tells it from the world map, victory screen and cutscenes. The level is 'campaignName' (list_campaigns' 'name'), 'campaignDisplay' (its 'displayName'), 'levelName', 'levelIndex' (0-based) and 'levelNumber' (1-based), all null off a level. Also `target` (`instance`, `steam`, or null until the launcher has answered), `port`, `instance` (else an `instanceReason`), the `logs` read_log uses, and when known `runningInstances` and `build`.",
         inputSchema: {
           type: "object",
           properties: {},
@@ -1525,11 +1903,11 @@ export async function buildToolList() {
       },
       {
         name: "read_log",
-        description: "Read the mod log file — UMM's own log, or Unity's player log, which always exists and carries the same UMM and mod lines. Returns the last lines, optionally filtered, or with onlyNew the lines written since the last such call. The reply names the file and when it was last written, and flags `stale: true` with a warning when that file predates the running game.",
+        description: "Read the game's log: Unity's player log, which carries every UMM and mod line and Unity's own errors, else UMM's own log. Returns the last lines, optionally filtered, or with onlyNew the lines written since the last such call. The reply names the file and flags `stale: true` when it predates the running game.",
         inputSchema: {
           type: "object",
           properties: {
-            lines: { type: "number", minimum: 1, description: "Lines from the end of the log (default: 50)" },
+            lines: { type: "integer", minimum: 1, description: "Lines from the end of the log (default: 50)" },
             filter: { type: "string", description: "Only lines containing this string, case-insensitive" },
             onlyNew: {
               type: "boolean",
@@ -1541,7 +1919,7 @@ export async function buildToolList() {
       },
       {
         name: "run_test_script",
-        description: "Run a JSON test script of game commands; server-side tools (read_log, launch_game, ...) cannot be steps. Steps take 'expect' (a met expect passes even a failed command), 'until' and 'report'; 'cleanup' steps run unless the game died. The reply has 'passed', any 'report', 'logs' (new log errors and floods, by source), a short preview per step, and 'resultsFile' with every step's full result. Format: scripts/README.md.",
+        description: "Run a JSON test script of game commands; server-side tools (read_log, launch_game, ...) cannot be steps. A met 'expect' passes even a failed command. The reply has 'passed', any 'report', 'logs' (new log errors and floods, by source), a short preview per step, and 'resultsFile' with every step's full result. Format: scripts/README.md.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1581,7 +1959,7 @@ export async function buildToolList() {
         inputSchema: {
           type: "object",
           properties: {
-            name: { type: "string" },
+            name: { type: "string", description: "The script's file name without .cs, or its library name" },
           },
           required: ["name"],
         },
@@ -1591,14 +1969,13 @@ export async function buildToolList() {
         description:
           "Sweep a bro's animation states with the game clock held at zero, optionally loading a level and swapping the bro first: one " +
           "PNG strip per state, `capture.json` (the sprite-sheet cell every frame addressed) and `report.md` (those against the state list), " +
-          "all into `out`. The reply carries `success`, `status` (`done`/`error`/`timeout`/`game-gone`), the report text and the paths " +
-          "written. Reference: `.claude/rules/animation-capture.md`.",
+          "all into `out`. The reply carries `status` and the report. Reference: `.claude/rules/animation-capture.md`.",
         inputSchema: {
           type: "object",
           properties: {
             out: { type: "string", description: "Absolute output directory" },
             gameOut: { type: "string", description: "out as the game's filesystem sees it (default: out)" },
-            bro: { type: "string", description: "Bro to swap to first, unlocks ignored (Swap Bros Mod display name)" },
+            bro: { type: "string", description: "Bro to swap to first, as list_bros names it" },
             level: { type: "string", description: "Level to load first, CAMPAIGN:LEVEL (e.g. 1:0)" },
             states: {
               type: ["array", "string"],
@@ -1608,18 +1985,19 @@ export async function buildToolList() {
             settle: { type: "number", minimum: 0, description: "Seconds after the level's player spawns (default: 3)" },
             swapSettle: { type: "number", minimum: 0, description: "Seconds after the swap lands (default: 2)" },
             swapTimeout: { type: "number", minimum: 1, description: "Seconds to wait for the swap (default: 15)" },
-            timeout: { type: "number", minimum: 1, description: "Seconds for the sweep and the level wait (default: 60)" },
+            timeout: { type: "number", minimum: 1, description: "Seconds per wait, and per state swept (default: 60)" },
             player: { type: "integer", minimum: 0, maximum: 3, description: "(default: 0)" },
-            box: { type: "number", minimum: 1, description: "Crop-box half-size in world units; cells are 2*box px (default: 24)" },
-            includeLethal: { type: "boolean", description: "Also sweep states that kill the player (default: false)" },
+            box: { type: "number", minimum: 1, maximum: 256, description: "Crop-box half-size in world units; cells are 2*box px (default: 24)" },
+            includeLethal: { type: "boolean", description: "Also sweep states that pin the bro dead (default: false)" },
             allowSideEffects: { type: "boolean", description: "Let animations fire real specials/attacks (default: false)" },
+            only: { type: "array", items: { type: "string" }, description: "Only these states, in list order" },
           },
           required: ["out"],
         },
       },
       {
         name: "launch_game",
-        description: "Launch Broforce, wait for it to answer and point this server at it: by default this session's own game instance, a separate copy with its own profile, saves, logs and port, or the user's game in a session without one. steam: true launches the user's own game instead (the configured launch command, else Steam); a window on the user's screen is that launch plus the placement option that command documents. Switching targets leaves the other game running and says so. Warns if the game is already running unless restart is true, which stops only the target's game first." + (await launchArgumentHelp()),
+        description: "Launch Broforce, wait for it to answer and point this server at it: by default this session's game instance (its own profile, saves and port), or the user's game in a session without one. steam: true launches the user's game instead (the configured launch command, else Steam); a window on screen needs that command's placement option. A running game is reported, not launched over, unless restart is true, which stops only the target's game first." + launchHelp,
         inputSchema: {
           type: "object",
           properties: {
@@ -1629,25 +2007,25 @@ export async function buildToolList() {
             },
             vanilla: {
               type: "boolean",
-              description: "Launch without mods (default: false). No inspector loads, so the call does not wait for one: it returns when the launch command exits, with a failure if non-zero",
+              description: "Launch without mods (default: false). No inspector loads, so the call returns once the game has started",
             },
             restart: { type: "boolean", description: "Stop the running game first, then relaunch (default: false)" },
             launchArgs: {
               type: "string",
-              description: "Arguments appended to the launch this call runs, tokenized with shell-style quoting: the instance launch by default, the configured launch command with steam: true. The Steam protocol launch takes no arguments and says so.",
+              description: "Arguments appended to the launch this call runs, tokenized with shell-style quoting: the instance launch by default, the configured launch command or Steam's -applaunch with steam: true. The Steam protocol fallback takes no arguments.",
             },
           },
         },
       },
       {
         name: "stop_game",
-        description: "Stop the game this server is pointed at, and nothing else: this session's own instance, or the user's game when the server is pointed there. Never stops a game belonging to another session.",
+        description: "Stop the game this server is pointed at, and nothing else: this session's own instance, or the user's game when the server is pointed there.",
         inputSchema: {
           type: "object",
           properties: {
             remove: {
               type: "boolean",
-              description: "After stopping, delete this session's instance directory, so the next launch builds it fresh (default: false). Instance target only; skipped with a reason when the stop could not confirm the game is gone",
+              description: "After stopping, delete this session's instance directory, so the next launch builds it fresh (default: false). Instance target only",
             },
           },
         },
@@ -1661,6 +2039,7 @@ const POLL_DEFAULT_TIMEOUT_MS = 60000;
 const POLL_DEFAULT_INTERVAL_MS = 3000;
 const POLL_MIN_INTERVAL_MS = 250;
 const POLL_PING_TIMEOUT_MS = 6000;
+const POLL_PING_FLOOR_MS = 2000;
 
 function pollBudgetMs(value, fallback) {
   return Number.isFinite(value) && value >= 0 ? value : fallback;
@@ -1704,7 +2083,10 @@ export function launcherExitWatcher(child) {
 // spawn() only reports an unrunnable command after the fact, which for a restart is too late
 export async function commandIsRunnable(command, platform = process.platform) {
   // Windows has no execute bit and resolves through PATHEXT, so the pre-flight would only guess
-  if (platform === 'win32') return true;
+  if (platform === 'win32') {
+    if (!path.win32.isAbsolute(command)) return true;
+    return fs.stat(command).then((stat) => stat.isFile(), () => false);
+  }
 
   const looksLikePath = command.includes('/') || command.includes(path.sep) || command.startsWith('.');
   const candidates = looksLikePath
@@ -1745,6 +2127,20 @@ export async function launchFailureTail(config, stderr, notBeforeMs = null) {
   return errors ? `\n\nLast lines of the launcher's error output:\n${errors}` : '';
 }
 
+export async function readFileTail(file, maxBytes) {
+  const handle = await fs.open(file, 'r');
+  try {
+    const { size } = await handle.stat();
+    const start = Math.max(0, size - maxBytes);
+    const buffer = Buffer.alloc(size - start);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
+    const text = buffer.subarray(0, bytesRead).toString('utf8');
+    return start === 0 ? text : text.slice(text.indexOf('\n') + 1);
+  } finally {
+    await handle.close();
+  }
+}
+
 export async function launchLogTail(config = activeConfig(), notBeforeMs = null) {
   if (!config.isAgentInstance) return null;
   if (notBeforeMs !== null) {
@@ -1753,7 +2149,7 @@ export async function launchLogTail(config = activeConfig(), notBeforeMs = null)
   }
   let text;
   try {
-    text = await fs.readFile(config.launchLog, 'utf8');
+    text = await readFileTail(config.launchLog, LAUNCH_LOG_TAIL_BYTES);
   } catch {
     return null;
   }
@@ -1761,36 +2157,53 @@ export async function launchLogTail(config = activeConfig(), notBeforeMs = null)
   return lines.length > 0 ? lines.join('\n') : null;
 }
 
-// The Steam protocol launch takes no arguments, so asking for vanilla does not make it so
-export function vanillaTookEffect(launch, args) {
-  return Boolean(args?.vanilla) && !(launch?.ignoredArgs ?? []).includes('--vanilla');
+export async function gameStdoutTail(config, sinceMs) {
+  if (!config.isAgentInstance) return null;
+  const writtenAt = await fileMtimeMs(config.launchLog);
+  if (writtenAt === null || writtenAt < sinceMs) return null;
+  const lines = [];
+  let scanned = 0;
+  for await (const line of linesBackward(config.launchLog, { maxLineBytes: 1000 })) {
+    if (line.text.trim() && !LAUNCH_LOG_LINE_RE.test(line.text)) lines.unshift(line.text);
+    if (lines.length >= LAUNCH_LOG_TAIL_LINES || ++scanned >= 2000) break;
+  }
+  return lines.length > 0 ? { path: config.launchLog, lines } : null;
+}
+
+let resolveLaunch = resolveLaunchCommand;
+
+export function setLaunchResolver(resolver = resolveLaunchCommand) {
+  resolveLaunch = resolver;
+}
+
+export function vanillaTookEffect(launch) {
+  return launch?.vanilla === true;
 }
 
 // The launch command's own exit is the instance's verdict: the port it allocated is only readable
 // once it has finished, and its exit 75 is the cap refusal
-async function waitForLauncherExit(watcher, deadline) {
-  let timer;
-  const exited = await Promise.race([
-    watcher.exit,
-    new Promise(resolve => { timer = setTimeout(() => resolve(null), Math.max(0, deadline - Date.now())); }),
-  ]);
-  clearTimeout(timer);
+async function waitForLauncherExit(watcher, deadline, signal = null) {
+  const exited = await within(watcher.exit, Math.max(0, deadline - Date.now()), signal, null);
+  throwIfCancelled(signal, 'launch_game');
   return exited;
 }
 
 // The cap wait is its own phase: a freed slot buys a fresh launch, not the leftovers of this budget
-async function waitForCapSlot(config, deadline) {
+async function waitForCapSlot(config, deadline, signal = null) {
   let summary = null;
   let polls = 0;
   for (;;) {
     const remaining = deadline - Date.now();
     // The budget can be spent before this wait ever asks, which is not an answer about the list
     if (remaining <= 0) return { freed: false, summary, polls };
-    await delay(Math.min(launchTiming.capPollMs, remaining));
+    await pause(Math.min(launchTiming.capPollMs, remaining), signal);
+    throwIfCancelled(signal, 'launch_game');
     const next = await listInstances(config);
+    throwIfCancelled(signal, 'launch_game');
     polls++;
     // One failed poll is one poll: what an earlier one read is still the best account there is
     if (next) summary = next;
+    if (next && next.cap === 0) return { freed: false, summary, polls };
     // An unreadable list is no reason to stop trying: the launcher itself refuses again if it must,
     // and a list reporting no cap is a launcher with no cap to be at
     if (!next || next.cap === null || next.count < next.cap) return { freed: true, summary, polls };
@@ -1798,9 +2211,7 @@ async function waitForCapSlot(config, deadline) {
   }
 }
 
-// launchedPort is the port this launch's launcher allocated: it is ours for the length of the wait,
-// before the game it started is running and can be recognised by its working directory
-export async function pollUntilResponsive(timeoutMs, intervalMs, watcher = null, { launchedPort = null } = {}) {
+export async function pollUntilResponsive(timeoutMs, intervalMs, watcher = null, { launchedPort = null, launchedPortUntil = Infinity, signal = null } = {}) {
   const { budgetMs: budget, intervalMs: interval } = resolvePollBudget(timeoutMs, intervalMs);
 
   const startTime = Date.now();
@@ -1814,12 +2225,13 @@ export async function pollUntilResponsive(timeoutMs, intervalMs, watcher = null,
   let lastPort = null;
 
   for (;;) {
+    throwIfCancelled(signal, 'The wait for the game');
     attempts++;
     try {
       // The instance's port is re-resolved every attempt: a game that comes up mid-wait is what
       // makes its recorded port ours, and one attempt's answer does not settle the next
       lastPort = await pointClientAtTarget();
-      if (lastPort === null && launchedPort !== null) {
+      if (lastPort === null && launchedPort !== null && Date.now() < launchedPortUntil) {
         pointClient(launchedPort, activeConfig());
         lastPort = launchedPort;
       }
@@ -1827,12 +2239,15 @@ export async function pollUntilResponsive(timeoutMs, intervalMs, watcher = null,
         lastStage = "port";
         throw new Error(noPortMessage(activeConfig()));
       }
-      if (!unityClient.isConnected()) unityClient.disconnect();
       lastStage = "connect";
       await unityClient.connect();
       lastStage = "ping";
-      const pingTimeout = Math.max(1000, Math.min(deadline - Date.now(), POLL_PING_TIMEOUT_MS));
-      await unityClient.sendCommand("ping", {}, pingTimeout);
+      const pingTimeout = Math.max(POLL_PING_FLOOR_MS, Math.min(deadline - Date.now(), POLL_PING_TIMEOUT_MS));
+      const pong = await unityClient.sendCommand("ping", {}, pingTimeout);
+      if (pong?.mainThreadAnswered === false) {
+        lastStage = "main-thread";
+        throw new Error("The game's main thread did not answer the ping's round trip");
+      }
       const elapsed = secondsSoFar();
       return {
         success: true,
@@ -1843,6 +2258,7 @@ export async function pollUntilResponsive(timeoutMs, intervalMs, watcher = null,
         elapsed,
       };
     } catch (err) {
+      throwIfCancelled(signal, 'The wait for the game');
       lastError = err.message;
       console.error(`Attempt ${attempts}: ${err.message}`);
       if (isHandshakeRefusal(err)) {
@@ -1853,7 +2269,7 @@ export async function pollUntilResponsive(timeoutMs, intervalMs, watcher = null,
         lastStage = "handshake";
         lastTimedOut = err.code === HANDSHAKE_TIMEOUT;
       } else if (lastStage === "ping") {
-        lastTimedOut = /^Command timeout after \d+ms$/.test(err.message);
+        lastTimedOut = err.code === COMMAND_TIMEOUT;
       }
     }
 
@@ -1861,13 +2277,8 @@ export async function pollUntilResponsive(timeoutMs, intervalMs, watcher = null,
 
     const remaining = deadline - Date.now();
     if (remaining <= 0) break;
-    await new Promise((resolve) => {
-      const timer = setTimeout(resolve, Math.min(interval, remaining));
-      watcher?.failure.then(() => {
-        clearTimeout(timer);
-        resolve();
-      });
-    });
+    await within(watcher?.failure ?? new Promise(() => {}), Math.min(interval, remaining), signal);
+    throwIfCancelled(signal, 'The wait for the game');
     if (watcher?.reason || Date.now() >= deadline) break;
   }
 
@@ -1904,6 +2315,18 @@ export async function pollUntilResponsive(timeoutMs, intervalMs, watcher = null,
     };
   }
 
+  if (lastStage === "main-thread") {
+    return {
+      success: false,
+      state: "main-thread-hung",
+      message: `${PortLabel} answers, but the game's main thread is not running frames ${tail} — a script or the ` +
+        `game itself is stuck, or the game is still starting: ${lastError}`,
+      lastError,
+      attempts,
+      elapsed,
+    };
+  }
+
   if (answeredStage && lastTimedOut) {
     state = "connected-unresponsive";
     message = `${PortLabel} accepts connections but ${unanswered} got no reply ${tail} — the mod may be starting or the main thread stalled`;
@@ -1920,7 +2343,8 @@ export async function pollUntilResponsive(timeoutMs, intervalMs, watcher = null,
     message = `${PortLabel} accepted a connection that was then closed ${tail}: ${lastError}`;
   } else if (running === null) {
     state = "unknown";
-    message = `Could not connect to ${portLabel} ${tail}, and process detection is unavailable, so it is unknown whether the game is running`;
+    message = `Could not connect to ${portLabel} ${tail}, and process detection is unavailable, so it is unknown whether the game is running.` +
+      unityClient.reachHint();
   } else {
     state = "connection-refused";
     message = `The game process is running but nothing accepted a connection on ${portLabel} ${tail} — the mod's TCP server may be stopped or on another port`;
@@ -1938,17 +2362,34 @@ const asSentence = (text) => (/[.!?]$/.test(String(text).trim()) ? String(text).
 // nothing is on the socket at all. The record is what makes it visible: it is set before the sweep
 // starts and cleared in a finally, so a sweep that throws releases it on the way out.
 let activeSweep = null;
+const activeTestScripts = new Set();
+let launchesRunning = 0;
+
+const SWEEP_SAFE_TOOLS = new Set([
+  'stop_game', 'ping', 'game_state', 'read_log', 'list_scripts', 'list_test_scripts', 'list_campaigns',
+  'list_gameobjects', 'inspect_gameobject', 'inspect_component', 'query_gameobjects', 'inspect_player',
+  'list_enemies', 'list_bros',
+]);
+
+function sweepRefusal(action) {
+  const left = Math.max(0, Math.round((activeSweep.deadline - Date.now()) / 1000));
+  return new Error(
+    `Cannot ${action} while a capture_animations sweep into ${activeSweep.out} is running on the ` +
+    `${activeTarget()} target — it holds the game clock at zero and the bro pinned, and anything that changes ` +
+    `the game would land in its strips (about ${left}s of its budget left, more while it makes progress). ` +
+    `Wait for it to finish, or use stop_game to end it early.`
+  );
+}
+
+function refuseDuringSweep(name, args) {
+  if (!activeSweep || SWEEP_SAFE_TOOLS.has(name)) return;
+  if (name === 'take_screenshot' && (args.highlight === undefined || args.highlight === null)) return;
+  throw sweepRefusal(name === 'capture_animations' ? 'start an animation capture sweep' : `run ${name}`);
+}
 
 // Dropping the socket under a command in flight would answer it from whatever answers next
 function refuseWhileInFlight(action) {
-  if (activeSweep) {
-    const left = Math.max(0, Math.round((activeSweep.deadline - Date.now()) / 1000));
-    throw new Error(
-      `Cannot ${action} while a capture_animations sweep into ${activeSweep.out} is running on the ` +
-      `${activeTarget()} target — it holds the game clock at zero and reports through files rather than the ` +
-      `socket (about ${left}s of its budget left). Wait for it to finish, or use stop_game to end it early.`
-    );
-  }
+  if (activeSweep) throw sweepRefusal(action);
 
   const inFlight = unityClient.inFlightCommands();
   if (inFlight.length === 0) return;
@@ -1958,9 +2399,589 @@ function refuseWhileInFlight(action) {
   );
 }
 
-// Each of the sweep's two teardown commands, and the whole teardown, on the way out of the process.
-// The wrapper's restart_server sends SIGKILL 3s after its SIGTERM, and a signalling client kills the
-// process sooner, so the exit happens either way and the teardown only gets a slice of that.
+async function confirmGameStarted(config, { budgetMs = launchTiming.startConfirmMs, watcher = null, signal = null } = {}) {
+  const deadline = Date.now() + budgetMs;
+  let upSince = null;
+  let answered = false;
+  for (;;) {
+    if (watcher?.reason) return 'failed';
+    invalidateGameProcessScan();
+    const running = await isGameRunning(config);
+    if (running === true) {
+      answered = true;
+      upSince ??= Date.now();
+      if (Date.now() - upSince >= launchTiming.startStableMs) return 'running';
+    } else if (running === false) {
+      answered = true;
+      upSince = null;
+    }
+    if (Date.now() >= deadline) return upSince !== null ? 'running' : answered ? 'gone' : 'unknown';
+    await pause(Math.min(launchTiming.startPollMs, Math.max(0, deadline - Date.now())), signal);
+    throwIfCancelled(signal, 'launch_game');
+  }
+}
+
+function capReachedMessage(config, capReport, capPolls, capStart) {
+  if (capReport?.cap === 0) {
+    return `The configured launcher allows no instances to run (its cap is 0), so instance ${config.id} was not started.`;
+  }
+  const holders = capReport?.running?.map(entry => entry.id).join(', ');
+  const listIsFull = capReport?.cap !== null && capReport?.cap !== undefined && capReport.count >= capReport.cap;
+  // Four endings, and only the first of them knows who holds the slots
+  let who;
+  if (capReport && listIsFull) {
+    who = ` Instances holding the slots: ${holders}.`;
+  } else if (capReport) {
+    who = ` The launcher's list last showed ` +
+      (capReport.count === 0
+        ? 'no instances running'
+        : `${capReport.count}${capReport.cap !== null ? ` of ${capReport.cap}` : ''} running (${holders})`) +
+      `, yet the launcher refused this launch.`;
+  } else if (capPolls > 0) {
+    who = ` The launcher's instance list could not be read on any attempt, so which instances hold the slots is unknown.`;
+  } else {
+    who = ` The wait ran out before the launcher's instance list could be checked, so which instances hold the slots is unknown.`;
+  }
+  const unparsed = capReport?.unparsed > 0
+    ? ` ${capReport.unparsed} line${capReport.unparsed === 1 ? '' : 's'} of that list could not be parsed, so the ` +
+      `instance${capReport.unparsed === 1 ? ' it describes is' : 's they describe are'} missing from it.`
+    : '';
+  return `The configured launcher refused this launch at its instance cap${capReport?.cap ? ` of ${capReport.cap}` : ''} ` +
+    `and no slot came free in the ${((Date.now() - capStart) / 1000).toFixed(1)}s it was waited for, so instance ` +
+    `${config.id} was not started.` + who + unparsed;
+}
+
+async function launchGame(args, signal = null) {
+  // The probe and the root settle what this session has before the target moves anywhere
+  await resolveTarget();
+  const hasInstance = await instanceTargetReady();
+  const nextTarget = args.steam || !hasInstance ? 'steam' : 'instance';
+  const previousTarget = reportedTarget();
+  const config = nextTarget === 'instance' ? sessionInstance() : userGame();
+  // A launch that meant to start this session's instance and could not has to say why, in the
+  // same words game_state gives for it
+  const instanceReason = !args.steam && !hasInstance ? (await instanceField()).instanceReason : null;
+  if (nextTarget === 'steam') refuseUserGameUnderWsl('launch_game');
+
+  refuseWhileInFlight('launch');
+  if (nextTarget !== previousTarget) refuseWhileBound(nextTarget);
+
+  let switchNote = null;
+  const withTargetNotes = (payload) => ({
+    ...payload,
+    target: reportedTarget(),
+    ...(switchNote ? { targetNote: switchNote } : {}),
+    ...(instanceReason ? { instanceReason } : {}),
+  });
+
+  // The user's game is every Broforce process this server cannot place in an instance, so with
+  // the launcher's instances unaccounted for it cannot say whether that game is running at
+  // all — a stranger's would read as the user's, broken. Asking also drives the retries
+  const unplaceable = await unplaceableInstancesReason(nextTarget);
+  if (unplaceable !== null) {
+    return withTargetNotes({
+      success: false,
+      state: "root-unknown",
+      message: asSentence(
+        `Nothing was launched: ${unplaceable}, so this server cannot tell whether ` +
+        `${targetDescription(nextTarget)} is running`
+      ),
+    });
+  }
+
+  let requested;
+  try {
+    requested = composeExtraLaunchArgs(args);
+  } catch (err) {
+    throw new Error(`Invalid launchArgs: ${err.message}`);
+  }
+
+  // Resolving first, so a restart that cannot relaunch has not already stopped the game
+  let launch;
+  try {
+    launch = await resolveLaunch(requested, process.env, process.platform, config);
+  } catch (err) {
+    if (err.code === LAUNCH_REFUSED) throw err;
+    throw new Error(
+      `${asSentence(err.message)} BROFORCE_LAUNCH_CMD should hold the command that starts Broforce on this machine.`
+    );
+  }
+  const vanilla = vanillaTookEffect(launch);
+
+  if (args.restart && !(await commandIsRunnable(launch.command))) {
+    throw new Error(
+      `Cannot run \`${launch.command}\`, so nothing was stopped: ` +
+      `point ${config.isAgentInstance ? 'the configured launcher' : 'BROFORCE_LAUNCH_CMD'} at an executable ` +
+      `that launches ${targetDescription(nextTarget)}.`
+    );
+  }
+
+  if (previousTarget !== null && nextTarget !== previousTarget) {
+    const previousConfig = previousTarget === 'instance' ? sessionInstance() : userGame();
+    if ((await isGameRunning(previousConfig)) === true) {
+      switchNote = `${targetDescription(previousTarget)} is still running — switching targets left it alone. ` +
+        `Switch back and use stop_game to stop it.`;
+    }
+  }
+
+  refuseWhileInFlight('launch');
+  if (nextTarget !== reportedTarget()) refuseWhileBound(nextTarget);
+  const beforeSwitch = snapshotTarget();
+  boundCalls.push('launch_game');
+  let release = () => {};
+  const releaseInstance = () => release();
+  try {
+    await setTarget(nextTarget);
+    if (config.isAgentInstance) release = await acquireInstanceOp();
+    return await launchOnTarget({ args, signal, config, nextTarget, launch, vanilla, withTargetNotes, beforeSwitch, releaseInstance });
+  } finally {
+    releaseInstance();
+    boundCalls.splice(boundCalls.indexOf('launch_game'), 1);
+  }
+}
+
+function likelyCauses(launch, state) {
+  const { confirmation, launchOptions } = launch.startCauses ?? {};
+  const named = (state === 'no-process' ? [confirmation, launchOptions] : state === 'connection-refused' ? [launchOptions] : []).filter(Boolean);
+  return named.length > 0 ? ` Likely causes: ${named.join('; ')}.` : '';
+}
+
+async function launchOnTarget({ args, signal, config, nextTarget, launch, vanilla, withTargetNotes, beforeSwitch, releaseInstance }) {
+  // On an instance the cwd rule decides whether a game of ours is running: a ping answered by
+  // somebody else's game on a port we no longer own must never refuse this launch
+  const ownsGame = config.isAgentInstance ? (await isGameRunning(config)) === true : true;
+  const withoutMods = await launchedWithoutMods(config);
+
+  let gameRunning = false;
+  let refusal = null;
+  if (ownsGame && !withoutMods) {
+    try {
+      await unityClient.sendCommand("ping", {});
+      gameRunning = true;
+    } catch (err) {
+      gameRunning = isHandshakeRefusal(err);
+      if (gameRunning) refusal = err.message;
+    }
+  }
+
+  if (gameRunning && !args.restart) {
+    if (config.isAgentInstance) await claimInstance(config);
+    return withTargetNotes({
+      success: refusal === null,
+      alreadyRunning: true,
+      ...(refusal === null
+        ? { message: `${targetDescription(nextTarget)} is already running. Use restart: true to stop and relaunch.` }
+        : {
+            state: "handshake-refused",
+            message: `${targetDescription(nextTarget)} is already running, but its inspector refused this server's connection: ${refusal}`,
+          }),
+      // The game this launch would have started is the one already running, so it names it
+      // exactly as a launch of its own would
+      ...(config.isAgentInstance
+        ? {
+            instance: { id: config.id, port: unityClient.port },
+            logs: { umm: config.ummLog, player: config.playerLog },
+          }
+        : {}),
+    });
+  }
+
+  if (withoutMods && !args.restart) {
+    if (config.isAgentInstance) await claimInstance(config);
+    return withTargetNotes({ success: false, alreadyRunning: true, vanilla: true, message: vanillaMessage(config) });
+  }
+
+  if (!gameRunning && !args.restart && config.isAgentInstance) {
+    const refusal = await instanceLaunchRefusal(config);
+    if (refusal) return withTargetNotes({ success: false, alreadyRunning: true, message: refusal });
+  }
+
+  if (!gameRunning && !args.restart && (await isGameRunning(config)) === true) {
+    return withTargetNotes({
+      success: false,
+      alreadyRunning: true,
+      message:
+        "A Broforce process is running but the Unity Inspector Mod is not responding on TCP. " +
+        "The mod may have failed to load. Use restart: true to stop and relaunch.",
+    });
+  }
+
+  if (!gameRunning && (await isGameRunning(config)) === null) {
+    return withTargetNotes({
+      success: false,
+      state: "unknown",
+      message:
+        `Nothing was launched or stopped: ${userGameOutOfReach(config) ?? 'process detection is unavailable here'}, so whether ` +
+        `${targetDescription(nextTarget)} is running cannot be checked, and its inspector did not answer — ` +
+        `a launch could start a second copy beside a game that is already up. Start or stop it yourself, ` +
+        `then use wait_for_game.`,
+    });
+  }
+
+  try {
+    await preflightSteamLaunch(launch.prepare);
+  } catch (err) {
+    await restoreTarget(beforeSwitch);
+    throw new Error(`Could not prepare the Steam launch: ${err.message}. Nothing was launched and nothing was stopped.`);
+  }
+
+  throwIfCancelled(signal, 'launch_game');
+  let stoppedFirst = false;
+  if (args.restart && (gameRunning || (await isGameRunning(config)) === true)) {
+    stoppedFirst = true;
+    unityClient.disconnect('launch_game restarted the game before this command was answered');
+    // As in stop_game: the refusal check can settle the root, and the kill takes the config
+    // that leaves behind
+    const signalRefusal = await steamKillRefusal();
+    const killResult = await killGame({ config: activeConfig(), signalRefusal });
+    console.error(`launch_game: ${killResult.detail}`);
+
+    const survivors = killResult.survivors ?? [];
+    if (killResult.unknown || survivors.length > 0) {
+      return withTargetNotes({
+        success: false,
+        state: "stop-failed",
+        message: asSentence(
+          `${targetDescription(nextTarget)} could not be stopped, so nothing was launched: ${killResult.detail}`
+        ) + (survivors.length > 0 ? ` Stop pid ${survivors.join(', ')} by hand and try again.` : ''),
+        ...(survivors.length > 0 ? { survivors } : {}),
+      });
+    }
+    throwIfCancelled(signal, 'launch_game');
+  }
+  vanillaGames.delete(nextTarget);
+
+  // The instance id is claimed before its launcher runs, so a launch that never finishes still
+  // leaves the wrapper that asked for it responsible for stopping the game. A first launch has
+  // no directory to claim in — the launcher is the one that creates it — and the claim follows
+  // it there rather than creating it, which would leave the launcher nothing to create
+  let claimed = false;
+  if (config.isAgentInstance) claimed = (await claimInstance(config)) !== null;
+
+  let launcherStderr = null;
+  let spawnedAt = null;
+  let exitedAt = null;
+  let spawned = 0;
+  const spawnLauncher = async () => {
+    try {
+      spawnedAt = Date.now();
+      // The Steam client and the game would inherit a pipe and fill it with their own chatter
+      const child = await spawnDetached(launch.command, launch.args, {
+        captureStderr: config.isAgentInstance,
+      });
+      if (config.isAgentInstance) launcherStderr = collectLauncherStderr(child);
+      spawned++;
+      return child;
+    } catch (err) {
+      if (spawned === 0) await restoreTarget(beforeSwitch);
+      throw new Error(
+        `Failed to launch Broforce with \`${launch.display}\`: ${err.message}. ` +
+        (config.isAgentInstance
+          ? `The configured launcher's instance mode is what starts instance ${config.id}.`
+          : `Set the BROFORCE_LAUNCH_CMD environment variable to the command that starts the game on this machine.`)
+      );
+    }
+  };
+
+  const noteParts = launch.ignoredArgs?.length
+    ? [`Ignored launch arguments ${launch.ignoredArgs.join(' ')} — ${launch.ignoredReason}`]
+    : [];
+  try {
+    noteParts.push(...await prepareSteamLaunch(launch.prepare, {
+      waitMs: launchTiming.wineserverExitMs,
+      pollMs: launchTiming.wineserverPollMs,
+      sleep: (ms) => pause(ms, signal),
+      signal,
+    }));
+  } catch (err) {
+    if (err.code === COMMAND_CANCELLED) throw err;
+    await restoreTarget(beforeSwitch);
+    throw new Error(
+      `Could not write the Proton override: ${err.message}. ` +
+      (stoppedFirst ? `The running game had already been stopped, and nothing was launched.` : `Nothing was launched.`)
+    );
+  }
+  const ignoredArgsNote = noteParts.length > 0 ? noteParts.join(' ') : null;
+
+  let watcher = launcherExitWatcher(await spawnLauncher());
+  // The port this launch's launcher allocated, which the wait may use before its game is up
+  let launchedPort = null;
+  let launchedPortUntil = -Infinity;
+
+  // Waiting the launcher out is what carries an instance launch's verdict, and it is also the
+  // window a first launch has to claim the id in: the watch ends with the launch command
+  const waitOutLauncher = async () => {
+    const wait = waitForLauncherExit(watcher, Date.now() + launchTiming.instanceBudgetMs, signal);
+    const claim = claimed ? null : claimInstanceWhenCreated(config, wait);
+    const exited = await wait;
+    if (exited) exitedAt = Date.now();
+    if (claim) claimed = (await claim) !== null;
+    return exited;
+  };
+
+  // An instance launch is waited out: its port is only readable once the launcher has finished,
+  // and only its exit status carries the cap refusal. A vanilla launch is waited out the same
+  // way, under the same budget and cap rules; only the port and the inspector are skipped
+  let launcherExited = null;
+  if (config.isAgentInstance) {
+    let exited = await waitOutLauncher();
+    let capExpired = false;
+    let capStart = null;
+    let capDeadline = null;
+    // The last list anyone could read, and whether the list was ever asked at all: the wait
+    // that happens to end the loop says nothing about the polls that came before it
+    let capReport = null;
+    let capPolls = 0;
+
+    while (exited && exited.code === INSTANCE_CAP_EXIT) {
+      // The wait starts when the launcher first says the cap is full, not before it ran
+      if (capDeadline === null) {
+        capStart = Date.now();
+        capDeadline = capStart + launchTiming.capWaitMs;
+      }
+      const slot = await waitForCapSlot(config, capDeadline, signal);
+      capPolls += slot.polls;
+      if (slot.summary) capReport = slot.summary;
+      if (!slot.freed) {
+        capExpired = true;
+        break;
+      }
+      throwIfCancelled(signal, 'launch_game');
+      watcher = launcherExitWatcher(await spawnLauncher());
+      exited = await waitOutLauncher();
+    }
+    releaseInstance();
+
+    if (capExpired || (exited && exited.code === INSTANCE_CAP_EXIT)) {
+      return withTargetNotes({
+        success: false,
+        launchCommand: launch.display,
+        state: "cap-reached",
+        message: capReachedMessage(config, capReport, capPolls, capStart ?? Date.now()),
+        ...(capReport?.running ? { runningInstances: capReport.running } : {}),
+        ...(ignoredArgsNote ? { note: ignoredArgsNote } : {}),
+      });
+    }
+
+    launcherExited = exited;
+
+    if (!watcher.reason && !vanilla) {
+      // Only a port file this launch wrote is this launch's allocation
+      launchedPort = await waitForInstancePort(config, { notBeforeMs: spawnedAt });
+      throwIfCancelled(signal, 'launch_game');
+      if (launchedPort === null) {
+        const writtenAt = await fileMtimeMs(config.portFile);
+        let about;
+        if (writtenAt === null) {
+          about = `no inspector port has been written to ${config.portFile}`;
+        } else if (writtenAt >= spawnedAt) {
+          const contents = String(await readPortFileText(config) ?? '').trim();
+          about = `the port file at ${config.portFile} written by this launch does not hold a ` +
+            `usable port: '${contents.slice(0, 40)}'`;
+        } else {
+          // A port file this launch did not write is an earlier run's allocation, which the
+          // launcher may since have handed to another instance
+          about = `the port file at ${config.portFile} is an earlier run's allocation, written ` +
+            `${((spawnedAt - writtenAt) / 1000).toFixed(1)}s before this launch started ` +
+            `(${new Date(writtenAt).toISOString()})`;
+        }
+        // A launcher still running has not failed to write the port; it has not got there yet
+        const what = exited === null
+          ? `\`${launch.display}\` was still running after ${launchTiming.instanceBudgetMs / 1000}s and was ` +
+            `left to finish, and ${about}`
+          : `\`${launch.display}\` finished after ${((exitedAt - spawnedAt) / 1000).toFixed(1)}s and ${about}`;
+        return withTargetNotes({
+          success: false,
+          launchCommand: launch.display,
+          state: "no-port",
+          message: `${what}, so there is nothing to connect to.`
+            + (await launchFailureTail(config, launcherStderr, spawnedAt)),
+          ...(ignoredArgsNote ? { note: ignoredArgsNote } : {}),
+        });
+      }
+      launchedPortUntil = Math.floor((await fileMtimeMs(config.portFile)) ?? Date.now()) + launchTiming.portReservationMs;
+      pointClient(launchedPort, config);
+      // The next command re-checks ownership, and a scan from before the launch would deny it
+      invalidateGameProcessScan();
+    }
+  }
+
+  if (vanilla) return vanillaOutcome({ signal, config, nextTarget, launch, watcher, launcherExited, launcherStderr, spawnedAt, ignoredArgsNote, withTargetNotes });
+
+  const poll = await pollUntilResponsive(
+    config.isAgentInstance
+      ? launchTiming.instanceBudgetMs
+      : launch.waitsOnExit ? LAUNCH_POLL_TIMEOUT_MS : launchTiming.steamStartMs,
+    3000,
+    // A launch command that hands off and exits cleanly says nothing; a failing one ends the wait
+    watcher,
+    { launchedPort, launchedPortUntil, signal },
+  );
+  if (poll.success) {
+    const running = config.isAgentInstance ? await runningInstanceReport() : null;
+    return withTargetNotes({
+      success: true,
+      launchCommand: launch.display,
+      message: `Game ${stoppedFirst ? 'restarted' : 'launched'} and ready (${poll.attempts} attempts, ${poll.elapsed}s)`,
+      ...(config.isAgentInstance
+        ? {
+            instance: { id: config.id, port: unityClient.port },
+            logs: { umm: config.ummLog, player: config.playerLog },
+            ...(running ? { runningInstances: running } : {}),
+          }
+        : {}),
+      ...(ignoredArgsNote ? { note: ignoredArgsNote } : {}),
+    });
+  }
+
+  const tail = await launchFailureTail(config, launcherStderr, spawnedAt);
+  return withTargetNotes({
+    success: false,
+    launchCommand: launch.display,
+    state: poll.state,
+    message: (poll.state === "launcher-failed"
+      ? `\`${launch.display}\` failed: ${poll.message}.`
+      : poll.state === "no-process"
+        ? `Ran \`${launch.display}\` but no Broforce process is running after ${poll.elapsed}s (${poll.attempts} attempts)` +
+          (launch.waitsOnExit ? ` — the launch command exited without leaving a game running.` : `.`)
+        : poll.state === "handshake-refused"
+          ? `Game launched with \`${launch.display}\`, but its inspector refused this server's connection: ${poll.message}`
+          : `${asSentence(`Game launched with \`${launch.display}\` but never answered — ${poll.message}`)} ` +
+            `It may still be starting: call wait_for_game to keep waiting for it.`) + likelyCauses(launch, poll.state) + tail,
+    lastError: poll.lastError,
+    attempts: poll.attempts,
+    ...(ignoredArgsNote ? { note: ignoredArgsNote } : {}),
+  });
+}
+
+async function vanillaOutcome({ signal, config, nextTarget, launch, watcher, launcherExited, launcherStderr, spawnedAt, ignoredArgsNote, withTargetNotes }) {
+  const label = config.isAgentInstance ? `instance ${config.id}` : 'Broforce';
+  const noInspector = `Started ${label} without mods, so the Unity Inspector Mod is not loaded and nothing will ` +
+    `answer on the inspector port. Relaunch without vanilla to drive it.`;
+  const note = ignoredArgsNote ? { note: ignoredArgsNote } : {};
+
+  // An instance has already been waited out under its own budget; waiting again would only
+  // add a second budget to a launcher that was left running
+  const vanillaBudgetMs = config.isAgentInstance
+    ? launchTiming.instanceBudgetMs
+    : launchTiming.vanillaExitWaitMs;
+  let finished = launcherExited !== null;
+  if (!config.isAgentInstance && launch.waitsOnExit) {
+    finished = await within(watcher.exit.then(() => true), vanillaBudgetMs, signal, false);
+    throwIfCancelled(signal, 'launch_game');
+  }
+
+  const launcherFailed = async () => withTargetNotes({
+    success: false,
+    launchCommand: launch.display,
+    vanilla: true,
+    state: "launcher-failed",
+    message: `\`${launch.display}\` failed: the launch command ${watcher.reason}.` +
+      (await launchFailureTail(config, launcherStderr, spawnedAt)),
+    ...note,
+  });
+  if (watcher.reason) return launcherFailed();
+
+  const how = !launch.waitsOnExit
+    ? `Ran \`${launch.display}\``
+    : finished
+      ? `\`${launch.display}\` exited cleanly`
+      : `\`${launch.display}\` was still running after ${vanillaBudgetMs / 1000}s and was left to finish`;
+  const confirmMs = launch.waitsOnExit ? launchTiming.startConfirmMs : launchTiming.steamStartMs;
+  const started = await confirmGameStarted(config, { budgetMs: confirmMs, watcher, signal });
+  if (watcher.reason) return launcherFailed();
+  if (started === 'gone') {
+    return withTargetNotes({
+      success: false,
+      launchCommand: launch.display,
+      vanilla: true,
+      state: "no-process",
+      message: `${how}, but no Broforce process of ${targetDescription(nextTarget)} was running ` +
+        `${confirmMs / 1000}s later — the game did not start, or exited as it started.` +
+        likelyCauses(launch, 'no-process') +
+        (await launchFailureTail(config, launcherStderr, spawnedAt)),
+      ...note,
+    });
+  }
+
+  if (started === 'running') {
+    invalidateGameProcessScan();
+    vanillaGames.set(nextTarget, { startMs: await gameStartTime(config) });
+  }
+  return withTargetNotes({
+    success: true,
+    launchCommand: launch.display,
+    vanilla: true,
+    message: noInspector +
+      (finished || !launch.waitsOnExit ? '' : ` The launch command was still running after ${vanillaBudgetMs / 1000}s and was left to finish.`) +
+      (started === 'unknown' ? ' Process detection is unavailable, so whether the game is running could not be checked.' : ''),
+    ...note,
+  });
+}
+
+async function stopGame(args) {
+  // Asking whether the kill may run is also what asks the launcher again, and a retry that
+  // succeeds rewrites the target's config: everything below acts on the config after that
+  const signalRefusal = await steamKillRefusal();
+  const config = activeConfig();
+  const wantsRemove = Boolean(args.remove);
+  if (!config.isAgentInstance) refuseUserGameUnderWsl('stop_game');
+
+  if (wantsRemove && !config.isAgentInstance) {
+    throw new Error(
+      "remove: true deletes an agent instance's directory, and this server is pointed at the user's game. " +
+      "Launch this session's own instance first, or drop remove."
+    );
+  }
+
+  const releaseInstance = config.isAgentInstance ? await acquireInstanceOp() : () => {};
+  try {
+    let killResult;
+    // The launcher's stop clears the instance's pidfile, which is worth doing even with no game
+    // left; the user's game has nothing to tidy
+    if (!config.isAgentInstance && (await isGameRunning(config)) === false) {
+      killResult = {
+        killed: false,
+        detail: `No Broforce process is running for ${targetDescription()}, so nothing was signalled.`,
+      };
+    } else {
+      unityClient.disconnect('stop_game stopped the game before this command was answered');
+      killResult = await killGame({ config, signalRefusal });
+    }
+
+    const survivorsLeft = (killResult.survivors ?? []).length > 0 || Boolean(killResult.unknown);
+    if (!survivorsLeft) vanillaGames.delete(targetOf(config));
+    // The wrapper stops what it still owns at session end, and a confirmed stop leaves it nothing
+    if (config.isAgentInstance && !survivorsLeft) await removeOwnerFile(config);
+
+    // Deleting the directory of a game that is still running would orphan it, and a stop that
+    // left any of its targets behind is not a stop, whatever else it managed
+    let removal = null;
+    if (wantsRemove) {
+      const survivors = killResult.survivors ?? [];
+      removal = killResult.unknown || survivors.length > 0
+        ? {
+            removed: false,
+            detail: `Instance ${config.id} was not removed, since the stop did not succeed` +
+              (survivors.length > 0 ? ` (pid ${survivors.join(', ')} is still running).` : '.'),
+          }
+        : await removeInstance(config);
+    }
+
+    return {
+      // An instance with no game left is asked for a tidy-up, and a tidy-up that ran and
+      // exited 0 did what this call asked of it
+      success: killResult.killed || killResult.tidied === true,
+      message: [killResult.detail, removal?.detail].filter(Boolean).map(asSentence).join(' '),
+      target: activeTarget(),
+      ...(killResult.unknown ? { unknown: true } : {}),
+      ...(removal ? { removed: removal.removed } : {}),
+    };
+  } finally {
+    releaseInstance();
+  }
+}
+
 export const SHUTDOWN_TEARDOWN_COMMAND_MS = 800;
 export const SHUTDOWN_TEARDOWN_BUDGET_MS = 2000;
 
@@ -1970,22 +2991,38 @@ export async function shutdownServer(signal, { exit = (code) => process.exit(cod
   console.error(`Shutting down Unity Inspector MCP server (${signal})...`);
 
   const sweep = activeSweep;
-  if (sweep) {
-    let timer = null;
-    const expired = new Promise((resolve) => { timer = setTimeout(() => resolve(true), SHUTDOWN_TEARDOWN_BUDGET_MS); });
-    const teardown = teardownGame(sweep.client, { timeoutMs: SHUTDOWN_TEARDOWN_COMMAND_MS }).then(() => false, () => false);
+  const watched = creationWatch;
+  let timer = null;
+  const expired = new Promise((resolve) => { timer = setTimeout(() => resolve(true), SHUTDOWN_TEARDOWN_BUDGET_MS); });
+  shutdownClaimGrace = true;
+  const claim = watched
+    ? claimInstanceWhenCreated(watched, expired).catch(() => null)
+    : Promise.resolve(null);
+  if (sweep && (sweep.claim || sweep.scriptName)) {
+    const teardown = (async () => {
+      if (sweep.claim) await releaseClaim(sweep.client, sweep.claim, SHUTDOWN_TEARDOWN_COMMAND_MS);
+      if (sweep.scriptName) {
+        await teardownGame(sweep.client, {
+          timeoutMs: SHUTDOWN_TEARDOWN_COMMAND_MS,
+          name: sweep.scriptName,
+          speed: sweep.restoreSpeed,
+        });
+      }
+    })().then(() => false, () => false);
 
     const overran = await Promise.race([teardown, expired]);
-    clearTimeout(timer);
-    if (overran) {
+    if (overran && sweep.scriptName) {
       console.error(
-        'The capture teardown did not finish in time — the game may still be frozen. Unload the ' +
-        'animation-capture script and set the game speed back to 1 by hand.'
+        `The capture teardown did not finish in time — the game may still be frozen. Unload the ` +
+        `${sweep.scriptName} script with unload_script, and set_game_speed ${sweep.restoreSpeed ?? 1} if it stays frozen.`
       );
     }
   }
+  await claim;
+  shutdownClaimGrace = false;
+  clearTimeout(timer);
 
-  unityClient.disconnect();
+  unityClient.disconnect('The MCP server shut down before this command was answered');
   exit(0);
 }
 
@@ -2025,8 +3062,6 @@ function captureStatesPath(raw) {
   return resolved;
 }
 
-// The prep step deletes every .png in the output directory, so it is only ever cleared when this
-// tool wrote it before: states.json is the mark it leaves
 async function captureOutDir(raw) {
   if (typeof raw !== 'string' || raw.trim() === '') {
     throw new Error('out is required: the absolute path of the directory the capture is written to');
@@ -2040,20 +3075,23 @@ async function captureOutDir(raw) {
   try {
     stat = await fs.stat(out);
   } catch (err) {
-    if (err.code !== 'ENOENT') throw err;
+    if (err.code !== 'ENOENT') throw new Error(`out ${out} cannot be read (${err.code || err.message}): it must be a directory this server can write`);
   }
   if (stat && !stat.isDirectory()) throw new Error(`out is not a directory: ${out}`);
 
-  if (stat) {
-    const entries = await fs.readdir(out);
-    if (entries.length > 0 && !entries.includes(STATES_COPY_NAME)) {
-      throw new Error(
-        `${out} already holds files and no ${STATES_COPY_NAME} from an earlier sweep, and the sweep deletes every ` +
-        '.png in its output directory. Pass a new or empty directory, or one this tool wrote before.'
-      );
-    }
-  }
+  const problem = stat ? await outDirProblem(out).catch((err) => `out ${out} cannot be listed (${err.code || err.message})`) : null;
+  if (problem) throw new Error(problem);
   return out;
+}
+
+function captureOnly(raw) {
+  if (raw === undefined || raw === null) return null;
+  if (!Array.isArray(raw) || raw.length === 0 || !raw.every((name) => typeof name === 'string' && name.trim() !== '')) {
+    throw new Error('only must be a non-empty list of state names');
+  }
+  const twice = raw.filter((name, index) => raw.indexOf(name) !== index);
+  if (twice.length > 0) throw new Error(`only names ${[...new Set(twice)].map((name) => `"${name}"`).join(', ')} more than once`);
+  return raw;
 }
 
 async function captureOptions(args) {
@@ -2062,7 +3100,10 @@ async function captureOptions(args) {
   const bro = args.bro === undefined || args.bro === null || String(args.bro).trim() === '' ? null : String(args.bro);
   const gameOut = args.gameOut === undefined || args.gameOut === null || String(args.gameOut).trim() === ''
     ? out
-    : String(args.gameOut);
+    : String(args.gameOut).trim();
+  if (!isAbsoluteGamePath(gameOut)) {
+    throw new Error(`gameOut must be an absolute path as the game sees it (/..., C:\\... or \\\\server\\...), got "${args.gameOut}"`);
+  }
 
   const layers = args.states === undefined || args.states === null
     ? []
@@ -2080,6 +3121,9 @@ async function captureOptions(args) {
   const settleMs = captureMs('settle', args.settle, DEFAULT_SETTLE_MS);
   const swapSettleMs = captureMs('swapSettle', args.swapSettle, DEFAULT_SWAP_SETTLE_MS);
 
+  const box = args.box === undefined || args.box === null ? null : captureNumber('box', args.box, { min: 1 });
+  if (box !== null && box > CAPTURE_MAX_BOX) throw new Error(`box must be a number >= 1 and <= ${CAPTURE_MAX_BOX}, got ${JSON.stringify(args.box)}`);
+
   return {
     out,
     gameOut,
@@ -2092,11 +3136,15 @@ async function captureOptions(args) {
     swapTimeoutMs: captureMs('swapTimeout', args.swapTimeout, DEFAULT_SWAP_TIMEOUT_MS, { min: 1 }),
     timeoutMs: captureMs('timeout', args.timeout, DEFAULT_TIMEOUT_MS, { min: 1 }),
     player,
-    box: args.box === undefined || args.box === null ? null : captureNumber('box', args.box, { min: 1 }),
+    box,
     includeLethal: args.includeLethal === true,
     allowSideEffects: args.allowSideEffects === true,
+    only: captureOnly(args.only),
   };
 }
+
+export const CAPTURE_REPLY_STATE_ERRORS = 20;
+const CAPTURE_MAX_BOX = 256;
 
 function captureReply(run, options) {
   const { outcome } = run;
@@ -2114,21 +3162,65 @@ function captureReply(run, options) {
       states: path.join(options.out, STATES_COPY_NAME),
     },
     summary: run.summary,
-    stateErrors: run.stateErrors,
+    stateErrors: run.stateErrors.slice(0, CAPTURE_REPLY_STATE_ERRORS),
+    ...(run.stateErrors.length > CAPTURE_REPLY_STATE_ERRORS
+      ? { stateErrorsOmitted: run.stateErrors.length - CAPTURE_REPLY_STATE_ERRORS }
+      : {}),
     swap: run.swap,
     logTail: outcome.logTail ? formatLogTail(outcome.logTail) : null,
   };
 }
 
-export async function handleToolCall(request) {
+function readLogTruncation({ dropped, cut }) {
+  const parts = [];
+  if (cut) parts.push(`the newest line is cut to its last ${READ_LOG_MAX_BYTES} bytes`);
+  if (dropped > 0) parts.push(`${dropped} earlier line${dropped === 1 ? '' : 's'} dropped`);
+  return `Output truncated to ${READ_LOG_MAX_BYTES} bytes: ${parts.join(', and ')}. Narrow it with lines or filter.`;
+}
+
+function newestLinesWithin(lines, max, available = lines.length) {
+  let kept = 0;
+  let bytes = 0;
+  while (kept < lines.length) {
+    const cost = Buffer.byteLength(lines[lines.length - 1 - kept]) + (kept > 0 ? 1 : 0);
+    if (bytes + cost > max) break;
+    bytes += cost;
+    kept++;
+  }
+  if (kept > 0 || lines.length === 0) {
+    return { content: lines.slice(lines.length - kept).join('\n'), returned: kept, dropped: available - kept, cut: false };
+  }
+
+  const last = Buffer.from(lines[lines.length - 1], 'utf8');
+  let start = last.length - max;
+  while (start < last.length && (last[start] & 0xc0) === 0x80) start++;
+  return { content: last.subarray(start).toString('utf8'), returned: 1, dropped: available - 1, cut: true };
+}
+
+export function handleToolCall(request, { signal = null } = {}) {
+  return unityClient.runCall(signal, () => callTool(request, signal));
+}
+
+async function callTool(request, signal) {
   const name = request.params.name;
-  const args = request.params.arguments ?? {};
+  const args = withoutNullArguments(request.params.arguments ?? {});
+  const bound = !TARGET_FREE_TOOLS.has(name) && name !== 'launch_game' && name !== 'stop_game';
+  if (bound) boundCalls.push(name);
+  if (name === 'launch_game') launchesRunning++;
 
   try {
+    const stray = unknownArgumentsProblem(name, args, toolArguments());
+    if (stray) throw new Error(stray);
+    const mistyped = argumentTypeProblems(name, args, toolArguments());
+    if (mistyped.length > 0) throw new Error(mistyped.join('; '));
+    refuseDuringSweep(name, args);
+
     // launch_game settles the target itself; everything else acts on the one already resolved
     if (!TARGET_FREE_TOOLS.has(name) && name !== 'launch_game') {
       await resolveTarget();
-      await pointClientAtTarget();
+      if (targetPending === null) await pointClientAtTarget();
+      else if (name !== 'game_state') throw new Error(pendingRefusal());
+      refuseDuringSweep(name, args);
     }
     let result;
 
@@ -2147,24 +3239,26 @@ export async function handleToolCall(request) {
         break;
 
       case "inspect_gameobject":
-        if (!args.path) {
-          throw new Error("GameObject path is required");
+        if (!args.path && args.instanceId === undefined) {
+          throw new Error("GameObject path or instanceId is required");
         }
         result = await unityClient.sendCommand("inspect_gameobject", {
           path: args.path,
+          instanceId: args.instanceId,
           detailed: args.detailed ?? false,
         });
         break;
 
       case "inspect_component":
-        if (!args.path) {
-          throw new Error("GameObject path is required");
+        if (!args.path && args.instanceId === undefined) {
+          throw new Error("GameObject path or instanceId is required");
         }
         if (!args.componentType) {
           throw new Error("Component type is required");
         }
         result = await unityClient.sendCommand("inspect_component", {
           path: args.path,
+          instanceId: args.instanceId,
           componentType: args.componentType,
           memberPath: args.memberPath,
         });
@@ -2193,7 +3287,7 @@ export async function handleToolCall(request) {
           args.highlight === undefined ? {} : { highlight: args.highlight },
         );
         if (result && result.path) {
-          result.path = unityClient.translateScreenshotPath(result.path);
+          result.path = await unityClient.translateScreenshotPath(result.path);
         }
         break;
 
@@ -2207,14 +3301,15 @@ export async function handleToolCall(request) {
         break;
 
       case "modify_component":
-        if (!args.path || !args.component || !args.properties) {
-          throw new Error("Path, component, and properties are required");
+        if ((!args.path && args.instanceId === undefined) || !args.component || !args.properties) {
+          throw new Error("Path or instanceId, component, and properties are required");
         }
         if (Object.keys(args.properties).length === 0) {
           throw new Error("No properties were given - pass at least one member name and value to write");
         }
         result = await unityClient.sendCommand("modify_component", {
           path: args.path,
+          instanceId: args.instanceId,
           component: args.component,
           properties: args.properties,
         });
@@ -2285,13 +3380,6 @@ export async function handleToolCall(request) {
           campaignIndex: args.campaignIndex,
           levelIndex: args.levelIndex,
         });
-
-        setTimeout(async () => {
-          const isHealthy = await unityClient.checkHealth();
-          if (!isHealthy) {
-            console.error("WARNING: Game may have crashed after go_to_level");
-          }
-        }, 3000);
         break;
 
       case "swap_bro": {
@@ -2319,13 +3407,11 @@ export async function handleToolCall(request) {
         break;
 
       case "simulate_input": {
-        const hasAction = Boolean(args.action);
-        const hasSequence = Array.isArray(args.sequence) && args.sequence.length > 0;
-        if (hasAction === hasSequence) {
-          throw new Error("Exactly one of action or sequence is required");
-        }
+        const problem = simulateInputProblem(args);
+        if (problem) throw new Error(problem);
         result = await unityClient.sendCommand("simulate_input", {
           action: args.action,
+          binding: args.binding,
           sequence: args.sequence,
           duration: args.duration,
           count: args.count,
@@ -2341,7 +3427,7 @@ export async function handleToolCall(request) {
 
       case "wait_for_game": {
         refuseWhileInFlight('wait for the game');
-        const poll = await pollUntilResponsive((args.timeout ?? 60) * 1000, (args.interval ?? 3) * 1000);
+        const poll = await pollUntilResponsive((args.timeout ?? 60) * 1000, (args.interval ?? 3) * 1000, null, { signal });
         result = poll.success
           ? { success: true, message: poll.message }
           : { success: false, state: poll.state, message: poll.message, lastError: poll.lastError, attempts: poll.attempts };
@@ -2350,49 +3436,77 @@ export async function handleToolCall(request) {
 
       case "game_state": {
         const fields = await serverStateFields({ withInstanceList: true });
+        if (targetPending !== null) {
+          result = { success: false, message: pendingRefusal(), ...fields };
+          break;
+        }
         try {
           const state = await unityClient.sendCommand("game_state", {});
-          result = { ...state, ...fields };
+          result = { ...state, build: await targetBuild({ answered: state?.mainThreadAnswered !== false }), ...fields };
         } catch (err) {
-          result = { success: false, message: err.message, ...fields };
+          result = { success: false, message: err.message, build: await targetBuild({ answered: false }), ...fields };
         }
         break;
       }
 
       case "read_log": {
-        if (args.onlyNew && (args.lines != null || args.filter)) {
+        const filter = args.filter;
+        if (args.onlyNew && (args.lines != null || filter)) {
           throw new Error("read_log's onlyNew returns every line written since the last such call, so it takes neither lines nor filter");
         }
         if (args.reset && !args.onlyNew) {
           throw new Error("read_log's reset moves the position onlyNew reads from, so it needs onlyNew: true");
         }
-        result = await withResolvedLog((resolved) =>
-          args.onlyNew ? readNewLogLines(resolved, args.reset) : readLogTail(resolved, args));
+        if (args.onlyNew) {
+          result = await serializeNewLines(() =>
+            withResolvedLog((resolved) => readNewLogLines(resolved, args.reset), { stickTo: newLinesState }));
+          break;
+        }
+        const count = args.lines ?? 50;
+        if (!Number.isInteger(count) || count < 1) {
+          throw new Error(`read_log's lines must be a whole number of at least 1, got ${JSON.stringify(args.lines)}`);
+        }
+        result = await withResolvedLog((resolved) => readLogTail(resolved, { count, filter }));
         break;
       }
 
-      case "run_test_script":
-        if (!args.script) {
+      case "run_test_script": {
+        const script = args.script;
+        if (!script) {
           throw new Error("Script name or path is required");
         }
-        result = await compactTestScriptReply(
-          await runTestScript(args.script, unityClient, {
-            args: args.args ?? {},
-            logPaths: () => testScriptLogPaths(),
-          }),
-          { script: args.script },
-        );
+        const running = { script };
+        activeTestScripts.add(running);
+        try {
+          result = await compactTestScriptReply(
+            await runTestScript(script, unityClient, {
+              args: args.args ?? {},
+              logPaths: () => targetLogPaths(),
+              gameStart: () => gameStartTime(activeConfig()),
+              crashLog: (sinceMs) => gameStdoutTail(activeConfig(), sinceMs),
+              toolArguments: toolArguments(),
+              signal,
+            }),
+            { script },
+          );
+        } finally {
+          activeTestScripts.delete(running);
+        }
         break;
+      }
 
       case "execute_script": {
-        if (!args.path) {
+        const scriptPath = args.path;
+        if (!scriptPath) {
           throw new Error("Script path is required");
         }
-        const scriptData = await readScriptSource(args.path);
+        const scriptData = await readScriptSource(scriptPath);
+        refuseDuringSweep(name, args);
         const script = toolCommand("execute_script", {
           source: scriptData.source,
           name: scriptData.name,
-          args: args.args || {},
+          args: args.args ?? {},
+          origin: scriptData.origin,
           compileOnly: args.compileOnly,
         });
         result = await unityClient.sendCommand(script.method, script.params);
@@ -2403,490 +3517,57 @@ export async function handleToolCall(request) {
         result = await listCSharpScripts();
         break;
 
-      case "unload_script":
+      case "unload_script": {
         if (!args.name) {
           throw new Error("Script name is required");
         }
-        result = await unityClient.sendCommand("unload_script", {
-          name: args.name,
-        });
+        const scriptName = await loadedScriptName(args.name);
+        refuseDuringSweep(name, args);
+        result = await unityClient.sendCommand("unload_script", { name: scriptName });
         break;
+      }
 
       case "capture_animations": {
-        // The sweep sends its own commands and freezes the game for its length, so nothing else may
-        // be on the socket and no second sweep may start under this one
-        refuseWhileInFlight('start an animation capture sweep');
         const captureOpts = await captureOptions(args);
 
-        // Every wait spent in a row: what the refusal reports to whoever asks while it runs
-        const budgetMs = (captureOpts.level ? captureOpts.timeoutMs : 0) + captureOpts.settleMs
-          + (captureOpts.bro ? captureOpts.swapTimeoutMs + captureOpts.swapSettleMs : 0)
-          + captureOpts.timeoutMs;
-        activeSweep = { out: captureOpts.out, client: unityClient, deadline: Date.now() + budgetMs };
+        if (launchesRunning > 0) {
+          throw new Error(
+            'Cannot start an animation capture sweep while launch_game is running — it may restart or re-point ' +
+            'the game under the sweep. Wait for it to finish.'
+          );
+        }
+        refuseWhileInFlight('start an animation capture sweep');
+        if (activeTestScripts.size > 0) {
+          const names = [...activeTestScripts].map(({ script }) => script).join(', ');
+          throw new Error(
+            `Cannot start an animation capture sweep while test script ${names} is running — its steps would ` +
+            `drive the game under the sweep, between commands as well as during them. Wait for it to finish.`
+          );
+        }
+
+        const budgetMs = claimLeaseMs(captureOpts) + captureOpts.timeoutMs;
+        const sweep = {
+          out: captureOpts.out, client: unityClient, deadline: Date.now() + budgetMs,
+          claim: null, scriptName: null, restoreSpeed: null,
+        };
+        activeSweep = sweep;
 
         try {
-          const run = await runCapture(captureOpts, unityClient, { resolveLog: resolveLogFile });
+          const run = await runCapture(captureOpts, unityClient, { resolveLog: resolveLogFile, signal, sweep });
           result = captureReply(run, captureOpts);
         } finally {
-          activeSweep = null;
+          if (activeSweep === sweep) activeSweep = null;
         }
         break;
       }
 
-      case "launch_game": {
-        // The probe and the root settle what this session has before the target moves anywhere
-        await resolveTarget();
-        const hasInstance = await instanceTargetReady();
-        const nextTarget = args.steam || !hasInstance ? 'steam' : 'instance';
-        const previousTarget = activeTarget();
-        // A launch that meant to start this session's instance and could not has to say why, in the
-        // same words game_state gives for it
-        const instanceReason = !args.steam && !hasInstance ? (await instanceField()).instanceReason : null;
-
-        refuseWhileInFlight('launch');
-
-        let switchNote = null;
-        if (nextTarget !== previousTarget) {
-          const previousConfig = previousTarget === 'instance' ? sessionInstance() : userGame();
-          if ((await isGameRunning(previousConfig)) === true) {
-            switchNote = `${targetDescription(previousTarget)} is still running — switching targets left it alone. ` +
-              `Switch back and use stop_game to stop it.`;
-          }
-        }
-
-        await setTarget(nextTarget);
-
-        const withTargetNotes = (payload) => ({
-          ...payload,
-          target: nextTarget,
-          ...(switchNote ? { targetNote: switchNote } : {}),
-          ...(instanceReason ? { instanceReason } : {}),
-        });
-
-        // The user's game is every Broforce process this server cannot place in an instance, so with
-        // the launcher's instances unaccounted for it cannot say whether that game is running at
-        // all — a stranger's would read as the user's, broken. Asking also drives the retries
-        const unplaceable = await unplaceableInstancesReason();
-        if (unplaceable !== null) {
-          result = withTargetNotes({
-            success: false,
-            state: "root-unknown",
-            message: asSentence(
-              `Nothing was launched: ${unplaceable}, so this server cannot tell whether ` +
-              `${targetDescription(nextTarget)} is running`
-            ),
-          });
-          break;
-        }
-
-        const config = activeConfig();
-
-        // On an instance the cwd rule decides whether a game of ours is running: a ping answered by
-        // somebody else's game on a port we no longer own must never refuse this launch
-        const ownsGame = config.isAgentInstance ? (await isGameRunning(config)) === true : true;
-
-        let gameRunning = false;
-        let refusal = null;
-        if (ownsGame) {
-          try {
-            if (!unityClient.isConnected()) {
-              unityClient.disconnect();
-              await unityClient.connect();
-            }
-            await unityClient.sendCommand("ping", {});
-            gameRunning = true;
-          } catch (err) {
-            gameRunning = isHandshakeRefusal(err);
-            if (gameRunning) refusal = err.message;
-          }
-        }
-
-        if (gameRunning && !args.restart) {
-          result = withTargetNotes({
-            success: refusal === null,
-            alreadyRunning: true,
-            ...(refusal === null
-              ? { message: `${targetDescription(nextTarget)} is already running. Use restart: true to stop and relaunch.` }
-              : {
-                  state: "handshake-refused",
-                  message: `${targetDescription(nextTarget)} is already running, but its inspector refused this server's connection: ${refusal}`,
-                }),
-            // The game this launch would have started is the one already running, so it names it
-            // exactly as a launch of its own would
-            ...(config.isAgentInstance
-              ? {
-                  instance: { id: config.id, port: unityClient.port },
-                  logs: { umm: config.ummLog, player: config.playerLog },
-                }
-              : {}),
-          });
-          break;
-        }
-
-        if (!gameRunning && !args.restart && config.isAgentInstance) {
-          const refusal = await instanceLaunchRefusal(config);
-          if (refusal) {
-            result = withTargetNotes({ success: false, alreadyRunning: true, message: refusal });
-            break;
-          }
-        }
-
-        if (!gameRunning && !args.restart && (await isGameRunning(config)) === true) {
-          result = withTargetNotes({
-            success: false,
-            alreadyRunning: true,
-            message:
-              "A Broforce process is running but the Unity Inspector Mod is not responding on TCP. " +
-              "The mod may have failed to load. Use restart: true to stop and relaunch.",
-          });
-          break;
-        }
-
-        let extraArgs;
-        try {
-          extraArgs = composeExtraLaunchArgs(args);
-        } catch (err) {
-          throw new Error(`Invalid launchArgs: ${err.message}`);
-        }
-
-        // Resolving first, so a restart that cannot relaunch has not already stopped the game
-        let launch;
-        try {
-          launch = resolveLaunchCommand(extraArgs, process.env, process.platform, config);
-        } catch (err) {
-          throw new Error(
-            `${err.message}. BROFORCE_LAUNCH_CMD should hold the command that starts Broforce on this machine.`
-          );
-        }
-
-        if (args.restart && !(await commandIsRunnable(launch.command))) {
-          throw new Error(
-            `Cannot run \`${launch.command}\`, so nothing was stopped: ` +
-            `point ${config.isAgentInstance ? 'the configured launcher' : 'BROFORCE_LAUNCH_CMD'} at an executable ` +
-            `that launches ${targetDescription(nextTarget)}.`
-          );
-        }
-
-        if (args.restart && (gameRunning || (await isGameRunning(config)) === true)) {
-          unityClient.disconnect();
-          // As in stop_game: the refusal check can settle the root, and the kill takes the config
-          // that leaves behind
-          const signalRefusal = await steamKillRefusal();
-          const killResult = await killGame({ config: activeConfig(), signalRefusal });
-          console.error(`launch_game: ${killResult.detail}`);
-
-          // Launching now would put a second game into an instance that still holds the first
-          const survivors = killResult.survivors ?? [];
-          if (killResult.unknown || survivors.length > 0) {
-            result = withTargetNotes({
-              success: false,
-              state: "stop-failed",
-              message: asSentence(
-                `${targetDescription(nextTarget)} could not be stopped, so nothing was launched: ${killResult.detail}`
-              ) + (survivors.length > 0 ? ` Stop pid ${survivors.join(', ')} by hand and try again.` : ''),
-              ...(survivors.length > 0 ? { survivors } : {}),
-            });
-            break;
-          }
-          await delay(1000);
-        }
-
-        // The instance id is claimed before its launcher runs, so a launch that never finishes still
-        // leaves the wrapper that asked for it responsible for stopping the game. A first launch has
-        // no directory to claim in — the launcher is the one that creates it — and the claim follows
-        // it there rather than creating it, which would leave the launcher nothing to create
-        let claimed = false;
-        if (config.isAgentInstance) claimed = (await writeOwnerFile(config)) !== null;
-
-        let launcherStderr = null;
-        let spawnedAt = null;
-        let exitedAt = null;
-        const spawnLauncher = async () => {
-          try {
-            spawnedAt = Date.now();
-            // The Steam client and the game would inherit a pipe and fill it with their own chatter
-            const child = await spawnDetached(launch.command, launch.args, {
-              captureStderr: config.isAgentInstance,
-            });
-            if (config.isAgentInstance) launcherStderr = collectLauncherStderr(child);
-            return child;
-          } catch (err) {
-            throw new Error(
-              `Failed to launch Broforce with \`${launch.display}\`: ${err.message}. ` +
-              (config.isAgentInstance
-                ? `The configured launcher's instance mode is what starts instance ${config.id}.`
-                : `Set the BROFORCE_LAUNCH_CMD environment variable to the command that starts the game on this machine.`)
-            );
-          }
-        };
-
-        const noteParts = launch.ignoredArgs?.length
-          ? [`Ignored launch arguments ${launch.ignoredArgs.join(' ')} — the Steam protocol launch does not accept them. Set BROFORCE_LAUNCH_CMD to use a launcher that does.`]
-          : [];
-        const ignoredArgsNote = noteParts.length > 0 ? noteParts.join(' ') : null;
-
-        let watcher = launcherExitWatcher(await spawnLauncher());
-        // The port this launch's launcher allocated, which the wait may use before its game is up
-        let launchedPort = null;
-
-        // Waiting the launcher out is what carries an instance launch's verdict, and it is also the
-        // window a first launch has to claim the id in: the watch ends with the launch command
-        const waitOutLauncher = async () => {
-          const wait = waitForLauncherExit(watcher, Date.now() + launchTiming.instanceBudgetMs);
-          const claim = claimed ? null : claimInstanceWhenCreated(config, wait);
-          const exited = await wait;
-          if (exited) exitedAt = Date.now();
-          if (claim) claimed = (await claim) !== null;
-          return exited;
-        };
-
-        // An instance launch is waited out: its port is only readable once the launcher has finished,
-        // and only its exit status carries the cap refusal. A vanilla launch is waited out the same
-        // way, under the same budget and cap rules; only the port and the inspector are skipped
-        let launcherExited = null;
-        if (config.isAgentInstance) {
-          let exited = await waitOutLauncher();
-          let capExpired = false;
-          let capStart = null;
-          let capDeadline = null;
-          // The last list anyone could read, and whether the list was ever asked at all: the wait
-          // that happens to end the loop says nothing about the polls that came before it
-          let capReport = null;
-          let capPolls = 0;
-
-          while (exited && exited.code === INSTANCE_CAP_EXIT) {
-            // The wait starts when the launcher first says the cap is full, not before it ran
-            if (capDeadline === null) {
-              capStart = Date.now();
-              capDeadline = capStart + launchTiming.capWaitMs;
-            }
-            const slot = await waitForCapSlot(config, capDeadline);
-            capPolls += slot.polls;
-            if (slot.summary) capReport = slot.summary;
-            if (!slot.freed) {
-              capExpired = true;
-              break;
-            }
-            watcher = launcherExitWatcher(await spawnLauncher());
-            exited = await waitOutLauncher();
-          }
-
-          if (capExpired || (exited && exited.code === INSTANCE_CAP_EXIT)) {
-            const holders = capReport?.running?.map(entry => entry.id).join(', ');
-            const listIsFull = capReport?.cap !== null && capReport?.count >= capReport?.cap;
-            // Four endings, and only the first of them knows who holds the slots
-            let who;
-            if (capReport && listIsFull) {
-              who = ` Instances holding the slots: ${holders}.`;
-            } else if (capReport) {
-              who = ` The launcher's list last showed ` +
-                (capReport.count === 0
-                  ? 'no instances running'
-                  : `${capReport.count}${capReport.cap ? ` of ${capReport.cap}` : ''} running (${holders})`) +
-                `, yet the launcher refused this launch.`;
-            } else if (capPolls > 0) {
-              who = ` The launcher's instance list could not be read on any attempt, so which instances hold the slots is unknown.`;
-            } else {
-              who = ` The wait ran out before the launcher's instance list could be checked, so which instances hold the slots is unknown.`;
-            }
-            result = withTargetNotes({
-              success: false,
-              launchCommand: launch.display,
-              state: "cap-reached",
-              message:
-                `The configured launcher refused this launch at its instance cap${capReport?.cap ? ` of ${capReport.cap}` : ''} ` +
-                `and no slot came free in the ${((Date.now() - capStart) / 1000).toFixed(1)}s it was waited for, so instance ` +
-                `${config.id} was not started.` + who,
-              ...(capReport?.running ? { runningInstances: capReport.running } : {}),
-              ...(ignoredArgsNote ? { note: ignoredArgsNote } : {}),
-            });
-            break;
-          }
-
-          launcherExited = exited;
-
-          if (!watcher.reason && !vanillaTookEffect(launch, args)) {
-            // Only a port file this launch wrote is this launch's allocation
-            launchedPort = await waitForInstancePort(config, { notBeforeMs: spawnedAt });
-            if (launchedPort === null) {
-              const writtenAt = await fileMtimeMs(config.portFile);
-              let about;
-              if (writtenAt === null) {
-                about = `no inspector port has been written to ${config.portFile}`;
-              } else if (writtenAt >= spawnedAt) {
-                const contents = String(await readPortFileText(config) ?? '').trim();
-                about = `the port file at ${config.portFile} written by this launch does not hold a ` +
-                  `usable port: '${contents.slice(0, 40)}'`;
-              } else {
-                // A port file this launch did not write is an earlier run's allocation, which the
-                // launcher may since have handed to another instance
-                about = `the port file at ${config.portFile} is an earlier run's allocation, written ` +
-                  `${((spawnedAt - writtenAt) / 1000).toFixed(1)}s before this launch started ` +
-                  `(${new Date(writtenAt).toISOString()})`;
-              }
-              // A launcher still running has not failed to write the port; it has not got there yet
-              const what = exited === null
-                ? `\`${launch.display}\` was still running after ${launchTiming.instanceBudgetMs / 1000}s and was ` +
-                  `left to finish, and ${about}`
-                : `\`${launch.display}\` finished after ${((exitedAt - spawnedAt) / 1000).toFixed(1)}s and ${about}`;
-              result = withTargetNotes({
-                success: false,
-                launchCommand: launch.display,
-                state: "no-port",
-                message: `${what}, so there is nothing to connect to.`
-                  + (await launchFailureTail(config, launcherStderr, spawnedAt)),
-                ...(ignoredArgsNote ? { note: ignoredArgsNote } : {}),
-              });
-              break;
-            }
-            pointClient(launchedPort, config);
-            // The next command re-checks ownership, and a scan from before the launch would deny it
-            invalidateGameProcessScan();
-          }
-        }
-
-        if (vanillaTookEffect(launch, args)) {
-          const label = config.isAgentInstance ? `instance ${config.id}` : 'Broforce';
-          const noInspector = `Started ${label} without mods, so the Unity Inspector Mod is not loaded and nothing will ` +
-            `answer on the inspector port. Relaunch without vanilla to drive it.`;
-
-          // An instance has already been waited out under its own budget; waiting again would only
-          // add a second budget to a launcher that was left running
-          const vanillaBudgetMs = config.isAgentInstance
-            ? launchTiming.instanceBudgetMs
-            : launchTiming.vanillaExitWaitMs;
-          let finished = launcherExited !== null;
-          if (!config.isAgentInstance) {
-            let waitTimer;
-            finished = await Promise.race([
-              watcher.exit.then(() => true),
-              new Promise(resolve => { waitTimer = setTimeout(() => resolve(false), vanillaBudgetMs); }),
-            ]);
-            clearTimeout(waitTimer);
-          }
-          const vanillaTail = watcher.reason ? await launchFailureTail(config, launcherStderr, spawnedAt) : '';
-
-          result = withTargetNotes(watcher.reason
-            ? {
-                success: false,
-                launchCommand: launch.display,
-                vanilla: true,
-                state: "launcher-failed",
-                message: `\`${launch.display}\` failed: the launch command ${watcher.reason}.` + vanillaTail,
-                ...(ignoredArgsNote ? { note: ignoredArgsNote } : {}),
-              }
-            : {
-                success: true,
-                launchCommand: launch.display,
-                vanilla: true,
-                message: finished
-                  ? noInspector
-                  : `${noInspector} The launch command was still running after ${vanillaBudgetMs / 1000}s and was left to finish.`,
-                ...(ignoredArgsNote ? { note: ignoredArgsNote } : {}),
-              });
-          break;
-        }
-
-        const poll = await pollUntilResponsive(
-          config.isAgentInstance ? launchTiming.instanceBudgetMs : LAUNCH_POLL_TIMEOUT_MS,
-          3000,
-          // A launch command that hands off and exits cleanly says nothing; a failing one ends the wait
-          watcher,
-          { launchedPort },
-        );
-        if (poll.success) {
-          const running = config.isAgentInstance ? await runningInstanceReport() : null;
-          result = withTargetNotes({
-            success: true,
-            launchCommand: launch.display,
-            message: `Game ${args.restart ? 'restarted' : 'launched'} and ready (${poll.attempts} attempts, ${poll.elapsed}s)`,
-            ...(config.isAgentInstance
-              ? {
-                  instance: { id: config.id, port: unityClient.port },
-                  logs: { umm: config.ummLog, player: config.playerLog },
-                  ...(running ? { runningInstances: running } : {}),
-                }
-              : {}),
-            ...(ignoredArgsNote ? { note: ignoredArgsNote } : {}),
-          });
-          break;
-        }
-
-        const tail = await launchFailureTail(config, launcherStderr, spawnedAt);
-        result = withTargetNotes({
-          success: false,
-          launchCommand: launch.display,
-          state: poll.state,
-          message: (poll.state === "launcher-failed"
-            ? `\`${launch.display}\` failed: ${poll.message}.`
-            : poll.state === "no-process"
-              ? `Ran \`${launch.display}\` but no Broforce process is running after ${poll.elapsed}s (${poll.attempts} attempts) — the launch command exited without leaving a game running.`
-              : poll.state === "handshake-refused"
-                ? `Game launched with \`${launch.display}\`, but its inspector refused this server's connection: ${poll.message}`
-                : `Game launched with \`${launch.display}\` but never answered — ${poll.message}`) + tail,
-          lastError: poll.lastError,
-          attempts: poll.attempts,
-          ...(ignoredArgsNote ? { note: ignoredArgsNote } : {}),
-        });
+      case "launch_game":
+        result = await launchGame(args, signal);
         break;
-      }
 
-      case "stop_game": {
-        // Asking whether the kill may run is also what asks the launcher again, and a retry that
-        // succeeds rewrites the target's config: everything below acts on the config after that
-        const signalRefusal = await steamKillRefusal();
-        const config = activeConfig();
-        const wantsRemove = Boolean(args.remove);
-
-        if (wantsRemove && !config.isAgentInstance) {
-          throw new Error(
-            "remove: true deletes an agent instance's directory, and this server is pointed at the user's game. " +
-            "Launch this session's own instance first, or drop remove."
-          );
-        }
-
-        let killResult;
-        // The launcher's stop clears the instance's pidfile, which is worth doing even with no game
-        // left; the user's game has nothing to tidy
-        if (!config.isAgentInstance && (await isGameRunning(config)) === false) {
-          killResult = {
-            killed: false,
-            detail: `No Broforce process is running for ${targetDescription()}, so nothing was signalled.`,
-          };
-        } else {
-          unityClient.disconnect();
-          killResult = await killGame({ config, signalRefusal });
-        }
-
-        const survivorsLeft = (killResult.survivors ?? []).length > 0 || Boolean(killResult.unknown);
-        // The wrapper stops what it still owns at session end, and a confirmed stop leaves it nothing
-        if (config.isAgentInstance && !survivorsLeft) await removeOwnerFile(config);
-
-        // Deleting the directory of a game that is still running would orphan it, and a stop that
-        // left any of its targets behind is not a stop, whatever else it managed
-        let removal = null;
-        if (wantsRemove) {
-          const survivors = killResult.survivors ?? [];
-          removal = killResult.unknown || survivors.length > 0
-            ? {
-                removed: false,
-                detail: `Instance ${config.id} was not removed, since the stop did not succeed` +
-                  (survivors.length > 0 ? ` (pid ${survivors.join(', ')} is still running).` : '.'),
-              }
-            : await removeInstance(config);
-        }
-
-        result = {
-          // An instance with no game left is asked for a tidy-up, and a tidy-up that ran and
-          // exited 0 did what this call asked of it
-          success: killResult.killed || killResult.tidied === true,
-          message: [killResult.detail, removal?.detail].filter(Boolean).map(asSentence).join(' '),
-          target: activeTarget(),
-          ...(killResult.unknown ? { unknown: true } : {}),
-          ...(removal ? { removed: removal.removed } : {}),
-        };
+      case "stop_game":
+        result = await stopGame(args);
         break;
-      }
 
       default:
         throw new Error(`Unknown tool: ${name}`);
@@ -2899,6 +3580,7 @@ export async function handleToolCall(request) {
           text: JSON.stringify(result, null, 2),
         },
       ],
+      ...(result?.success === false ? { isError: true } : {}),
     };
   } catch (error) {
     console.error(`Tool error: ${error.message}`);
@@ -2911,10 +3593,13 @@ export async function handleToolCall(request) {
       ],
       isError: true,
     };
+  } finally {
+    if (bound) boundCalls.splice(boundCalls.indexOf(name), 1);
+    if (name === 'launch_game') launchesRunning--;
   }
 }
 
-server.setRequestHandler(CallToolRequestSchema, handleToolCall);
+server.setRequestHandler(CallToolRequestSchema, (request, extra) => handleToolCall(request, extra));
 
 // MCP Resource: C# Script Library Catalog
 server.setRequestHandler(ListResourcesRequestSchema, async () => {
@@ -2950,18 +3635,30 @@ process.on('unhandledRejection', (reason) => {
   console.error('Unhandled rejection:', reason);
 });
 
-// Cleanup on exit. A capture sweep in flight is torn down first, so the game is not left frozen.
-for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.on(signal, () => {
-    shutdownServer(signal).catch((err) => {
-      console.error(`Shutdown failed: ${err.message}`);
-      process.exit(0);
-    });
+let shutdownTriggered = false;
+
+function shutdownOnce(reason) {
+  if (shutdownTriggered) return;
+  shutdownTriggered = true;
+  shutdownServer(reason).catch((err) => {
+    console.error(`Shutdown failed: ${err.message}`);
+    process.exit(0);
   });
+}
+
+function installShutdownTriggers() {
+  // Cleanup on exit
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, () => shutdownOnce(signal));
+  process.stdin.on('end', () => shutdownOnce('stdin end'));
+  // Node ignores SIGPIPE, so a write nobody will read fails as an error event, uncaught without this
+  process.stdout.on('error', (err) => shutdownOnce(`stdout ${err.code ?? 'error'}`));
 }
 
 // Start the server
 async function main() {
+  installShutdownTriggers();
+  ownerIdentity().catch(() => {});
+
   // Asking a command what it accepts takes a moment, and the handshake must not wait on it
   startLaunchHelpCapture()?.catch((err) => console.error(`Could not read the launch command's help: ${err.message}`));
   startInstanceHelpCapture().catch((err) => console.error(`Could not read the instance launcher's help: ${err.message}`));
@@ -2969,7 +3666,9 @@ async function main() {
   // Asking the launcher takes a moment, and the handshake must not wait on it
   resolveTarget().then(
     async (target) => console.error(
-      `Target: ${target}${target === 'instance' ? ` (instance ${sessionInstance().id}, port ${unityClient.port ?? 'not allocated yet'})` : ''}`
+      target === null
+        ? `Target: none yet (${targetPending})`
+        : `Target: ${target}${target === 'instance' ? ` (instance ${sessionInstance().id}, port ${unityClient.port ?? 'not allocated yet'})` : ''}`
     ),
     (err) => console.error(`Could not resolve the target: ${err.message}`),
   );

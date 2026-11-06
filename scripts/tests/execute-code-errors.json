@@ -1,7 +1,20 @@
 {
   "name": "execute_code error contract",
-  "description": "Checks what execute_code reports for an inaccessible type, a throw inside a multi-statement block, a throw inside a single expression, two calls that must succeed, a throw in the statement after a block, a throw in the second statement of a single line, and a compiler diagnostic in the second statement of a single line, whose column is reported against the submitted input. Needs BroMakerLib and RocketLib installed in the profile. Run it once the game has finished loading its hero prefabs: for the first fifteen seconds or so after launch_game reports the game ready, HeroController.GetHeroPrefab returns null and the grenade steps fail for that reason instead.",
+  "description": "Checks what execute_code reports for an inaccessible type, a throw inside a multi-statement block, a throw inside a single expression, two calls that must succeed, a throw in the statement after a block, a throw in the second statement of a single line, and a compiler diagnostic in the second statement of a single line, whose column is reported against the submitted input. Needs BroMakerLib and RocketLib installed in the profile. Five calls that never return on their own are stopped at the 9s budget and the game answers after them: a bare while(true), a loop inside a lazily enumerated result, a loop in a method of a type the same input declares, a loop whose body catches every exception, and a loop whose catch wraps the stop in another exception. Code whose method ends in a try statement with an unreachable end, once with nothing looping, answers with its exception and the game alive: try/catch, try/finally, lock, using, a lambda, a declared method returning a value, an else branch. Every loop shape is stopped too, in execute_code at 9s and in execute_script's Main() at 15s: inside try, catch and finally, in both try and finally, nested, do, for, while and foreach, a back-edge that is a leave out of a try and out of a catch, a continue through a finally, lock, using, a lambda, a declared method and an iterator, and in Unload(). A loop in a static initializer comes back as a TypeInitializationException naming the abort. Runaway recursion comes back as a RunawayRecursionException with the game alive, in a method, mutually, in a lambda, a property, a constructor, a static initializer, an iterator and a using, and legitimately deep recursion runs. A catch when filter is honoured, true, false, throwing and in a script, and stopped with the rest. A stop runs the compiled calls in the finally and catch blocks it unwinds through, a loop in one too, at any depth, in execute_code and in Main(), and still ends code with no loop, code that catches and recurses, a heavy call in a finally and a loop in a catch at every level. Its first step waits for the hero prefabs to load.",
   "steps": [
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "HeroController.GetHeroPrefab(HeroType.Rambro).specialGrenade.damage"
+      },
+      "until": {
+        "timeout": 90,
+        "interval": 1
+      },
+      "expect": {
+        "success": true
+      }
+    },
     {
       "command": "execute_code",
       "params": {
@@ -102,6 +115,1369 @@
         "contains": [
           "CS1061",
           "(1,20): "
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "while(true){}"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "1 + 1"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return System.Linq.Enumerable.Range(0, 1).Select(i => { while (i >= 0) { } return i; });"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ErrorsSpin { public static void Spin() { for (;;) { } } }\nErrorsSpin.Spin();"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration",
+          "\"stopped\": true",
+          "\"statement\": \"ErrorsSpin.Spin();\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "while (true)\n{\n    try { for (;;) { } }\n    catch (System.Exception) { }\n}"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "1 + 1"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "try { for (;;) { } }\ncatch (System.Exception e) { throw new System.InvalidOperationException(\"wrapped\", e); }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "1 + 1"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "try { throw new System.Exception(\"first\"); }\ncatch (System.Exception e) { throw new System.InvalidOperationException(\"wrapped\", e); }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "InvalidOperationException: wrapped",
+          "Inner: Exception: first"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "try { throw new System.Exception(\"through\"); }\nfinally { int unused = 1; }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Exception: through"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "lock (typeof(System.Object)) { throw new System.Exception(\"locked\"); }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Exception: locked"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "using (var s = new System.IO.MemoryStream()) { throw new System.Exception(\"used\"); }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Exception: used"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "System.Func<int> f = () => { try { throw new System.Exception(\"inner\"); } catch (System.Exception) { throw; } };\nreturn f();"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Exception: inner"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ErrorsPad { public static int Run() { try { throw new System.Exception(\"pad\"); } catch (System.Exception) { throw; } } }\nreturn ErrorsPad.Run();"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Exception: pad"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "if (System.DateTime.Now.Year < 0) { throw new System.Exception(\"never\"); }\nelse { try { throw new System.Exception(\"elsewhere\"); } finally { int unused = 1; } }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Exception: elsewhere"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "1 + 1"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "try { for (;;) { } }\nfinally { int unused = 1; }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "try { throw new System.Exception(\"x\"); }\ncatch (System.Exception) { for (;;) { } }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "int n = 0;\ntry { n++; }\nfinally { for (;;) { n++; } }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "try { for (;;) { } }\nfinally { for (;;) { } }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "for (;;) { try { try { for (;;) { } } catch (System.Exception) { for (;;) { } } } catch (System.Exception) { } }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "try { try { while (true) { } } finally { int unused = 1; } }\ncatch (System.Exception e) { throw new System.InvalidOperationException(\"wrapped\", e); }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "try { do { } while (true); }\ncatch (System.Exception) { throw; }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "try { foreach (var i in System.Linq.Enumerable.Repeat(1, int.MaxValue)) { foreach (var j in System.Linq.Enumerable.Repeat(1, int.MaxValue)) { } } }\nfinally { int unused = 1; }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var list = new System.Collections.Generic.List<int> { 1 };\nwhile (true) { foreach (var i in list) { } }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "again: try { goto again; }\ncatch (System.Exception) { }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "again: try { throw new System.Exception(\"x\"); }\ncatch (System.Exception) { goto again; }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "while (true) { try { continue; } finally { int unused = 1; } }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "lock (typeof(System.Object)) { for (;;) { } }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "using (var s = new System.IO.MemoryStream()) { for (;;) { } }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "System.Action a = () => { try { for (;;) { } } catch (System.Exception e) { throw new System.InvalidOperationException(\"wrapped\", e); } };\na();"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ErrorsSpinInt { public static int Spin() { try { for (;;) { } } finally { int unused = 1; } } }\nreturn ErrorsSpinInt.Spin();"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ErrorsIter { public static System.Collections.Generic.IEnumerable<int> Forever() { try { while (true) { yield return 1; } } finally { int unused = 1; } } }\nforeach (var i in ErrorsIter.Forever()) { }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "1 + 1"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ErrorsCctor { public static int V = Spin(); static int Spin() { for (;;) { } } }\nreturn ErrorsCctor.V;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "TypeInitializationException",
+          "Inner: ThreadAbortException"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "try { throw new System.Exception(\"x\"); }\ncatch (System.Exception) when (1 + 1 == 2) { }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "1 + 1"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "errors-spin",
+        "source": "public static class ErrorsSpinScript\n{\n    public static void Main()\n    {\n        try { throw new Exception(\"first\"); }\n        catch (Exception e) { throw new InvalidOperationException(\"wrapped\", e); }\n    }\n}\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Main() threw an exception: wrapped <- Exception: first",
+          "\"loaded\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "errors-spin",
+        "source": "public static class ErrorsSpinScript\n{\n    public static void Main()\n    {\n        try { for (;;) { } }\n        catch (Exception e) { throw new InvalidOperationException(\"wrapped\", e); }\n    }\n}\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Main() was stopped: it was still running after 15s, so it was ended at its next loop iteration",
+          "\"loaded\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "errors-spin",
+        "source": "public static class ErrorsSpinScript\n{\n    public static void Main()\n    {\n        try { for (;;) { } }\n        finally { int unused = 1; }\n    }\n}\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Main() was stopped: it was still running after 15s, so it was ended at its next loop iteration",
+          "\"loaded\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "errors-spin",
+        "source": "public static class ErrorsSpinScript\n{\n    public static void Main()\n    {\n        try { throw new Exception(\"x\"); }\n        catch (Exception) { for (;;) { } }\n    }\n}\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Main() was stopped: it was still running after 15s, so it was ended at its next loop iteration",
+          "\"loaded\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "errors-spin",
+        "source": "public static class ErrorsSpinScript\n{\n    public static void Main()\n    {\n        int n = 0;\n        try { n++; }\n        finally { for (;;) { n++; } }\n    }\n}\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Main() was stopped: it was still running after 15s, so it was ended at its next loop iteration",
+          "\"loaded\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "errors-spin",
+        "source": "public static class ErrorsSpinScript\n{\n    public static void Main()\n    {\n        for (;;) { try { try { for (;;) { } } catch (Exception) { for (;;) { } } } catch (Exception) { } }\n    }\n}\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Main() was stopped: it was still running after 15s, so it was ended at its next loop iteration",
+          "\"loaded\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "errors-spin",
+        "source": "public static class ErrorsSpinScript\n{\n    public static void Main()\n    {\n        try { do { } while (true); }\n        catch (Exception) { throw; }\n    }\n}\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Main() was stopped: it was still running after 15s, so it was ended at its next loop iteration",
+          "\"loaded\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "errors-spin",
+        "source": "public static class ErrorsSpinScript\n{\n    public static void Main()\n    {\n        try { foreach (var i in Enumerable.Repeat(1, int.MaxValue)) { foreach (var j in Enumerable.Repeat(1, int.MaxValue)) { } } }\n        finally { int unused = 1; }\n    }\n}\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Main() was stopped: it was still running after 15s, so it was ended at its next loop iteration",
+          "\"loaded\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "errors-spin",
+        "source": "public static class ErrorsSpinScript\n{\n    public static void Main()\n    {\n        again: try { goto again; }\n        catch (Exception) { }\n    }\n}\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Main() was stopped: it was still running after 15s, so it was ended at its next loop iteration",
+          "\"loaded\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "errors-spin",
+        "source": "public static class ErrorsSpinScript\n{\n    public static void Main()\n    {\n        lock (typeof(object)) { for (;;) { } }\n    }\n}\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Main() was stopped: it was still running after 15s, so it was ended at its next loop iteration",
+          "\"loaded\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "1 + 1"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "errors-spin",
+        "source": "public static class ErrorsSpinScript\n{\n    public static void Main() { }\n\n    public static void Unload()\n    {\n        try { for (;;) { } }\n        catch (Exception e) { throw new InvalidOperationException(\"wrapped\", e); }\n    }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "errors-spin"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Unload() was stopped: it was still running after 15s"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "1 + 1"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ErrorsRecurse { public static int F(int n) { return F(n + 1) + 1; } }\nreturn ErrorsRecurse.F(0);"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "RunawayRecursionException: Runaway recursion",
+          "more than 512KB",
+          "more frames",
+          "\"statement\": \"return ErrorsRecurse.F(0);\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "1 + 1"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ErrorsMutual { public static int A(int n) { return B(n + 1) + 1; } public static int B(int n) { return A(n + 1) + 1; } }\nreturn ErrorsMutual.A(0);"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "RunawayRecursionException: Runaway recursion"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "System.Func<int, int> f = null;\nf = n => f(n + 1) + 1;\nreturn f(0);"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "RunawayRecursionException: Runaway recursion",
+          "\"statement\": \"return f(0);\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ErrorsDeep { public static int F(int n) { return n == 0 ? 0 : F(n - 1) + 1; } public static int Fat(int n) { long a = n, b = n * 2, c = n * 3, d = n * 4, e = n * 5; string s = \"x\"; if (n == 0) return 0; int r = Fat(n - 1) + 1; return r + (int)(a + b + c + d + e) * 0 + s.Length * 0; } }\nreturn ErrorsDeep.F(5000) + ErrorsDeep.Fat(5000);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 10000,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ErrorsProp { public int P { get { return P + 1; } } }\nreturn new ErrorsProp().P;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "RunawayRecursionException: Runaway recursion"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ErrorsCtor { public ErrorsCtor() { new ErrorsCtor(); } }\nnew ErrorsCtor();"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "RunawayRecursionException: Runaway recursion"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ErrorsInit { public static int V = Spin(0); static int Spin(int n) { return Spin(n + 1) + 1; } }\nreturn ErrorsInit.V;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "TypeInitializationException",
+          "Inner: RunawayRecursionException"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "try { return ErrorsRecurse.F(0); }\ncatch (System.Exception e) { return e.GetType().Name; }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"RunawayRecursionException\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ErrorsIterRec { public static System.Collections.Generic.IEnumerable<int> E(int n) { foreach (var x in E(n + 1)) yield return x; yield return n; } }\nforeach (var v in ErrorsIterRec.E(0)) { return v; }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "RunawayRecursionException: Runaway recursion"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ErrorsDisposes : System.IDisposable { public void Dispose() { Touch(); } static void Touch() { } }\npublic static class ErrorsUsingRec { public static int F(int n) { using (new ErrorsDisposes()) { return F(n + 1) + 1; } } }\nreturn ErrorsUsingRec.F(0);"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "RunawayRecursionException: Runaway recursion"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ErrorsToString { public override string ToString() { return \"x\" + this; } }\nreturn new ErrorsToString();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "ToString threw: RunawayRecursionException"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ErrorsFib { public static int Fib(int n) { return n < 2 ? n : Fib(n - 1) + Fib(n - 2); } }\nreturn ErrorsFib.Fib(60);"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration or method call",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ErrorsCatchRec { public static void F() { try { F(); } catch (System.Exception) { F(); } } }\nErrorsCatchRec.F();"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration or method call",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "1 + 1"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "errors-rec",
+        "source": "public static class ErrorsRecScript\n{\n    public static void Main() { F(0); }\n\n    static int F(int n) { return F(n + 1) + 1; }\n}\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Main() threw an exception: Runaway recursion",
+          "\"loaded\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "errors-rec",
+        "source": "public static class ErrorsRecScript\n{\n    public static void Main() { }\n\n    public static void Unload() { F(0); }\n\n    static int F(int n) { return F(n + 1) + 1; }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "errors-rec"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Unload() failed:",
+          "Runaway recursion"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "errors-rec",
+        "source": "public class ErrorsRecBehaviour : MonoBehaviour\n{\n    public static bool Fired;\n\n    void Update()\n    {\n        if (Fired) return;\n        Fired = true;\n        F(0);\n    }\n\n    static int F(int n) { return F(n + 1) + 1; }\n}\n\npublic static class ErrorsRecScript\n{\n    public static void Main()\n    {\n        ErrorsRecBehaviour.Fired = false;\n        new GameObject(\"ErrorsRecUpdate\").AddComponent<ErrorsRecBehaviour>();\n    }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return \"fired=\" + ErrorsRecBehaviour.Fired;"
+      },
+      "until": {
+        "timeout": 10,
+        "interval": 0.5
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "fired=True"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "errors-rec"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"destroyedComponents\": 1"
+        ],
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "errors-rec",
+        "source": "public static class ErrorsRecPatch\n{\n    public static bool Armed;\n\n    public static void Main()\n    {\n        ScriptContext.Harmony.Patch(AccessTools.Method(typeof(TestVanDammeAnim), \"MustBroFailToWin\"),\n            prefix: new HarmonyMethod(typeof(ErrorsRecPatch).GetMethod(\"Prefix\")));\n    }\n\n    public static void Prefix()\n    {\n        if (Armed) F(0);\n    }\n\n    static int F(int n) { return F(n + 1) + 1; }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "ErrorsRecPatch.Armed = true;\ntry { return HeroController.GetHeroPrefab(HeroType.Rambro).MustBroFailToWin(); }\nfinally { ErrorsRecPatch.Armed = false; }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "RunawayRecursionException: Runaway recursion"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "errors-rec"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "1 + 1"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "string seen = \"\";\ntry { throw new System.Exception(\"x\"); }\ncatch (System.Exception e) when (e.Message == \"x\") { seen = \"caught \" + e.Message; }\nreturn seen;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"caught x\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "try { try { throw new System.Exception(\"y\"); } catch (System.Exception e) when (e.Message == \"x\") { return \"wrong\"; } }\ncatch (System.Exception e) { return \"outer \" + e.Message; }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"outer y\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "try { throw new System.Exception(\"y\"); }\ncatch (System.Exception e) when (e.Message == \"x\") { }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Exception: y"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "try { throw new System.InvalidOperationException(\"z\"); }\ncatch (System.ArgumentException) when (1 + 1 == 2) { return \"a\"; }\ncatch (System.InvalidOperationException e) when (e.Message == \"no\") { return \"b\"; }\ncatch (System.InvalidOperationException e) when (e.Message == \"z\") { return \"c\"; }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"c\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "try { try { throw new System.Exception(\"t\"); } catch (System.Exception e) when (e.Data[\"nope\"].ToString() == \"x\") { return \"wrong\"; } }\ncatch (System.Exception e) { return \"outer \" + e.Message; }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"outer Object reference not set"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "System.Func<int> f = () => { try { throw new System.Exception(\"h\"); } catch (System.Exception e) when (e.Message.Length == 1) { System.Func<string> g = () => e.Message; return g().Length; } };\nreturn f();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 1,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ErrorsFilter { public static int M(string s) { try { throw new System.Exception(s); } catch when (s == \"a\") { return 1; } catch (System.Exception e) when (e.Message == \"b\") { return 2; } catch { return 3; } } }\nreturn ErrorsFilter.M(\"a\") * 100 + ErrorsFilter.M(\"b\") * 10 + ErrorsFilter.M(\"c\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 123,"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "errors-rec",
+        "source": "public static class ErrorsFilterScript\n{\n    public static void Main()\n    {\n        try { throw new Exception(\"s\"); }\n        catch (Exception e) when (e.Message == \"s\") { ScriptContext.Logger(\"script caught \" + e.Message); }\n    }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "script caught s"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "errors-rec"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "try { for (;;) { } }\ncatch (System.Exception) when (1 + 1 == 2) { }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration or method call",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "try { for (;;) { } }\ncatch (System.Exception) when (1 + 1 == 3) { }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration or method call",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "1 + 1"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ErrorsStopFinally { public static int Marker; public static void Mark() { Marker++; } public static void Run() { Marker = 0; try { while (true) { } } finally { Mark(); } } }\nErrorsStopFinally.Run();"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration or method call",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return ErrorsStopFinally.Marker;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 1,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ErrorsStopDisposes : System.IDisposable { public static int Marker; public void Dispose() { Mark(); } static void Mark() { Marker++; } }\nErrorsStopDisposes.Marker = 0;\nusing (new ErrorsStopDisposes()) { for (;;) { } }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration or method call",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return ErrorsStopDisposes.Marker;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 1,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ErrorsStopFinallyLoop { public static int Marker; public static void Mark(int n) { for (int i = 0; i < n; i++) Marker++; } public static void Run() { Marker = 0; try { while (true) { } } finally { Mark(3); } } }\nErrorsStopFinallyLoop.Run();"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration or method call",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return ErrorsStopFinallyLoop.Marker;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 3,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ErrorsStopDeep { public static int Marks; public static void Mark() { Marks++; } public static void Run(int n) { try { if (n == 0) { while (true) { } } Run(n - 1); } finally { Mark(); } } }\nErrorsStopDeep.Marks = 0;\nErrorsStopDeep.Run(7000);"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration or method call",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return ErrorsStopDeep.Marks;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 7001,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ErrorsStopCatch { public static int Marker; public static void Mark() { Marker++; } public static void Run() { Marker = 0; try { while (true) { } } catch (System.Exception) { Mark(); throw; } } }\nErrorsStopCatch.Run();"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration or method call",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return ErrorsStopCatch.Marker;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 1,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ErrorsStopFib { public static int Fib(int n) { return n < 2 ? n : Fib(n - 1) + Fib(n - 2); } public static void Run() { try { while (true) { } } finally { Fib(60); } } }\nErrorsStopFib.Run();"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration or method call",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ErrorsStopCatchLoop { public static void F(int n) { try { if (n > 0) F(n - 1); else while (true) { } } catch (System.Exception) { for (;;) { } } } }\nErrorsStopCatchLoop.F(2000);"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Stopped: the code was still running after 9s, so it was ended at its next loop iteration or method call",
+          "\"stopped\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "errors-rec",
+        "source": "public static class ErrorsStopScript\n{\n    public static int Marker;\n\n    static void Mark() { Marker++; }\n\n    public static void Main()\n    {\n        try { for (;;) { } }\n        finally { Mark(); }\n    }\n}\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Main() was stopped: it was still running after 15s",
+          "\"loaded\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return ErrorsStopScript.Marker;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 1,"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "errors-rec"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "1 + 1"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2,",
+          "\"resultSet\": true"
+        ]
+      }
+    }
+  ],
+  "cleanup": [
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "errors-spin"
+      },
+      "expect": {
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "errors-rec"
+      },
+      "expect": {
+        "notContains": [
+          "\"warnings\""
         ]
       }
     }

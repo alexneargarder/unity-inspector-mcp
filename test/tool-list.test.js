@@ -56,21 +56,25 @@ test('simulate_input advertises the sequence form and what the actions do', asyn
   assert.equal(sequence?.type, 'array');
   assert.equal(sequence.items.type, 'object');
   assert.equal(sequence.items.properties.action.type, 'string');
-  assert.equal(sequence.items.properties.duration.type, 'number');
-  assert.equal(sequence.items.properties.wait.type, 'number');
-  assert.deepEqual(tool.inputSchema.required, [], 'action-or-sequence is enforced by the handler, not the schema');
+  assert.equal(sequence.items.properties.duration.type, 'integer');
+  assert.equal(sequence.items.properties.wait.type, 'integer');
+  assert.equal(sequence.items.properties.binding.type, 'string');
+  assert.equal(tool.inputSchema.properties.binding.type, 'string');
+  assert.deepEqual(tool.inputSchema.required, [], 'the one-form rule is enforced by the handler, not the schema');
 
   assert.match(tool.description, /exactly one of/i);
   assert.match(tool.description, /'sequence'/);
+  assert.match(tool.description, /'binding' \(a key binding, '<mod id>\/<binding name>'\)/);
   assert.match(tool.description, /highFive/);
   assert.match(tool.description, /interact button/);
   assert.match(tool.description, /switch/);
   for (const exception of [/teleport door/, /live grenade within 20 units/, /citizen within 32 units/, /running special blocks it/]) {
     assert.match(tool.description, exception, 'a caller who reads only this needs to know what takes or blocks the press');
   }
-  assert.match(tool.description, /Input reaches every player/);
-  assert.equal(tool.inputSchema.properties.count.type, 'number');
-  assert.equal(tool.inputSchema.properties.duration.type, 'number');
+  assert.match(tool.description, /Only 'player''s controller or binding entry reads it/);
+  assert.match(tool.description, /framesRead/);
+  assert.equal(tool.inputSchema.properties.count.type, 'integer');
+  assert.equal(tool.inputSchema.properties.duration.type, 'integer');
 });
 
 test('query_gameobjects advertises base-type matching and the scan fields', async () => {
@@ -103,6 +107,39 @@ test('list_enemies advertises the classification and the suppression answer', as
   assert.match(description, /enemySpawnSuppressed/);
   assert.match(description, /enemySpawnPrefixOwners/);
   assert.match(description, /suppressedBy/);
+  assert.match(description, /corpses \(isAlive false\)/);
+  assert.match(description, /aliveCount/);
+});
+
+test('the state tools declare the arguments the mod reads as integers as integers', async () => {
+  const integer = (tool, arg) => toolNamed(tool).then((t) => assert.equal(t.inputSchema.properties[arg]?.type, 'integer', `${tool}.${arg}`));
+  await integer('set_player_health', 'health');
+  await integer('set_player_health', 'playerNum');
+  await integer('teleport_player', 'playerNum');
+  await integer('go_to_level', 'campaignIndex');
+  await integer('go_to_level', 'levelIndex');
+  await integer('swap_bro', 'playerNum');
+  await integer('list_bros', 'playerNum');
+  const teleport = await toolNamed('teleport_player');
+  assert.equal(teleport.inputSchema.properties.x.type, 'number', 'coordinates stay fractional');
+});
+
+test('the level tools say they reply once the level is in play', async () => {
+  assert.match((await toolNamed('go_to_level')).description, /replies once in play, or once a cutscene holds it \(named in `cutscene`\), else fails after 60s/);
+  assert.match((await toolNamed('go_to_level')).inputSchema.properties.campaignIndex.description, /^0-25$/);
+  assert.match((await toolNamed('restart_level')).description, /replies once it is in play again/);
+  assert.match((await toolNamed('set_game_speed')).description, /verified a frame later/);
+  assert.match((await toolNamed('set_game_speed')).description, /scene load or cutscene resets it to 1/);
+});
+
+test('the player and level tools advertise their reply fields', async () => {
+  assert.match((await toolNamed('list_bros')).description, /selectedBro/);
+  assert.match((await toolNamed('go_to_level')).description, /`warning`/);
+  const health = (await toolNamed('set_player_health')).description;
+  assert.match(health, /`killed`/);
+  const teleport = (await toolNamed('teleport_player')).description;
+  assert.match(teleport, /`z` is ignored/);
+  assert.match(teleport, /skipped slots/);
 });
 
 test('go_to_level advertises the index-range behaviour', async () => {
@@ -133,7 +170,8 @@ test('inspect_component advertises static members, dotted paths and suggestions'
   assert.match(description, /'suggestions'/);
   assert.equal(tool.inputSchema.properties.memberPath?.type, 'string');
   assert.match(tool.inputSchema.properties.memberPath.description, /instead of the whole component/);
-  assert.deepEqual(tool.inputSchema.required, ['path', 'componentType'], 'memberPath stays optional');
+  assert.deepEqual(tool.inputSchema.required, ['componentType'], 'memberPath stays optional, and path gives way to instanceId');
+  assert.equal(tool.inputSchema.properties.instanceId?.type, 'integer');
 });
 
 test('the bro tools advertise the Swap Bros Mod gate and the rosters a miss answers with', async () => {
@@ -182,16 +220,14 @@ test('spawn_entity advertises the type roster and the velocity arguments', async
   assert.deepEqual(tool.inputSchema.required, ['type', 'x', 'y'], 'velocities stay optional');
 });
 
-test('spawn_entity says where the prefab comes from and how it fails', async () => {
+test('spawn_entity says what it spawns and how it fails', async () => {
   const tool = await toolNamed('spawn_entity');
 
   assert.ok(
     tool.description.length < 555,
     `spawn_entity's description is at its ceiling at ${tool.description.length} characters - anything new has to be paid for by a trim elsewhere in it`
   );
-  assert.match(tool.description, /theme or the shared assets/, 'the prefab is the theme\'s or the shared assets\'');
-  assert.match(tool.description, /no prefab for fails/, 'a theme without the prefab is a failure, not a promise');
-  assert.match(tool.description, /try a level whose theme has it/);
+  assert.doesNotMatch(tool.description, /no prefab for/, 'every level theme holds a prefab for every type');
   assert.match(tool.description, /`Baneling` is the theme's mosquito and `Screecher` its baneling/);
   assert.match(tool.description, /`Bro` is refused/, 'bros come from the roster, not spawn_entity');
   assert.match(tool.description, /a failure returns `error`, with `availableTypes` on an unknown name/);
@@ -225,7 +261,8 @@ test('swap_bro takes an optional nextSpawn flag that leaves the current bro', as
   assert.match(flag.description, /spawns as next/);
   assert.match(flag.description, /leave the current one/);
   assert.match(flag.description, /not with ignoreUnlocks/);
-  assert.match(tool.description, /kills the current bro/);
+  assert.match(tool.description, /recalls the current bro/);
+  assert.match(tool.description, /failing if the slot does not keep it/);
 });
 
 test('read_log advertises onlyNew, reset and what a baseline is', async () => {
@@ -273,7 +310,7 @@ test('trace_spawns advertises its actions, targets and the read cursor', async (
     'Map.PlaceDoodad',
   ]);
   assert.match(targets.description, /all but Map\.PlaceDoodad/, 'PlaceDoodad is opt-in');
-  assert.equal(since?.type, 'number');
+  assert.equal(since?.type, 'integer');
 
   for (const word of ['`start`', '`read`', '`stop`', '`seq`', '`since`', '`dropped`', '512']) {
     assert.ok(tool.description.includes(word), `trace_spawns' description does not mention ${word}`);
@@ -301,8 +338,8 @@ test('launch_game says which launch launchArgs reach', async () => {
 
   const { launchArgs } = tool.inputSchema.properties;
   assert.match(launchArgs.description, /appended to the launch this call runs/);
-  assert.match(launchArgs.description, /the instance launch by default, the configured launch command with steam: true/);
-  assert.match(launchArgs.description, /The Steam protocol launch takes no arguments/);
+  assert.match(launchArgs.description, /the instance launch by default, the configured launch command or Steam's -applaunch with steam: true/);
+  assert.match(launchArgs.description, /The Steam protocol fallback takes no arguments/);
 });
 
 test('wait_for_game reports which failure mode a timeout hit', { timeout: 30000 }, async (t) => {
@@ -345,17 +382,13 @@ test('wait_for_game still makes one attempt with a non-positive budget', { timeo
   assert.ok(payload.lastError, 'a verdict with no attempt behind it has no lastError');
 });
 
-test('a non-numeric interval does not turn the poll into a spin', { timeout: 30000 }, async () => {
-  const started = Date.now();
+test('a non-numeric interval is refused rather than polled with', async () => {
   const response = await handleToolCall({
     params: { name: 'wait_for_game', arguments: { timeout: 0, interval: '3 seconds' } },
   });
-  const elapsed = Date.now() - started;
 
-  const payload = JSON.parse(textOf(response));
-  assert.equal(payload.success, false);
-  assert.equal(payload.attempts, 1);
-  assert.ok(elapsed < 8000, `wait_for_game took ${elapsed}ms`);
+  assert.equal(response.isError, true);
+  assert.equal(textOf(response), 'Error: wait_for_game: interval must be a number, got "3 seconds"');
 });
 
 test('unusable poll budgets fall back instead of producing NaN deadlines', () => {
@@ -404,5 +437,14 @@ test('the tool list stays within its size limits', async () => {
   assert.ok(
     total <= MAX_TOTAL_CHARS,
     `tool list is ${total} chars, over the ${MAX_TOTAL_CHARS}-char limit; largest tools: ${largest}`,
+  );
+});
+
+test('the argument check reads the same schemas the tool list carries', async () => {
+  const { toolArguments } = await import('../index.js');
+  const tools = await buildToolList();
+  assert.deepEqual(
+    [...toolArguments()].sort(),
+    tools.map((tool) => [tool.name, tool.inputSchema.properties ?? {}]).sort(),
   );
 });

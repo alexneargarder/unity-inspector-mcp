@@ -6,6 +6,7 @@ import { tmpdir } from 'os';
 import path from 'path';
 
 import { startStubServer, reply } from './support/stub-server.js';
+import { fakeProcReader } from './support/fake-proc.js';
 
 let answer = (request, socket) => reply(socket, request.id, { success: true });
 const requests = [];
@@ -16,15 +17,20 @@ const stub = await startStubServer((request, socket) => {
 
 process.env.UNITY_INSPECTOR_PORT = String(stub.port);
 
-const { handleToolCall, testScriptLogPaths } = await import('../index.js');
+const { handleToolCall, targetLogPaths } = await import('../index.js');
 const { UnityInspectorClient } = await import('../lib/unity-client.js');
 const {
-  runTestScript, compactTestScriptReply, testResultsDir, CSHARP_SCRIPTS_DIR, UMM_FLUSH_WAIT_MS,
+  runTestScript, compactTestScriptReply, testResultsDir, resultsSession, RESULTS_SESSION_IDLE_MS, CSHARP_SCRIPTS_DIR, UMM_FLUSH_WAIT_MS,
   STEP_PREVIEW_MAX_CHARS, TEST_REPLY_MAX_CHARS, TEST_RESULTS_KEEP, REPORT_FIELD_MAX_CHARS,
 } = await import('../lib/script-library.js');
 
+const { setProcReader } = await import('../lib/game-process.js');
+
+setProcReader(fakeProcReader({}));
+
 const client = new UnityInspectorClient({ host: '127.0.0.1', port: stub.port, connectTimeoutMs: 2000 });
 after(async () => {
+  setProcReader(null);
   client.disconnect();
   await stub.close();
 });
@@ -376,6 +382,39 @@ test('a placeholder with no value is a validation error naming it', async (t) =>
   assert.equal(requests.length, 0);
 });
 
+test('a given arg neither declared nor named by a placeholder is refused before anything is sent', async (t) => {
+  startRecording();
+  const scriptPath = await writeScript(t, {
+    args: { bro: { default: 'Rambro' } },
+    steps: [{ command: 'swap_bro', params: { broName: '{{bro}}', playerNum: '{{slot}}' } }],
+    cleanup: [{ command: 'swap_bro', params: { broName: '{{after}}' } }],
+  });
+
+  const run = await runTestScript(scriptPath, client, { args: { customBor: 'Cobro', slot: 0, after: 'Rambro' } });
+  assert.equal(run.passed, false);
+  assert.match(run.error, /unknown arg "customBor" \(allowed: bro, slot, after\)/);
+  assert.equal(requests.length, 0);
+
+  const bare = await writeScript(t, { steps: [{ command: 'ping' }] });
+  const refused = await runTestScript(bare, client, { args: { anything: 1 } });
+  assert.match(refused.error, /unknown arg "anything" \(allowed: none\)/);
+  assert.equal(requests.length, 0);
+});
+
+test('an undeclared placeholder can be filled from args, in a step and in a cleanup step', async (t) => {
+  startRecording();
+  answer = (request, socket) => reply(socket, request.id, { success: true });
+  const scriptPath = await writeScript(t, {
+    steps: [{ command: 'swap_bro', params: { broName: '{{bro}}' } }],
+    cleanup: [{ command: 'swap_bro', params: { broName: '{{after}}', nextSpawn: true } }],
+  });
+
+  const run = await runTestScript(scriptPath, client, { args: { bro: 'Cobro', after: 'Rambro' } });
+  assert.equal(run.passed, true, JSON.stringify(run));
+  assert.equal(sent('swap_bro')[0].params.broName, 'Cobro');
+  assert.equal(sent('set_bro')[0].params.broName, 'Rambro');
+});
+
 test('a report step lifts its JSON string into the reply, and its passed counts', async (t) => {
   startRecording();
   const report = { scenario: 'level-run', passed: false, checks: [{ name: 'reachedExit', passed: false }] };
@@ -562,7 +601,7 @@ test('continueOnFailure must be a boolean', async (t) => {
   assert.equal(requests.length, 0);
 });
 
-test('the run carries what each log gained, also when a step failed', async (t) => {
+test('the run carries what the player log gained, also when a step failed', async (t) => {
   startRecording();
   const dir = await tempDir(t);
   const umm = path.join(dir, 'Log.txt');
@@ -571,7 +610,8 @@ test('the run carries what each log gained, also when a step failed', async (t) 
   await writeFile(player, 'Initialize engine version\n');
 
   answer = (request, socket) => {
-    appendFile(umm, '[Swap Bros Mod] [Error] Swap failed\n')
+    appendFile(player, '[Swap Bros Mod] [Error] Swap failed\n')
+      .then(() => appendFile(umm, '[Swap Bros Mod] [Error] Swap failed\n'))
       .then(() => appendFile(player, 'NullReferenceException: boom\n   at void LevelEventAction.Start()\n \n(Filename:  Line: -1)\n\n'))
       .then(() => fail(socket, request.id, 'step failed'));
   };
@@ -585,8 +625,9 @@ test('the run carries what each log gained, also when a step failed', async (t) 
     now: clock.now,
   });
   assert.equal(run.passed, false);
-  assert.equal(run.logs.umm.path, umm);
-  assert.equal(run.logs.umm.fromByte, '[Manager] Loading mods.\n'.length);
+  assert.equal(run.logs.umm, undefined, 'the UMM log is not read beside a readable player log');
+  assert.equal(run.logs.player.fromByte, 'Initialize engine version\n'.length);
+  assert.deepEqual(clock.sleeps, [], 'the player log needs no wait for UMM\'s buffer');
   assert.equal(run.logs.summary.errors, 2);
   const sources = run.logs.bySource.map((s) => s.source).sort();
   assert.deepEqual(sources, ['Swap Bros Mod', 'Unity']);
@@ -609,17 +650,23 @@ test('the run carries the log delta after the game died, and when the baseline c
   });
 
   const clock = fakeClock();
+  const crashCalls = [];
   const run = await runTestScript(scriptPath, client, {
     isRunning: async () => false,
     logPaths: async () => ({ umm: path.join(dir, 'absent.txt'), player }),
+    crashLog: async (since) => { crashCalls.push(since); return { path: 'launch.log', lines: ['Caught fatal signal - signo:11'] }; },
     sleep: clock.sleep,
     now: clock.now,
   });
   assert.match(run.cleanupSkipped, /the game is gone/);
   assert.deepEqual(clock.sleeps, [], 'a game that is gone has no UMM buffer left to flush');
-  assert.equal(run.logs.umm.missing, true);
+  assert.equal(run.logs.umm, undefined);
   assert.equal(run.logs.summary.lines, 1);
+  assert.equal(run.logs.summary.errors, 1, 'the crash line is an error');
   assert.equal(run.logs.bySource[0].source, 'Unity (engine)');
+  assert.deepEqual(run.logs.crashLog, { path: 'launch.log', lines: ['Caught fatal signal - signo:11'] });
+  assert.equal(crashCalls.length, 1);
+  assert.ok(Math.abs(crashCalls[0] - Date.now()) < 60000, 'the crash log is read from the run\'s start');
 
   const broken = await runTestScript(scriptPath, client, {
     isRunning: async () => true,
@@ -691,6 +738,56 @@ test('the final log read does not wait for a game that is gone, or with no UMM l
     now: unknown.now,
   });
   assert.deepEqual(unknown.sleeps, [UMM_FLUSH_WAIT_MS], 'a game whose state is unknown may still be writing');
+
+  await writeFile(player, '');
+  answer = (request, socket) => appendFile(player, 'a line\n').then(() => reply(socket, request.id, { success: true }));
+  const readablePlayer = fakeClock();
+  await runTestScript(scriptPath, client, {
+    logPaths: async () => ({ umm, player }),
+    isRunning: async () => true,
+    sleep: readablePlayer.sleep,
+    now: readablePlayer.now,
+  });
+  assert.deepEqual(readablePlayer.sleeps, [], 'the UMM log is not read beside a player log the run wrote');
+});
+
+test('a player log the run never wrote gives way to the UMM log the game is writing', async (t) => {
+  startRecording();
+  const dir = await tempDir(t);
+  const umm = path.join(dir, 'Log.txt');
+  const player = path.join(dir, 'Player.log');
+  await writeFile(umm, '');
+  await writeFile(player, 'an earlier run of another install\n');
+  answer = (request, socket) => appendFile(umm, '[Swap Bros Mod] [Error] Swap failed\n').then(() => reply(socket, request.id, { success: true }));
+  const scriptPath = await writeScript(t, { steps: [{ command: 'ping' }] });
+
+  const clock = fakeClock();
+  const run = await runTestScript(scriptPath, client, {
+    logPaths: async () => ({ umm, player }),
+    isRunning: async () => true,
+    sleep: clock.sleep,
+    now: clock.now,
+  });
+  assert.equal(run.logs.umm.path, umm);
+  assert.equal(run.logs.summary.errors, 1, JSON.stringify(run.logs));
+  assert.equal(run.logs.bySource[0].source, 'Swap Bros Mod');
+  assert.deepEqual(clock.sleeps, [UMM_FLUSH_WAIT_MS], 'the UMM log read waits out its write buffer');
+});
+
+test('two runs on one server overlapping each say their logs may hold the other\'s lines', async (t) => {
+  startRecording();
+  const dir = await tempDir(t);
+  const player = path.join(dir, 'Player.log');
+  await writeFile(player, '');
+  answer = (request, socket) => setTimeout(() => reply(socket, request.id, { success: true }), 50);
+  const scriptPath = await writeScript(t, { steps: [{ command: 'ping' }] });
+  const options = { logPaths: async () => ({ umm: null, player }), isRunning: async () => true };
+
+  const [first, second] = await Promise.all([runTestScript(scriptPath, client, options), runTestScript(scriptPath, client, options)]);
+  assert.equal(first.logs.overlappingRun, true);
+  assert.equal(second.logs.overlappingRun, true);
+  const alone = await runTestScript(scriptPath, client, options);
+  assert.equal(alone.logs.overlappingRun, undefined);
 });
 
 test('UNITY_INSPECTOR_LOG is read as the player log or the UMM log by its file name', async (t) => {
@@ -699,10 +796,12 @@ test('UNITY_INSPECTOR_LOG is read as the player log or the UMM log by its file n
 
   for (const name of ['Player.log', 'Player-prev.log', 'output_log.txt']) {
     process.env.UNITY_INSPECTOR_LOG = path.join(dir, name);
-    assert.deepEqual(await testScriptLogPaths(), { umm: null, player: path.join(dir, name) }, name);
+    assert.deepEqual(await targetLogPaths(), { umm: null, player: path.join(dir, name) }, name);
   }
   process.env.UNITY_INSPECTOR_LOG = path.join(dir, 'Log.txt');
-  assert.deepEqual(await testScriptLogPaths(), { umm: path.join(dir, 'Log.txt'), player: null });
+  const ummOverride = await targetLogPaths();
+  assert.equal(ummOverride.umm, path.join(dir, 'Log.txt'));
+  assert.notEqual(ummOverride.player, path.join(dir, 'Log.txt'), 'a UMM override still leaves the player log searched for');
 
   const player = path.join(dir, 'Player.log');
   await writeFile(player, '');
@@ -716,7 +815,7 @@ test('UNITY_INSPECTOR_LOG is read as the player log or the UMM log by its file n
   const response = await handleToolCall({ params: { name: 'run_test_script', arguments: { script: scriptPath } } });
   const payload = JSON.parse(response.content.map((c) => c.text).join('\n'));
   assert.equal(payload.logs.player.path, player);
-  assert.deepEqual(payload.logs.umm, { path: null, missing: true });
+  assert.equal(payload.logs.umm, undefined);
   const unity = payload.logs.bySource.find((s) => s.source === 'Unity');
   assert.equal(unity?.errors, 1, JSON.stringify(payload.logs));
   assert.equal(payload.logs.summary.errors, 1, 'the [Unity] mirror is not counted beside the call');
@@ -737,7 +836,20 @@ test('run_test_script takes args and answers with passed and logs', async (t) =>
   const payload = JSON.parse(response.content.map((c) => c.text).join('\n'));
   assert.equal(payload.passed, true, JSON.stringify(payload));
   assert.deepEqual(sent('go_to_level')[0].params, { campaignIndex: 0, levelIndex: 4 });
-  assert.ok(payload.logs && 'umm' in payload.logs && 'player' in payload.logs, JSON.stringify(payload.logs));
+  assert.ok(payload.logs && 'player' in payload.logs, JSON.stringify(payload.logs));
+});
+
+test('run_test_script checks each step\'s params against its tool\'s schema before it sends anything', async (t) => {
+  startRecording();
+  const scriptPath = await writeScript(t, {
+    steps: [{ command: 'ping' }, { command: 'query_gameobjects', params: { name: 'Mook' } }],
+  });
+
+  const response = await handleToolCall({ params: { name: 'run_test_script', arguments: { script: scriptPath } } });
+  const payload = JSON.parse(response.content.map((c) => c.text).join('\n'));
+  assert.equal(payload.passed, false);
+  assert.match(payload.error, /step 2: query_gameobjects has no argument "name"; its arguments are namePattern/);
+  assert.equal(requests.length, 0);
 });
 
 test('run_test_script refuses args that are not an object', async (t) => {
@@ -745,9 +857,8 @@ test('run_test_script refuses args that are not an object', async (t) => {
   const response = await handleToolCall({
     params: { name: 'run_test_script', arguments: { script: scriptPath, args: 'level=4' } },
   });
-  const payload = JSON.parse(response.content.map((c) => c.text).join('\n'));
-  assert.equal(payload.passed, false);
-  assert.match(payload.error, /"args" must be an object/);
+  assert.equal(response.isError, true);
+  assert.equal(response.content[0].text, 'Error: run_test_script: args must be an object, got "level=4"');
 });
 
 const printed = (reply) => JSON.stringify(reply, null, 2).length;
@@ -951,12 +1062,35 @@ test('pruning leaves alone every file and directory it did not write', async (t)
   assert.deepEqual(left.filter((name) => name.startsWith('run') && name.endsWith('.json')).length, 1);
 });
 
-test('the results directory is the user\'s state directory, never the temp directory', () => {
-  assert.equal(testResultsDir({}, '/home/u'), '/home/u/.local/state/unity-inspector-mcp/test-results');
-  assert.equal(testResultsDir({ XDG_STATE_HOME: '/state' }, '/home/u'), '/state/unity-inspector-mcp/test-results');
-  assert.equal(testResultsDir({ XDG_STATE_HOME: 'relative' }, '/home/u'), '/home/u/.local/state/unity-inspector-mcp/test-results');
-  assert.equal(testResultsDir({ UNITY_INSPECTOR_TEST_RESULTS_DIR: '/x', XDG_STATE_HOME: '/state' }, '/home/u'), '/x');
-  assert.equal(testResultsDir({ TMPDIR: '/tmp/nix-shell-1' }, '/home/u'), '/home/u/.local/state/unity-inspector-mcp/test-results');
+test('the results directory is the session\'s own, in the user\'s state directory, never the temp directory', () => {
+  const id = { CLAUDE_SESSION_ID: 'abc-123' };
+  assert.equal(testResultsDir(id, '/home/u'), '/home/u/.local/state/unity-inspector-mcp/test-results/abc-123');
+  assert.equal(testResultsDir({ ...id, XDG_STATE_HOME: '/state' }, '/home/u'), '/state/unity-inspector-mcp/test-results/abc-123');
+  assert.equal(testResultsDir({ ...id, XDG_STATE_HOME: 'relative' }, '/home/u'), '/home/u/.local/state/unity-inspector-mcp/test-results/abc-123');
+  assert.equal(testResultsDir({ ...id, UNITY_INSPECTOR_TEST_RESULTS_DIR: '/x', XDG_STATE_HOME: '/state' }, '/home/u'), '/x/abc-123');
+  assert.equal(testResultsDir({ ...id, TMPDIR: '/tmp/nix-shell-1' }, '/home/u'), '/home/u/.local/state/unity-inspector-mcp/test-results/abc-123');
+  assert.equal(resultsSession({ CLAUDE_SESSION_ID: 'not a valid id' }, 4242), 'pid-4242');
+  assert.equal(resultsSession({}, 4242), 'pid-4242');
+});
+
+test('one session\'s pruning never touches another\'s results, and a session idle for a week is cleared', async (t) => {
+  const root = await tempDir(t);
+  const full = { passed: true, results: [] };
+  const clock = Date.UTC(2026, 0, 10);
+  const other = await compactTestScriptReply(full, { script: 'theirs', root, session: 'other', now: () => clock });
+  const idle = await compactTestScriptReply(full, { script: 'old', root, session: 'idle', now: () => clock });
+  const legacy = path.join(root, 'flat-2025-01-01T00-00-00-000Z.json');
+  await writeFile(legacy, '{}');
+  const weekAgo = new Date(clock - RESULTS_SESSION_IDLE_MS - 1000);
+  await utimes(path.join(root, 'idle'), weekAgo, weekAgo);
+  await utimes(legacy, weekAgo, weekAgo);
+
+  for (let i = 0; i < 3; i++) {
+    await compactTestScriptReply(full, { script: `mine${i}`, root, session: 'mine', keep: 1, now: () => clock + i });
+  }
+  assert.equal((await readdir(path.join(root, 'mine'))).length, 1);
+  assert.deepEqual(await readdir(path.dirname(other.resultsFile)), [path.basename(other.resultsFile)]);
+  assert.deepEqual((await readdir(root)).sort(), ['mine', 'other'], `idle results ${idle.resultsFile} and the old flat file are gone`);
 });
 
 test('a script refused before it ran answers as it was, with no results file', async (t) => {
@@ -973,11 +1107,116 @@ test('run_test_script answers with previews and a results file in the results di
   const payload = JSON.parse(response.content.map((c) => c.text).join('\n'));
   t.after(() => rm(payload.resultsFile, { force: true }));
 
-  assert.equal(testResultsDir(), TEST_RESULTS_SCRATCH);
+  assert.equal(path.dirname(testResultsDir()), TEST_RESULTS_SCRATCH);
   assert.equal(path.dirname(payload.resultsFile), testResultsDir());
   assert.match(path.basename(payload.resultsFile), /^script-\d{4}-\d{2}-\d{2}T[\d-]+Z\.json$/);
   assert.equal(payload.results[0].truncated, true);
   const saved = JSON.parse(await readFile(payload.resultsFile, 'utf-8'));
   assert.equal(saved.results[0].result.result, 'q'.repeat(1000));
   assert.ok(saved.logs, 'the file carries the logs too');
+});
+
+test('a take_screenshot step through the real client reports the path this machine reads', async (t) => {
+  startRecording();
+  answer = (request, socket) => reply(socket, request.id, { path: 'C:/users/steamuser/shot.png' });
+  client.platform = 'linux';
+  client.protonPrefix = '/pfx';
+  t.after(() => client.resetDetection());
+  const scriptPath = await writeScript(t, { steps: [{ command: 'take_screenshot' }] });
+
+  const run = await runTestScript(scriptPath, client);
+  assert.equal(run.results[0].result.path, '/pfx/dosdevices/c:/users/steamuser/shot.png');
+});
+
+test('a run_test_script cancelled during a step\'s wait sends no later step, runs its cleanup and returns at once', { timeout: 20000 }, async (t) => {
+  startRecording();
+  const controller = new AbortController();
+  answer = (request, socket) => {
+    reply(socket, request.id, { success: true });
+    if (request.method === 'ping') setTimeout(() => controller.abort(), 100);
+  };
+  t.after(() => { answer = (request, socket) => reply(socket, request.id, { success: true }); });
+  const scriptPath = await writeScript(t, {
+    steps: [{ command: 'ping', wait: 60000 }, { command: 'game_state' }],
+    cleanup: [{ command: 'list_campaigns' }],
+  });
+
+  const started = Date.now();
+  const response = await handleToolCall(
+    { params: { name: 'run_test_script', arguments: { script: scriptPath } } },
+    { signal: controller.signal },
+  );
+  const elapsed = Date.now() - started;
+  const payload = JSON.parse(response.content.map((c) => c.text).join('\n'));
+
+  assert.ok(elapsed < 5000, `the run took ${elapsed}ms of a 60s wait`);
+  assert.equal(sent('game_state').length, 0, 'a step after the cancel reached the game');
+  assert.equal(sent('list_campaigns').length, 1, 'the cleanup did not run');
+  assert.equal(payload.passed, false);
+  assert.match(payload.cancelled, /the run was cancelled/);
+});
+
+test('a run cancelled inside a simulate_input step cancels the plan in the game, and its cleanup still runs', { timeout: 20000 }, async (t) => {
+  startRecording();
+  setProcReader(fakeProcReader({ 900: { comm: 'Broforce.x86_64', cwd: '/game', startTicks: 100 } }));
+  t.after(() => setProcReader(fakeProcReader({})));
+  const controller = new AbortController();
+  answer = (request, socket) => {
+    if (request.method === 'simulate_input') {
+      reply(socket, request.id, { pending: true, planId: 21, remainingMs: 5000 });
+      setTimeout(() => controller.abort(), 100);
+      return;
+    }
+    reply(socket, request.id, { success: true });
+  };
+  t.after(() => { answer = (request, socket) => reply(socket, request.id, { success: true }); });
+  const scriptPath = await writeScript(t, {
+    steps: [{ command: 'simulate_input', params: { action: 'right', duration: 30000 } }, { command: 'game_state' }],
+    cleanup: [{ command: 'list_campaigns' }],
+  });
+
+  const started = Date.now();
+  const response = await handleToolCall(
+    { params: { name: 'run_test_script', arguments: { script: scriptPath } } },
+    { signal: controller.signal },
+  );
+  const payload = JSON.parse(response.content.map((c) => c.text).join('\n'));
+
+  assert.ok(Date.now() - started < 5000, 'the run waited out the 30s hold');
+  assert.deepEqual(sent('cancel_input_plan').map((r) => r.params), [{ planId: 21 }]);
+  assert.equal(sent('input_plan').length, 0);
+  assert.equal(sent('game_state').length, 0, 'a step after the cancel reached the game');
+  assert.equal(sent('list_campaigns').length, 1, 'the cleanup did not run');
+  assert.equal(payload.passed, false);
+  assert.match(payload.cancelled, /the run was cancelled/);
+});
+
+test('a cancelled run\'s cleanup input is polled to its end, not recorded as cancelled', { timeout: 20000 }, async (t) => {
+  startRecording();
+  const controller = new AbortController();
+  answer = (request, socket) => {
+    if (request.method === 'simulate_input') return reply(socket, request.id, { pending: true, planId: 'p1', remainingMs: 50 });
+    if (request.method === 'input_plan') return reply(socket, request.id, { success: true, framesRead: 3 });
+    reply(socket, request.id, { success: true });
+    if (request.method === 'ping') setTimeout(() => controller.abort(), 100);
+  };
+  t.after(() => { answer = (request, socket) => reply(socket, request.id, { success: true }); });
+  const scriptPath = await writeScript(t, {
+    steps: [{ command: 'ping', wait: 60000 }],
+    cleanup: [{ command: 'simulate_input', params: { action: 'fire' } }],
+  });
+
+  const response = await handleToolCall(
+    { params: { name: 'run_test_script', arguments: { script: scriptPath } } },
+    { signal: controller.signal },
+  );
+  const payload = JSON.parse(response.content.map((c) => c.text).join('\n'));
+  t.after(() => rm(payload.resultsFile, { force: true }));
+  const saved = JSON.parse(await readFile(payload.resultsFile, 'utf-8'));
+
+  assert.match(payload.cancelled, /the run was cancelled/);
+  assert.equal(sent('input_plan').length, 1, 'the cleanup plan was polled to its end');
+  assert.equal(saved.cleanup[0].success, true, saved.cleanup[0].error);
+  assert.equal(saved.cleanup[0].cancelled, undefined);
+  assert.equal(saved.cleanup[0].result.framesRead, 3);
 });

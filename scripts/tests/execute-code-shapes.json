@@ -1,0 +1,2963 @@
+{
+  "name": "execute_code input shapes",
+  "description": "Covers execute_code's return forms (expression, trailing return, trailing expression, void, a return inside if and inside try), the result shapes (anonymous type, dictionary, list, over 100 items, Vector3, GameObject, Component, null, a 40 KB string, a self-containing list, nesting past the depth limit, enum, Type, decimal, a destroyed object, a throwing ToString), language features (using directives before statements, a local function with and without static or an access modifier, and inside a declared type's method, no local-function hint for a method inside a declared type, LINQ and lambdas, a throwing lambda, foreach over Dictionary Keys, Values and SortedDictionary, generics, unqualified Object and Math, reflection, comments, a 1000-character line), declared types (nested, redeclared, a declaration with a trailing statement, several statics assigned in one input), runtime and compiler errors with their position, statement and stack trace, types from RocketLib, BroMakerLib, Swap Bros Mod and a class-only script, and a call that holds the main thread past 9 seconds and returns, one that holds it past the 9s budget and 2s grace and is reported still running, followed by a trivial call. A block comment right before a trailing return, after a statement and as the first thing in the input, compiles. A generic class declared by execute_code runs when used in the same input and in a later one, its field named from a sibling class of that input included. A generic method runs when called in the same input and in a later one, a lambda in one included, capturing or not, and a call to itself or to another generic method of the same input with its own type arguments or from elsewhere, in execute_code and in a script; one with other type arguments from inside its own body, or a virtual or interface one with fixed type arguments from the compile that declares it, is refused and names the rewrites, which run. A declaration that was refused does not stay declared: calling it says the type does not exist, an earlier declaration of the name stays, and its input's using directives stay out. Naming JsonConvert works at the first naming in a new Evaluator, in statements and in a declaration, with its unloadable overloads missing and reading their attributes throwing; other library types do too, and JsonConvert of an anonymous type and of a generic class with a public field, and the fields of an anonymous type, read by reflection, answer. An anonymous type with the names of an earlier one and other types compiles. The same alias with another target fails with CS1537 and a line saying to pick another name, leaving the earlier one in force, the preamble's Object alias included. A delegate declared again replaces the earlier one, as a class does. A using directive is replayed after the Evaluator is rebuilt for an unloaded script and after a compiler crash, a crash is built once and not retried, a CS0584 carries its Cause lines in execute_code and a script compile while the mod's nested-type import fix is taken away and put back, a caller error in a request is answered at once under its own id, without the Internal error prefix, over a second connection that opens with the hello and its token, and a reply past 64 KB carrying surrogate pairs and BMP characters comes back whole. Six real calls that once failed to compile: Harmony Unpatch as a statement and as the last statement, Harmony's patch registry, a LevelSelectionController static property and constant, and JsonConvert. Constants and enums are covered by script-constants.json. Needs RocketLib, BroMakerLib with Cobro installed and Swap Bros Mod. Its first step unloads the script an earlier failed run left loaded; its later steps unload it and check nothing is left, and its cleanup runs the first step again, which unloads the scripts and puts the import fix back and removes the crash counter if a failed run left them changed, then rebuilds the Evaluator through a compiler crash, since an Evaluator that imported Dictionary<int,int>.KeyCollection.Enumerator while the fix was away keeps that broken import after the fix is back.",
+  "steps": [
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var f = typeof(Unity_Inspector_Mod.ScriptManager).GetField(\"activeScripts\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);\nvar d = (System.Collections.IDictionary)f.GetValue(null);\nvar names = new List<string>();\nforeach (object k in d.Keys) { var n = (string)k; if (n.StartsWith(\"shapes-\")) names.Add(n); }\nstring log = \"\";\nforeach (var n in names) log += n + \":\" + Unity_Inspector_Mod.ScriptManager.UnloadScript(n) + \" \";\nint destroyed = 0;\nforeach (var go in UnityEngine.Object.FindObjectsOfType<GameObject>()) if (go.name.StartsWith(\"Shapes\")) { UnityEngine.Object.Destroy(go); destroyed++; }\nforeach (var m in Harmony.GetAllPatchedMethods().ToList()) { var owners = Harmony.GetPatchInfo(m).Owners.ToList(); foreach (var o in owners) if (o.StartsWith(\"script.shapes-\")) { new Harmony(o).Unpatch(m, HarmonyPatchType.All, o); log += \"unpatched \" + o + \" \"; } }\nvar reader = typeof(Mono.CSharp.MetadataImporter).GetNestedType(\"AttributesTypeInfoReader\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);\nvar createType = typeof(Mono.CSharp.MetadataImporter).GetMethod(\"CreateType\", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic, null, new[] { typeof(System.Type), reader, typeof(bool) }, null);\nvar opener = typeof(Unity_Inspector_Mod.ScriptCompiler).GetMethod(\"OpenDeclaringTypeTranspiler\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);\nvar info = Harmony.GetPatchInfo(createType);\nif (info == null || !info.Transpilers.Any(p => p.PatchMethod == opener)) { new Harmony(\"scriptcompiler.internal\").Patch(createType, transpiler: new HarmonyMethod(opener)); log += \"transpiler restored \"; }\nif (Harmony.HasAnyPatches(\"shapes.crashcount\")) { foreach (var cm in new Harmony(\"shapes.crashcount\").GetPatchedMethods().ToList()) new Harmony(\"shapes.crashcount\").Unpatch(cm, HarmonyPatchType.All, \"shapes.crashcount\"); log += \"crash counter removed \"; }\nSystem.AppDomain.CurrentDomain.SetData(\"shapes.evaluator\", null);\nUnityEngine.Time.timeScale = 1f;\nreturn \"unloaded \" + names.Count + \" destroyed \" + destroyed + \" \" + log;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "unloaded "
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "6 * 7"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 42,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var a = 6;\nvar b = 7;\nreturn a * b;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 42,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var a = 6;\nvar b = 7;\na * b"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 42,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var l = new List<int>();\nl.Add(1);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "int x = 5;\nif (x > 3) return \"big\";\nreturn \"small\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"big\",",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "try { return int.Parse(\"x\"); }\ncatch (System.FormatException) { return -1; }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": -1,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return new { x = 1, name = \"two\" };"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": true",
+          "two"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = new Dictionary<string, int>();\nd[\"a\"] = 1;\nd[\"b\"] = 2;\nreturn d;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"value\": \"[a, 1]\"",
+          "\"value\": \"[b, 2]\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return new List<int> { 1, 2, 3 };"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": [\n    1,\n    2,\n    3\n  ]"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return Enumerable.Range(0, 150).ToList();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"... truncated\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return new Vector3(1.5f, -2f, 3f);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"x\": 1.5",
+          "\"y\": -2",
+          "\"z\": 3"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return UnityEngine.Object.FindObjectOfType<Camera>().gameObject;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"type\": \"GameObject\"",
+          "\"instanceId\":",
+          "\"isActive\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return UnityEngine.Object.FindObjectOfType<Camera>();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"type\": \"Camera\"",
+          "\"gameObject\":",
+          "\"instanceId\":"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "object o = null;\nreturn o;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": null",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return new string('x', 40000) + \"SHAPES-END\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "xxxxSHAPES-END"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var l = new System.Collections.ArrayList();\nl.Add(1);\nl.Add(l);\nreturn l;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"... circular reference\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var a = new List<object> { new List<object> { new List<object> { new List<object> { new List<object> { 1 } } } } };\nreturn a;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"... depth limit\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return HeroType.Rambro;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"type\": \"HeroType\"",
+          "\"value\": \"Rambro\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return typeof(int);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"value\": \"System.Int32\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return 3.5m;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 3.5,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var go = new GameObject(\"ShapesDestroyedProbe\");\nUnityEngine.Object.DestroyImmediate(go);\nreturn go;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"type\": \"UnityEngine.GameObject\"",
+          "\"destroyed\": true"
+        ],
+        "notContains": [
+          "MissingReferenceException"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "using System.Text;\nvar sb = new StringBuilder();\nsb.Append(\"used\");\nreturn sb.ToString();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"used\",",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "int Twice(int v) { return v * 2; }\nreturn Twice(4);"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Local functions are not supported"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var xs = new[] { 3, 1, 2 };\nreturn xs.Where(v => v > 1).OrderBy(v => v).Select(v => v * 10).ToArray();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": [\n    20,\n    30\n  ]"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var xs = new[] { 1 };\nreturn xs.Select(v => { string s = null; return s.Length; }).First();"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "NullReferenceException",
+          "\"line\": 2"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "1 + 1"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = new Dictionary<string, int> { { \"a\", 1 }, { \"b\", 2 } };\nint sum = 0;\nforeach (var v in d.Values) sum += v;\nreturn sum;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 3,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = new Dictionary<string, int> { { \"a\", 1 }, { \"b\", 2 } };\nstring ks = \"\";\nforeach (var k in d.Keys) ks += k;\nreturn ks;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"ab\",",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = new Dictionary<string, int> { { \"a\", 1 }, { \"b\", 2 } };\nstring s = \"\";\nforeach (var kv in d) s += kv.Key + kv.Value;\nreturn s;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"a1b2\",",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var sd = new SortedDictionary<string, int> { { \"b\", 2 }, { \"a\", 1 } };\nstring s = \"\";\nforeach (var kv in sd) s += kv.Key + kv.Value;\nreturn s;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"a1b2\",",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var m = new Dictionary<string, List<int>>();\nm[\"x\"] = new List<int> { 1, 2 };\nreturn m[\"x\"].Count + Enumerable.Repeat<string>(\"z\", 3).Count();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 5,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return Object.FindObjectsOfType<Camera>().Length > 0;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": true,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return Math.Max(1, 2);"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "CS0117"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "typeof(Unity_Inspector_Mod.CodeExecutor).GetField(\"MainThreadBudgetMs\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).GetValue(null) + \"/\" + Traverse.Create(typeof(Unity_Inspector_Mod.CodeExecutor)).Field(\"SerializeDepthLimit\").GetValue<int>() + \"/\" + AccessTools.Field(typeof(Unity_Inspector_Mod.CodeExecutor), \"StatementTextLimit\").GetValue(null)"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"9000/4/200\",",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "UnityEngine.Time.timeScale = 1f;"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "UnityEngine.Time.timeScale"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 1,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "// leading comment\nvar a = 4; // trailing comment\nreturn a + 1;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 5,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var a = 4;\n/* block */ return a + 1;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 5,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "// the first line is a comment\nobject o = null;\nreturn o.ToString();"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "NullReferenceException",
+          "\"line\": 3",
+          "\"statement\": \"return o.ToString();\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "int v0 = 0; int v1 = v0 + 1; int v2 = v1 + 1; int v3 = v2 + 1; int v4 = v3 + 1; int v5 = v4 + 1; int v6 = v5 + 1; int v7 = v6 + 1; int v8 = v7 + 1; int v9 = v8 + 1; int v10 = v9 + 1; int v11 = v10 + 1; int v12 = v11 + 1; int v13 = v12 + 1; int v14 = v13 + 1; int v15 = v14 + 1; int v16 = v15 + 1; int v17 = v16 + 1; int v18 = v17 + 1; int v19 = v18 + 1; int v20 = v19 + 1; int v21 = v20 + 1; int v22 = v21 + 1; int v23 = v22 + 1; int v24 = v23 + 1; int v25 = v24 + 1; int v26 = v25 + 1; int v27 = v26 + 1; int v28 = v27 + 1; int v29 = v28 + 1; int v30 = v29 + 1; int v31 = v30 + 1; int v32 = v31 + 1; int v33 = v32 + 1; int v34 = v33 + 1; int v35 = v34 + 1; int v36 = v35 + 1; int v37 = v36 + 1; int v38 = v37 + 1; int v39 = v38 + 1; int v40 = v39 + 1; int v41 = v40 + 1; int v42 = v41 + 1; int v43 = v42 + 1; int v44 = v43 + 1; int v45 = v44 + 1; int v46 = v45 + 1; int v47 = v46 + 1; int v48 = v47 + 1; int v49 = v48 + 1; int v50 = v49 + 1; int v51 = v50 + 1; int v52 = v51 + 1; int v53 = v52 + 1; int v54 = v53 + 1; int v55 = v54 + 1; int v56 = v55 + 1; int v57 = v56 + 1; int v58 = v57 + 1; int v59 = v58 + 1; int v60 = v59 + 1; int v61 = v60 + 1; int v62 = v61 + 1; int v63 = v62 + 1; int v64 = v63 + 1; int v65 = v64 + 1; int v66 = v65 + 1; int v67 = v66 + 1; int v68 = v67 + 1; int v69 = v68 + 1; int v70 = v69 + 1; int v71 = v70 + 1; int v72 = v71 + 1; int v73 = v72 + 1; int v74 = v73 + 1; int v75 = v74 + 1; int v76 = v75 + 1; int v77 = v76 + 1; int v78 = v77 + 1; int v79 = v78 + 1; int v80 = v79 + 1; int v81 = v80 + 1; int v82 = v81 + 1; int v83 = v82 + 1; int v84 = v83 + 1; int v85 = v84 + 1; int v86 = v85 + 1; int v87 = v86 + 1; int v88 = v87 + 1; int v89 = v88 + 1; int v90 = v89 + 1; int v91 = v90 + 1; int v92 = v91 + 1; int v93 = v92 + 1; int v94 = v93 + 1; int v95 = v94 + 1; int v96 = v95 + 1; int v97 = v96 + 1; int v98 = v97 + 1; int v99 = v98 + 1; int v100 = v99 + 1; int v101 = v100 + 1; int v102 = v101 + 1; int v103 = v102 + 1; int v104 = v103 + 1; int v105 = v104 + 1; int v106 = v105 + 1; int v107 = v106 + 1; int v108 = v107 + 1; int v109 = v108 + 1; int v110 = v109 + 1; int v111 = v110 + 1; int v112 = v111 + 1; int v113 = v112 + 1; int v114 = v113 + 1; int v115 = v114 + 1; int v116 = v115 + 1; int v117 = v116 + 1; int v118 = v117 + 1; int v119 = v118 + 1; int v120 = v119 + 1; object o = null; return o.ToString() + v120;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "NullReferenceException",
+          "\"line\": 1",
+          "\"column\": 2332",
+          "\"statement\": \"return o.ToString() + v120;\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ShapesOuter { public class Inner { public int V = 5; } public static int Read() { return new Inner().V; } }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "ShapesOuter.Read() + new ShapesOuter.Inner().V"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 10,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ShapesMixed { public static int V = 3; }\nreturn ShapesMixed.V;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 3,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ShapesRedeclared { public static int V() { return 1; } }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ShapesRedeclared { public static int V() { return 2; } }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "ShapesRedeclared.V()"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ShapesBadToString { public override string ToString() { throw new System.InvalidOperationException(\"no text\"); } }\npublic class ShapesThrower { public static int Go() { return Deeper(); } static int Deeper() { throw new System.ArgumentException(\"deep failure\"); } }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return new ShapesBadToString();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "ToString threw: InvalidOperationException"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var a = 1;\nthrow new System.InvalidOperationException(\"shapes boom \" + a);"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "shapes boom 1",
+          "\"line\": 2",
+          "\"statement\": \"throw new System.InvalidOperationException(\\\"shapes boom \\\" + a);\""
+        ],
+        "notContains": [
+          "\"stackTrace\": null"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "ShapesThrower.Go()"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "deep failure",
+          "ShapesThrower.Deeper",
+          "\"line\": 1"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "object o = \"s\";\nint n = (int)o;\nreturn n;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "InvalidCastException",
+          "\"line\": 2",
+          "\"statement\": \"int n = (int)o;\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "int x = \"s\";\nreturn x;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "(1,9): error CS0029"
+        ],
+        "notContains": [
+          "CS0127",
+          "[as expression]",
+          "[as statements]"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return string.Join(\", \", new List<string> { \"a\", \"b\" });"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "CS150"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var t = (1, 2);\nreturn t.Item1;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "ValueTuple"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "RocketLib.Collections.Levels.Challenges.PHEROMONES + \"|\" + (RocketLib.Collections.Heroes.Playables.Length > 0)"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"Challenge_Alien|True\",",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var all = BroMakerLib.Storages.BroSpawnManager.GetAllBros();\nreturn all.Count > 0 && all.Any(h => h.name == \"Cobro\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": true,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "Swap_Bros_Mod.Main.settings != null && Swap_Bros_Mod.Main.currentBroList.Count > 0"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": true,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "shapes-types",
+        "source": "public static class ShapesScriptTypes\n{\n    public static int Counter;\n\n    public static string Hello(string who) { Counter++; return \"hi \" + who; }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": false",
+          "ShapesScriptTypes"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "ShapesScriptTypes.Hello(\"code\")"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"hi code\",",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "typeof(ShapesScriptTypes).GetMethod(\"Hello\").Invoke(null, new object[] { \"refl\" }) + \" \" + typeof(ShapesScriptTypes).GetField(\"Counter\").GetValue(null)"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"hi refl 2\",",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "ShapesScriptTypes.Counter = new[] { 1, 2, 3 }.Where(x => x > 1).Count();\nreturn ShapesScriptTypes.Counter;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "UnityEngine.Resources.UnloadUnusedAssets();"
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 3000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "1 + 1"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "System.Threading.Thread.Sleep(9500);\nreturn \"slept 9.5s\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"slept 9.5s\",",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "System.Threading.Thread.Sleep(12000);\nreturn \"slept 12s\";"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "The code started and is still running after",
+          "the stop requested at 9s did not reach it",
+          "Every later command that needs the main thread waits behind it",
+          "\"mainThreadAnswered\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "1 + 1"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "shapes-types"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var f = typeof(Unity_Inspector_Mod.ScriptManager).GetField(\"activeScripts\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);\nvar d = (System.Collections.IDictionary)f.GetValue(null);\nstring left = \"\";\nforeach (object k in d.Keys) if (((string)k).StartsWith(\"shapes-\")) left += \"script \" + k + \" \";\nforeach (var go in UnityEngine.Object.FindObjectsOfType<GameObject>()) if (go.name.StartsWith(\"Shapes\")) left += \"object \" + go.name + \" \";\nforeach (var m in Harmony.GetAllPatchedMethods().ToList()) foreach (var o in Harmony.GetPatchInfo(m).Owners.ToList()) if (o.StartsWith(\"script.shapes-\")) left += \"patch \" + o + \" on \" + m.Name + \" \";\nif (UnityEngine.Time.timeScale != 1f) left += \"timeScale \" + UnityEngine.Time.timeScale + \" \";\nreturn left.Length == 0 ? \"clean\" : \"left: \" + left;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"clean\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ShapesHolder : MonoBehaviour { public static int A; public static string B; public static List<int> C = new List<int>(); public static Camera Cam; public static Camera[] Cams; public static bool Active; public static float Timer; }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var n = new[] { 1, 2 }.Where(x => x > 1).Count();\nreturn n + ShapesHolder.A;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 1,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var cam = UnityEngine.Object.FindObjectOfType<Camera>();\nvar cams = UnityEngine.Object.FindObjectsOfType<Camera>().Where(c => c != null).ToArray();\nShapesHolder.Cam = cam;\nShapesHolder.Cams = cams;\nShapesHolder.C.Clear();\nShapesHolder.C.AddRange(new[] { 1, 2 });\nShapesHolder.A = cams.Length;\nShapesHolder.B = string.Join(\",\", cams.Select(c => c.name).ToArray());\nShapesHolder.Timer = 0f;\nShapesHolder.Active = false;\nreturn \"same=\" + (ShapesHolder.Cam == cam) + \" count=\" + ShapesHolder.C.Count + \" named=\" + (ShapesHolder.B.Length > 0);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"same=True count=2 named=True\",",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "UnityEngine.Resources.UnloadUnusedAssets();"
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 3000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "1 + 1"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var m = typeof(HeroController).GetMethod(\"GetHeroName\");\nnew HarmonyLib.Harmony(\"shapes-none\").Unpatch(m, typeof(string).GetMethod(\"Copy\"));\nreturn \"unpatched none\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"unpatched none\",",
+          "\"resultSet\": true"
+        ],
+        "notContains": [
+          "CS0584"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "new HarmonyLib.Harmony(\"shapes-none\").Unpatch(typeof(HeroController).GetMethod(\"GetHeroName\"), HarmonyLib.HarmonyPatchType.All, \"shapes-none-owner\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": null,",
+          "\"resultSet\": false"
+        ],
+        "notContains": [
+          "CS0584"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "Harmony.GetAllPatchedMethods().Any(mb => Harmony.GetPatchInfo(mb).Owners.Contains(\"scriptcompiler.internal\")) + \"|\" + Harmony.HasAnyPatches(\"shapes-none-owner\")"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"True|False\",",
+          "\"resultSet\": true"
+        ],
+        "notContains": [
+          "CS0584"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return string.IsNullOrEmpty(LevelSelectionController.campaignToLoad) ? \"unset\" : \"set\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"set\",",
+          "\"resultSet\": true"
+        ],
+        "notContains": [
+          "CS0584"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return LevelSelectionController.MainMenuScene;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"MainMenu\",",
+          "\"resultSet\": true"
+        ],
+        "notContains": [
+          "CS0584"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return Newtonsoft.Json.JsonConvert.SerializeObject(new int[] { 1, 2 }) + Newtonsoft.Json.JsonConvert.SerializeObject(new Dictionary<string, int> { { \"a\", 1 } });"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"[1,2]{\\\"a\\\":1}\",",
+          "\"resultSet\": true"
+        ],
+        "notContains": [
+          "CS0584"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ShapesGenericLambda { public static T[] KeepNonNull<T>(T[] items) where T : class { return items.Where(x => x != null).ToArray(); } }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ShapesGenericLambdaUse { public static T[] KeepNonNull<T>(T[] items) where T : class { return items.Where(x => x != null).ToArray(); } }\nreturn ShapesGenericLambdaUse.KeepNonNull(new[] { \"a\", null, \"b\" }).Length;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2,",
+          "\"resultSet\": true"
+        ],
+        "notContains": [
+          "Invalid IL code"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ShapesGenericCapture { public static int CountMatches<T>(List<T> items, T wanted) { return items.Count(x => x.Equals(wanted)); } }\nreturn ShapesGenericCapture.CountMatches(new List<int> { 1, 2, 2, 3 }, 2);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "using ShapesAliasIO = System.IO;\nSystem.AppDomain.CurrentDomain.SetData(\"shapes.evaluator\", typeof(Unity_Inspector_Mod.CodeExecutor).GetField(\"evaluator\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).GetValue(null));\nreturn ShapesAliasIO.Path.GetFileName(\"a/b.txt\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"b.txt\",",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "shapes-rebuild",
+        "source": "public static class ShapesRebuildProbe\n{\n    public static int V = 1;\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": false",
+          "\"ShapesRebuildProbe\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "shapes-rebuild"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var now = typeof(Unity_Inspector_Mod.CodeExecutor).GetField(\"evaluator\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).GetValue(null);\nvar was = System.AppDomain.CurrentDomain.GetData(\"shapes.evaluator\");\nSystem.AppDomain.CurrentDomain.SetData(\"shapes.evaluator\", now);\nreturn ShapesAliasIO.Path.GetFileName(\"c/d.txt\") + \" \" + (object.ReferenceEquals(now, was) ? \"same evaluator\" : \"rebuilt evaluator\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"d.txt rebuilt evaluator\","
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ShapesCrashCount { public static int N; public static void Count() { N++; } }\nvar h = new HarmonyLib.Harmony(\"shapes.crashcount\");\nforeach (var c in typeof(Mono.CSharp.InternalErrorException).GetConstructors(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic)) h.Patch(c, postfix: new HarmonyLib.HarmonyMethod(typeof(ShapesCrashCount).GetMethod(\"Count\")));\nShapesCrashCount.N = 0;\nreturn \"counting internal errors\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"counting internal errors\","
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "object o = 1;\nreturn o is 1;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "[as statements with value] InternalErrorException: Internal error",
+          "Mono.CSharp.MethodData.DefineMethodBuilder"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var now = typeof(Unity_Inspector_Mod.CodeExecutor).GetField(\"evaluator\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).GetValue(null);\nvar was = System.AppDomain.CurrentDomain.GetData(\"shapes.evaluator\");\nSystem.AppDomain.CurrentDomain.SetData(\"shapes.evaluator\", now);\nreturn \"internal errors built: \" + ShapesCrashCount.N + \", \" + ShapesAliasIO.Path.GetFileName(\"e/f.txt\") + \" \" + (object.ReferenceEquals(now, was) ? \"same evaluator\" : \"rebuilt evaluator\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"internal errors built: 1, f.txt rebuilt evaluator\","
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var counter = new HarmonyLib.Harmony(\"shapes.crashcount\");\nforeach (var cm in counter.GetPatchedMethods().ToList()) counter.Unpatch(cm, HarmonyLib.HarmonyPatchType.All, counter.Id);\nSystem.AppDomain.CurrentDomain.SetData(\"shapes.evaluator\", null);\nreturn \"counter removed \" + !HarmonyLib.Harmony.HasAnyPatches(\"shapes.crashcount\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"counter removed True\","
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reader = typeof(Mono.CSharp.MetadataImporter).GetNestedType(\"AttributesTypeInfoReader\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);\nvar createType = typeof(Mono.CSharp.MetadataImporter).GetMethod(\"CreateType\", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic, null, new[] { typeof(System.Type), reader, typeof(bool) }, null);\nvar opener = typeof(Unity_Inspector_Mod.ScriptCompiler).GetMethod(\"OpenDeclaringTypeTranspiler\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);\nnew HarmonyLib.Harmony(\"scriptcompiler.internal\").Unpatch(createType, opener);\nreturn \"import fix removed\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"import fix removed\","
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "object o = 1;\nreturn o is 1;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "[as statements with value] InternalErrorException: Internal error",
+          "Mono.CSharp.MethodData.DefineMethodBuilder"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = new Dictionary<int, int> { { 1, 2 } };\nint s = 0;\nforeach (var k in d.Keys) s += k;\nreturn s;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "error CS0584: Internal compiler error: Unexpected error when loading type `System.Collections.Generic.Dictionary<TKey,TValue>.KeyCollection.Enumerator'",
+          "Cause: Mono.CSharp.InternalErrorException: Cannot import field `System.Collections.Generic.Dictionary<TKey,TValue>.KeyCollection.Enumerator.host_enumerator'",
+          "Cause: Mono.CSharp.InternalErrorException: `System.Collections.Generic.Dictionary<TKey,TValue>' must be type definition or nested non-inflated type to MakeGenericType"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "shapes-cause",
+        "source": "public static class ShapesCauseKeys\n{\n    public static int Sum()\n    {\n        var d = new Dictionary<int, int> { { 1, 2 } };\n        int s = 0;\n        foreach (var k in d.Keys) s += k;\n        return s;\n    }\n}\n",
+        "compileOnly": true
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Internal compiler error: Mono.CSharp.InternalErrorException: `System.Collections.Generic.Dictionary<TKey,TValue>' must be type definition",
+          "while compiling (3,23): ShapesCauseKeys.Sum()",
+          "Unexpected error when loading type `System.Collections.Generic.Dictionary<TKey,TValue>.KeyCollection.Enumerator'"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reader = typeof(Mono.CSharp.MetadataImporter).GetNestedType(\"AttributesTypeInfoReader\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);\nvar createType = typeof(Mono.CSharp.MetadataImporter).GetMethod(\"CreateType\", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic, null, new[] { typeof(System.Type), reader, typeof(bool) }, null);\nvar opener = typeof(Unity_Inspector_Mod.ScriptCompiler).GetMethod(\"OpenDeclaringTypeTranspiler\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);\nnew HarmonyLib.Harmony(\"scriptcompiler.internal\").Patch(createType, transpiler: new HarmonyLib.HarmonyMethod(opener));\nreturn \"import fix back \" + HarmonyLib.Harmony.GetPatchInfo(createType).Transpilers.Count;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"import fix back 1\","
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "object o = 1;\nreturn o is 1;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "[as statements with value] InternalErrorException: Internal error",
+          "Mono.CSharp.MethodData.DefineMethodBuilder"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = new Dictionary<int, int> { { 1, 2 } };\nint s = 0;\nforeach (var k in d.Keys) s += k;\nreturn s;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 1,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\nvar server = typeof(Unity_Inspector_Mod.MessageHandler).Assembly.GetType(\"Unity_Inspector_Mod.Main\").GetField(\"server\", fl).GetValue(null);\nint port = (int)server.GetType().GetProperty(\"Port\").GetValue(server, null);\nvar client = new System.Net.Sockets.TcpClient();\nclient.Connect(\"127.0.0.1\", port);\nclient.ReceiveTimeout = 5000;\nvar stream = client.GetStream();\nvar writer = new System.IO.StreamWriter(stream, new System.Text.UTF8Encoding(false));\nwriter.AutoFlush = true;\nvar reader = new System.IO.StreamReader(stream, new System.Text.UTF8Encoding(false));\nvar fi = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;\nwriter.WriteLine(\"{\\\"id\\\":\\\"shapes-hello\\\",\\\"method\\\":\\\"hello\\\",\\\"params\\\":{\\\"token\\\":\\\"\" + server.GetType().GetField(\"token\", fi).GetValue(server) + \"\\\",\\\"protocol\\\":\" + server.GetType().GetField(\"Protocol\", fl).GetValue(null) + \"}}\");\nvar hello = Newtonsoft.Json.Linq.JObject.Parse(reader.ReadLine());\nif (hello[\"success\"].ToString() != \"True\") return \"hello refused: \" + hello[\"error\"];\nvar watch = System.Diagnostics.Stopwatch.StartNew();\nwriter.WriteLine(\"{\\\"id\\\":\\\"shapes-own-id\\\",\\\"method\\\":\\\"unload_script\\\",\\\"params\\\":{}}\");\nvar reply = Newtonsoft.Json.Linq.JObject.Parse(reader.ReadLine());\nlong ms = watch.ElapsedMilliseconds;\nclient.Close();\nreturn \"id=\" + reply[\"id\"] + \" success=\" + reply[\"success\"] + \" error=\" + reply[\"error\"] + (ms < 2000 ? \" within 2 s\" : \" after \" + ms + \" ms\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"id=shapes-own-id success=False error=Script name is required within 2 s\","
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ShapesGenericPlain { public static T Echo<T>(T v) { return v; } }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "ShapesGenericPlain.Echo(7) + ShapesGenericPlain.Echo(\"x\").Length"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 8,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "static int Twice(int v) { return v * 2; }\nreturn Twice(4);"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Local functions are not supported"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "class Helper { public int Run() { return Twice(3); } int Twice(int v) { return v * 2 } }\nreturn new Helper().Run();"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "error CS1525: Unexpected symbol `}', expecting `;'"
+        ],
+        "notContains": [
+          "Local functions are not supported"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static int Twice(int v) { return v * 2; }\nreturn Twice(4);"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Local functions are not supported"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var a = 4;/*c*/return a + 1;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 5,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "/* lead */ return 6;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 6,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ShapesLocalFn { public static int M() { int Twice(int v) { return v * 2; } return Twice(2); } }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Local functions are not supported"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ShapesBox<T> { public T Value { get; set; } public T Get() { return Value; } }\nvar b = new ShapesBox<int>();\nb.Value = 5;\nreturn b.Get();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 5,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var s = new ShapesBox<string>();\ns.Value = \"boxed\";\nreturn s.Get();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"boxed\",",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var s = new System.Text.StringBuilder();\nfor (int i = 0; i < 1500; i++) s.Append(\"\\U0001F600\");\ns.Append(\"x\");\nfor (int i = 0; i < 1500; i++) s.Append(\"\\U0001F600\");\ns.Append(new string('x', 70000));\ns.Append(\"a\\u2014\\u00e9b\");\nreturn s.ToString();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "😀😀x😀😀",
+          "xxa—éb"
+        ],
+        "notContains": [
+          "�"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "IEnumerator items = new[] { 4, 5 }.GetEnumerator();\nitems.MoveNext();\nreturn \"current=\" + items.Current;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "current=4"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = new Dictionary<string, int> { { \"a;b\", 7 } };\nreturn $\"v={d[\"a;b\"]}\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"v=7\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var s = \"a\";\nreturn $\"{(s == \"a\" ? \"yes;\" : \"no\")} {s.Replace('a', '\"').Length};x\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"yes; 1;x\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return $@\"{\"q;r\"} {{b;}} {$\"inner {\"s;\"}\"}\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"q;r {b;} inner s;\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "if (1 > 0) return $\"{\"x;\"}\";\nreturn \"y\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"x;\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ShapesGenericLambdaKept { public static T[] Keep<T>(T[] xs) where T : class { T none = default(T); return xs.Where(x => !Equals(x, none)).ToArray(); } }\nreturn ShapesGenericLambdaKept.Keep(new[] { \"a\", null, \"b\" }).Length;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ShapesFieldBox<T> { public T Value; public T Get() { return Value; } }\nvar b = new ShapesFieldBox<int>();\nb.Value = 5;\nreturn b.Get();"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "names the field ShapesFieldBox.Value",
+          "public T Value { get; set; }"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var b = new ShapesFieldBox<int>();\ntypeof(ShapesFieldBox<int>).GetField(\"Value\").SetValue(b, 5);\nreturn b.Get();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 5,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ShapesOuter<T> { public class Inner { public T V { get; set; } } public T[] Items { get; set; } public List<T> L { get; set; } public ShapesOuter() { L = new List<T>(); } public ShapesOuter<T> Self() { return this; } public ShapesOuter<T> Next { get; set; } }\nvar o = new ShapesOuter<int>.Inner();\no.V = 7;\nvar q = new ShapesOuter<string>();\nq.Items = new[] { \"a\" };\nq.L.Add(\"b\");\nq.Next = q;\nreturn o.V + q.Items[0] + q.Self().L[0] + q.Next.Next.Self().Items.Length;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"7ab1\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public struct ShapesPair<A, B> { public A First { get; set; } public B Second { get; set; } public ShapesPair(A a, B b) : this() { First = a; Second = b; } }\nvar p = new ShapesPair<int, string>(1, \"x\");\np.First = 4;\nreturn p.First + \"|\" + p.Second;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"4|x\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public interface IShapesGet<T> { T Get(); }\npublic class ShapesGetBase<T> where T : class { public virtual T Name() { return default(T); } }\npublic class ShapesGetImpl : ShapesGetBase<string>, IShapesGet<int> { public int Get() { return 3; } public override string Name() { return \"impl\"; } }\nIShapesGet<int> g = new ShapesGetImpl();\nreturn g.Get() + new ShapesGetImpl().Name();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"3impl\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ShapesConstrained<T> where T : class { }\npublic class ShapesConstrainedBad : ShapesConstrained<int> { }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "CS0452"
+        ],
+        "notContains": [
+          "InternalErrorException"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ShapesDerived<T> : List<T>, IShapesGet<T> { public T Get() { return this[0]; } public U Conv<U>(T x) where U : class { return x as U; } public static int Count2<V>(IEnumerable<V> xs) where V : class { int n = 0; foreach (var x in xs) if (x != null) n++; return n; } }\nvar d = new ShapesDerived<string>();\nd.Add(\"z\");\nIShapesGet<string> gs = d;\nreturn gs.Get() + d.Conv<string>(\"c\") + ShapesDerived<int>.Count2(new[] { \"a\", null });"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"zc1\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "shapes-genuse",
+        "source": "public static class ShapesGenUse\n{\n    public static void Main()\n    {\n        var b = new ShapesBox<string>();\n        b.Value = \"from script\";\n        ScriptContext.Logger(b.Get());\n    }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "from script"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "shapes-genfield",
+        "source": "public static class ShapesGenField\n{\n    public static void Main()\n    {\n        var b = new ShapesFieldBox<int>();\n        b.Value = 1;\n    }\n}\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "names the field ShapesFieldBox.Value"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "shapes-genown",
+        "source": "public class ShapesOwnBox<T> { public T V; public static T S; }\n\npublic static class ShapesGenOwn\n{\n    public static void Main()\n    {\n        var b = new ShapesOwnBox<int>();\n        b.V = 3;\n        ShapesOwnBox<string>.S = \"s\";\n        ScriptContext.Logger(\"own=\" + b.V + ShapesOwnBox<string>.S);\n    }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "own=3s"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "using ShapesAliasRepeat = System.IO;\nreturn ShapesAliasRepeat.Path.GetExtension(\"a.b\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \".b\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "using  ShapesAliasRepeat=System.IO ;\nreturn ShapesAliasRepeat.Path.GetExtension(\"a.c\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \".c\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "using ShapesAliasRepeat = System.IO;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "using Object = UnityEngine.Object;\nreturn typeof(Object).FullName;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"UnityEngine.Object\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "using ShapesAliasRepeat = System.Text;\nreturn new ShapesAliasRepeat.StringBuilder(\"sb\").ToString();"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "CS1537",
+          "pick another name"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return ShapesAliasRepeat.Path.GetExtension(\"a.k\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \".k\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "using ShapesAliasTypo = ShapesNoSuchNamespace;\nreturn 1;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "CS0246"
+        ],
+        "notContains": [
+          "CS1537"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "using ShapesAliasTypo = ShapesNoSuchNamespaceEither;\nreturn 1;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "CS0246"
+        ],
+        "notContains": [
+          "CS1537"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "shapes-hole",
+        "source": "public enum ShapesHoleEnum { A }\n\npublic static class ShapesHoleUse\n{\n    public static void Main() { ScriptContext.Logger($\"v={ShapesHoleEnum.A}\"); }\n}\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Script defines enum 'ShapesHoleEnum'"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "shapes-hole",
+        "source": "public enum ShapesQuoteEnum { A }\n\npublic static class ShapesQuoteUse\n{\n    public static void Main()\n    {\n        ScriptContext.Logger($\"q={'\"'}\");\n        ScriptContext.Logger(\"after=\" + (int)ShapesQuoteEnum.A);\n    }\n}\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Script defines enum 'ShapesQuoteEnum'"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "shapes-hole",
+        "source": "public enum ShapesTextEnum { A }\n\npublic static class ShapesTextUse\n{\n    public static void Main()\n    {\n        ScriptContext.Logger($\"ShapesTextEnum {1 + 1} {\"a\" + \"}\"}\");\n    }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "ShapesTextEnum 2 a}"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "shapes-hole"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ShapesRebuild<T> { public T V { get; set; } }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ShapesJsonDecl { public static string S() { return Newtonsoft.Json.JsonConvert.SerializeObject(new int[] { 1 }); } }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ],
+        "notContains": [
+          "CS0584"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return ShapesJsonDecl.S();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"[1]\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ShapesRebuild<T> { public T V { get; set; } }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return Newtonsoft.Json.JsonConvert.SerializeObject(new Dictionary<string, int> { { \"a\", 1 } });"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"{\\\"a\\\":1}\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ShapesRebuild<T> { public T V { get; set; } }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return Newtonsoft.Json.JsonConvert.SerializeXNode(null);"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "CS0117",
+          "SerializeXNode"
+        ],
+        "notContains": [
+          "CS0584"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "int unreadable = 0;\nforeach (var m in typeof(Newtonsoft.Json.JsonConvert).GetMethods()) { try { var a = m.Attributes; } catch (System.IO.FileNotFoundException) { unreadable++; } }\nreturn unreadable;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 7,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ShapesRebuild<T> { public T V { get; set; } }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ShapesLibDecl { public static string S() { var o = new Newtonsoft.Json.Linq.JObject(); o[\"a\"] = 1; var t = Newtonsoft.Json.Linq.JToken.Parse(\"[1]\"); var m = AccessTools.Method(typeof(string), \"Trim\", new Type[0]); var h = new Harmony(\"shapes.libdecl\"); var l = new List<int> { 1, 2 }; return o.ToString(Newtonsoft.Json.Formatting.None) + t.ToString(Newtonsoft.Json.Formatting.None) + (m != null) + (h != null) + LevelSelectionController.MainMenuScene + l.Where(x => x > 1).Count(); } }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ],
+        "notContains": [
+          "CS0584"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return ShapesLibDecl.S();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"{\\\"a\\\":1}[1]TrueTrueMainMenu1\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "using ShapesJsonAlias = Newtonsoft.Json.JsonConvert;\nreturn ShapesJsonAlias.SerializeObject(2);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"2\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return Newtonsoft.Json.JsonConvert.SerializeObject(new { a = 1, b = \"x\" });"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"{\\\"a\\\":1,\\\"b\\\":\\\"x\\\"}\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return Newtonsoft.Json.JsonConvert.SerializeObject(new[] { new { a = 1 } }) + Newtonsoft.Json.JsonConvert.SerializeObject(new Dictionary<string, object> { { \"k\", new { b = 2 } } });"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"[{\\\"a\\\":1}]{\\\"k\\\":{\\\"b\\\":2}}\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return Newtonsoft.Json.Linq.JObject.FromObject(new { a = 1 }).ToString(Newtonsoft.Json.Formatting.None);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"{\\\"a\\\":1}\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ShapesJsonAnon { public static string S() { return Newtonsoft.Json.JsonConvert.SerializeObject(new { a = 1 }); } }\nreturn ShapesJsonAnon.S();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"{\\\"a\\\":1}\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var fs = new { a = 1 }.GetType().GetFields(BindingFlags.Instance | BindingFlags.NonPublic);\nreturn fs[0].Name + \"|\" + fs[0].GetValue(new { a = 7 });"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"<a>|7\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return new { a = 1 }.GetType().GetMembers().Length > 0;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": true,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ShapesJsonField<T> { public T X; public string L { get; set; } public ShapesJsonField(T x) { X = x; L = \"l\"; } }\nreturn Newtonsoft.Json.JsonConvert.SerializeObject(new ShapesJsonField<int>(4));"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"{\\\"X\\\":4,\\\"L\\\":\\\"l\\\"}\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return new { shapesA = 1, shapesB = \"x\" };"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "{ shapesA = 1, shapesB = x }"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return new { shapesA = \"s\", shapesB = 2 };"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "{ shapesA = s, shapesB = 2 }"
+        ],
+        "notContains": [
+          "NotSupportedException"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "shapes-json",
+        "source": "public class ShapesJsonScriptBox<T> { public T V; }\n\npublic static class ShapesJsonScript\n{\n    public static void Main()\n    {\n        var b = new ShapesJsonScriptBox<int>();\n        b.V = 3;\n        ScriptContext.Logger(\"box=\" + Newtonsoft.Json.JsonConvert.SerializeObject(b) + \" fields=\" + b.GetType().GetFields().Length);\n        ScriptContext.Logger(\"anon=\" + Newtonsoft.Json.JsonConvert.SerializeObject(new { a = 1 }) + \" token=\" + Newtonsoft.Json.Linq.JToken.Parse(\"[1]\").Count());\n    }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "box={\\\"V\\\":3} fields=1",
+          "anon={\\\"a\\\":1} token=1"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "shapes-json"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "using ShapesAliasRepeat = ShapesNoSuchNamespace;\nreturn 1;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "CS1537",
+          "pick another name"
+        ],
+        "notContains": [
+          "CS0246"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return ShapesAliasRepeat.Path.GetExtension(\"a.t\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \".t\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "using ShapesAliasRepeat = System.Text;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "CS1537",
+          "pick another name"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return ShapesAliasRepeat.Path.GetExtension(\"a.e\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \".e\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ShapesRebuild<T> { public T V { get; set; } }\nreturn ShapesAliasRepeat.Path.GetExtension(\"a.f\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \".f\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "using Object = System.Object;\nreturn typeof(Object).FullName;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "CS1537",
+          "pick another name"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return typeof(Object).FullName;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"UnityEngine.Object\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ShapesRebuild<T> { public T V { get; set; } }\nreturn typeof(Object).FullName;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"UnityEngine.Object\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "using Object = UnityEngine.Object;\nreturn typeof(Object).FullName;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"UnityEngine.Object\""
+        ],
+        "notContains": [
+          "CS1537"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return Object.FindObjectsOfType<Camera>().Length > 0;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": true,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public delegate int ShapesDelegate(int x);\nShapesDelegate d = v => v + 1;\nreturn d(1);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2,"
+        ],
+        "notContains": [
+          "CS0101"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public delegate string ShapesDelegate(string s);\nShapesDelegate d = v => v + \"x\";\nreturn d(\"a\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"ax\""
+        ],
+        "notContains": [
+          "CS0101"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public delegate long ShapesDelegate();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ],
+        "notContains": [
+          "CS0101"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "ShapesDelegate d = () => 7L;\nreturn d();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 7,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ShapesRebuild<T> { public T V { get; set; } }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public delegate int ShapesDelegate();\nShapesDelegate d = () => 8;\nreturn d();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 8,"
+        ],
+        "notContains": [
+          "CS0101"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ShapesDelegate { public int V = 3; }\nreturn new ShapesDelegate().V;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 3,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public delegate int ShapesDelegate();\nShapesDelegate d = () => 9;\nreturn d();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 9,"
+        ],
+        "notContains": [
+          "CS0101"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public delegate T ShapesDelegateG<T>(T x);\nShapesDelegateG<int> g = v => v + 2;\nreturn g(1);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 3,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public delegate T ShapesDelegateG<T>(T x, T y);\nShapesDelegateG<int> g = (a, b) => a + b;\nreturn g(1, 3);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 4,"
+        ],
+        "notContains": [
+          "CS0101"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public delegate int ShapesDelegateBad();\npublic class ShapesDelegateBadUse { public int X = nope; }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "CS0103"
+        ],
+        "notContains": [
+          "CS0101"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public delegate int ShapesDelegateBad();\npublic class ShapesDelegateBadUse { public int X = 1; }\nShapesDelegateBad e = () => new ShapesDelegateBadUse().X;\nreturn e();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 1,"
+        ],
+        "notContains": [
+          "CS0101"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "namespace ShapesDelegateNs { public delegate int D(); }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "namespace ShapesDelegateNs { public delegate string D(); }\nShapesDelegateNs.D n = () => \"ns\";\nreturn n();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"ns\""
+        ],
+        "notContains": [
+          "CS0101"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ShapesGenSelf { public static int F<T>(int n) { return n <= 0 ? 0 : 1 + F<T>(n - 1); } public static string G<T>(int n) { return n <= 0 ? typeof(T).Name : G<T>(n - 1); } public static T H<T>(T x, int n) { return n <= 0 ? x : H(x, n - 1); } }\nreturn ShapesGenSelf.F<int>(3) + ShapesGenSelf.G<string>(2) + ShapesGenSelf.G<int>(1) + ShapesGenSelf.H(\"s\", 2) + ShapesGenSelf.H(5, 2);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"3StringInt32s5\""
+        ],
+        "notContains": [
+          "does not have a method body"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ShapesGenLater { public static int A<T>(int n) { return B<T>(n); } public static int B<T>(int n) { return n + typeof(T).Name.Length; } }\nreturn ShapesGenLater.A<int>(3);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 8,"
+        ],
+        "notContains": [
+          "method body is empty"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ShapesGenEarlier { public static int B<T>(int n) { if (n > 100) return 0; return n + 1; } public static int A<T>(int n) { return B<T>(n); } }\nreturn ShapesGenEarlier.A<int>(3);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 4,"
+        ],
+        "notContains": [
+          "does not have a method body"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ShapesGenMutual { public static int A<T>(int n) { return n <= 0 ? 0 : 1 + B<T>(n - 1); } public static int B<T>(int n) { return n <= 0 ? 0 : 1 + A<T>(n - 1); } }\nreturn ShapesGenMutual.A<int>(5);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 5,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ShapesGenForward { public static int C() { return B<int>(1); } public static int B<T>(int n) { for (int i = 0; i < 3; i++) n++; return n; } }\nreturn ShapesGenForward.C();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 4,"
+        ],
+        "notContains": [
+          "method body is empty"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ShapesGenBack { public static int B<T>(int n) { for (int i = 0; i < 3; i++) { try { n++; } finally { n++; } } return n; } public static int C() { return B<int>(1); } }\nreturn ShapesGenBack.C();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 7,"
+        ],
+        "notContains": [
+          "does not have a method body"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ShapesGenCross { public static int C() { return ShapesGenCrossTo.B<int>(1); } }\npublic class ShapesGenCrossTo { public static int B<T>(int n) { return n; } }\nreturn ShapesGenCross.C();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 1,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ShapesGenClassOuter { public static int Go() { return ShapesGenClass<string>.F<int>(3); } }\npublic class ShapesGenClass<T> { public static int F<U>(int n) { return n <= 0 ? 0 : 1 + F<U>(n - 1); } }\nreturn ShapesGenClassOuter.Go();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 3,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ShapesGenLambda { public static int None<T>(int n) { Func<int, int> f = x => x + 1; return f(n); } public static string OfT<T>(T v) { Func<T, string> f = x => \"got \" + x; return f(v); } public static int Captures<T>(List<T> items, T wanted) { Func<T, bool> f = x => x.Equals(wanted); return items.Count(f); } public static int CapturesSelf<T>(int n) { Func<int> f = () => n <= 0 ? 0 : 1 + CapturesSelf<T>(n - 1); return f(); } }\nreturn ShapesGenLambda.None<int>(3) + ShapesGenLambda.OfT(4) + ShapesGenLambda.OfT(\"s\") + ShapesGenLambda.Captures(new List<int> { 1, 2, 2 }, 2) + ShapesGenLambda.CapturesSelf<int>(2);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"4got 4got s22\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "shapes-gen",
+        "source": "public static class ShapesGenScript\n{\n    public static void Main()\n    {\n        ScriptContext.Logger(\"self=\" + Self<int>(3) + \" fwd=\" + Later<int>(3) + \" a2b=\" + A<string>(3));\n        ScriptContext.Logger(\"none=\" + None<int>(3) + \" oft=\" + OfT(7) + \" cap=\" + Captures(new List<int> { 1, 2, 2 }, 2));\n    }\n\n    static int Self<T>(int n) { return n <= 0 ? 0 : 1 + Self<T>(n - 1); }\n    static int Later<T>(int n) { for (int i = 0; i < 2; i++) n++; return n; }\n    static int A<T>(int n) { return B<T>(n); }\n    static int B<T>(int n) { return n + typeof(T).Name.Length; }\n    static int None<T>(int n) { Func<int, int> f = x => x + 1; return f(n); }\n    static string OfT<T>(T v) { Func<T, string> f = x => \"got \" + x; return f(v); }\n    static int Captures<T>(List<T> items, T wanted) { Func<T, bool> f = x => x.Equals(wanted); return items.Count(f); }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "self=3 fwd=5 a2b=9",
+          "none=4 oft=got 7 cap=2"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "shapes-gen"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "shapes-genother",
+        "source": "public static class ShapesGenOther\n{\n    public static void Main() { ScriptContext.Logger(\"r=\" + F<int>(3)); }\n\n    static int F<T>(int n) { return n <= 0 ? 0 : 1 + F<string>(n - 1); }\n}\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Generic method ShapesGenOther.F is called with other type arguments",
+          "a non-generic helper"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ShapesGenOther { public static int F<T>(int n) { return n <= 0 ? 0 : 1 + F<string>(n - 1); } }\nreturn ShapesGenOther.F<int>(3);"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Generic method ShapesGenOther.F is called with other type arguments",
+          "a non-generic helper",
+          "a generic class",
+          "a delegate field"
+        ],
+        "notContains": [
+          "does not have a method body",
+          "Invalid IL code in"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ShapesGenOtherList { public static int F<T>(int n) { return n <= 0 ? 0 : 1 + F<List<T>>(n - 1); } }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Generic method ShapesGenOtherList.F is called with other type arguments"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ShapesGenHelper { static int Step(int n) { return n <= 0 ? 0 : 1 + Step(n - 1); } public static int F<T>(int n) { return Step(n); } }\nreturn ShapesGenHelper.F<string>(3);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 3,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ShapesGenRewriteClass<T> { public static int F(int n) { return n <= 0 ? 0 : 1 + ShapesGenRewriteClass<string>.F(n - 1); } }\nreturn ShapesGenRewriteClass<int>.F(3);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 3,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class ShapesGenRewriteDelegate { public static Func<int, int> Next; public static int F<T>(int n) { return n <= 0 ? 0 : 1 + Next(n - 1); } }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "ShapesGenRewriteDelegate.Next = ShapesGenRewriteDelegate.F<string>;\nreturn ShapesGenRewriteDelegate.F<int>(3);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 3,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ShapesRefusedBox<T> { public T Value; }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ShapesRefusedUse { public static int G() { return new ShapesRefusedBox<int>().Value; } }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "names the field ShapesRefusedBox.Value",
+          "nothing was run"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return ShapesRefusedUse.G();"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "CS0103",
+          "ShapesRefusedUse"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ShapesRefusedKeep { public static int G() { return 11; } }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ShapesRefusedKeep { public static int G() { return new ShapesRefusedBox<int>().Value; } }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "names the field ShapesRefusedBox.Value"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return ShapesRefusedKeep.G();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 11,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "using ShapesRefusedAlias = System.IO;\npublic class ShapesRefusedFixed { public static int G() { return new ShapesRefusedBox<int>().Value; } }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "names the field ShapesRefusedBox.Value"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "using ShapesRefusedAlias = System.IO;\npublic class ShapesRefusedFixed { public static string G() { return ShapesRefusedAlias.Path.GetExtension(\"a.z\"); } }\nreturn ShapesRefusedFixed.G();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \".z\""
+        ],
+        "notContains": [
+          "CS1537",
+          "CS0101"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "using ShapesRefusedAlias2 = System.IO;\npublic static class ShapesRefusedBind { public static int F<T>(int n) { return n <= 0 ? 0 : F<string>(n - 1); } }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Generic method ShapesRefusedBind.F is called with other type arguments"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return ShapesRefusedBind.F<int>(3);"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "CS0103",
+          "ShapesRefusedBind"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "using ShapesRefusedAlias2 = System.IO;\nreturn ShapesRefusedAlias2.Path.GetExtension(\"a.y\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \".y\""
+        ],
+        "notContains": [
+          "CS1537"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "1 + 1"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public interface IShapesGenVia { T M<T>(T x); }\npublic class ShapesGenViaImpl : IShapesGenVia { public T M<T>(T x) { return x; } }\npublic static class ShapesGenViaUse { public static T Via<T>(IShapesGenVia i, T x) { return i.M(x); } }\nreturn ShapesGenViaUse.Via(new ShapesGenViaImpl(), 1);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 1,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public abstract class ShapesGenTmpl { public abstract T V<T>(T x); public virtual T W<T>(T x) { return x; } public T Tmpl<T>(T x) { return V(x); } }\npublic class ShapesGenTmplImpl : ShapesGenTmpl { public override T V<T>(T x) { return x; } public override T W<T>(T x) { return base.W(x); } }\nreturn new ShapesGenTmplImpl().Tmpl(3) + new ShapesGenTmplImpl().W(4);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 7,"
+        ],
+        "notContains": [
+          "does not have a method body"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public interface IShapesGenClosed { T M<T>(T x); }\npublic class ShapesGenClosedImpl : IShapesGenClosed { public T M<T>(T x) { return x; } }\npublic static class ShapesGenClosedUse { public static int Go(IShapesGenClosed i) { return i.M(4); } }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Generic method IShapesGenClosed.M is virtual or an interface method",
+          "own type parameters",
+          "from a later execute_code call"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return ShapesGenClosedUse.Go(null);"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "CS0103",
+          "ShapesGenClosedUse"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public interface IShapesGenClosed { T M<T>(T x); }\npublic class ShapesGenClosedImpl : IShapesGenClosed { public T M<T>(T x) { return x; } }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "IShapesGenClosed i = new ShapesGenClosedImpl();\nreturn i.M(4);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 4,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public abstract class ShapesGenClosedBase { public abstract T V<T>(T x); }\npublic class ShapesGenClosedDerived : ShapesGenClosedBase { public override T V<T>(T x) { return x; } public int Go() { return V(1); } }"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Generic method ShapesGenClosedBase.V is virtual or an interface method"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "shapes-genvirtual",
+        "source": "public interface IShapesGenScript { T M<T>(T x); }\n\npublic class ShapesGenScriptImpl : IShapesGenScript { public T M<T>(T x) { return x; } }\n\npublic static class ShapesGenVirtualScript\n{\n    public static void Main()\n    {\n        IShapesGenScript i = new ShapesGenScriptImpl();\n        ScriptContext.Logger(\"r=\" + i.M(4));\n    }\n}\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Generic method IShapesGenScript.M is virtual or an interface method"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class ShapesSiblingBox<T> { public T V; }\npublic static class ShapesSiblingField { public static int G() { var b = new ShapesSiblingBox<int>(); b.V = 1; return b.V; } }\nreturn ShapesSiblingField.G();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 1,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return \"still answering\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"still answering\""
+        ]
+      }
+    }
+  ],
+  "cleanup": [
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var f = typeof(Unity_Inspector_Mod.ScriptManager).GetField(\"activeScripts\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);\nvar d = (System.Collections.IDictionary)f.GetValue(null);\nvar names = new List<string>();\nforeach (object k in d.Keys) { var n = (string)k; if (n.StartsWith(\"shapes-\")) names.Add(n); }\nstring log = \"\";\nforeach (var n in names) log += n + \":\" + Unity_Inspector_Mod.ScriptManager.UnloadScript(n) + \" \";\nint destroyed = 0;\nforeach (var go in UnityEngine.Object.FindObjectsOfType<GameObject>()) if (go.name.StartsWith(\"Shapes\")) { UnityEngine.Object.Destroy(go); destroyed++; }\nforeach (var m in Harmony.GetAllPatchedMethods().ToList()) { var owners = Harmony.GetPatchInfo(m).Owners.ToList(); foreach (var o in owners) if (o.StartsWith(\"script.shapes-\")) { new Harmony(o).Unpatch(m, HarmonyPatchType.All, o); log += \"unpatched \" + o + \" \"; } }\nvar reader = typeof(Mono.CSharp.MetadataImporter).GetNestedType(\"AttributesTypeInfoReader\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);\nvar createType = typeof(Mono.CSharp.MetadataImporter).GetMethod(\"CreateType\", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic, null, new[] { typeof(System.Type), reader, typeof(bool) }, null);\nvar opener = typeof(Unity_Inspector_Mod.ScriptCompiler).GetMethod(\"OpenDeclaringTypeTranspiler\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);\nvar info = Harmony.GetPatchInfo(createType);\nif (info == null || !info.Transpilers.Any(p => p.PatchMethod == opener)) { new Harmony(\"scriptcompiler.internal\").Patch(createType, transpiler: new HarmonyMethod(opener)); log += \"transpiler restored \"; }\nif (Harmony.HasAnyPatches(\"shapes.crashcount\")) { foreach (var cm in new Harmony(\"shapes.crashcount\").GetPatchedMethods().ToList()) new Harmony(\"shapes.crashcount\").Unpatch(cm, HarmonyPatchType.All, \"shapes.crashcount\"); log += \"crash counter removed \"; }\nSystem.AppDomain.CurrentDomain.SetData(\"shapes.evaluator\", null);\nUnityEngine.Time.timeScale = 1f;\nreturn \"unloaded \" + names.Count + \" destroyed \" + destroyed + \" \" + log;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "unloaded "
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "object o = 1;\nreturn o is 1;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "[as statements with value] InternalErrorException: Internal error",
+          "Mono.CSharp.MethodData.DefineMethodBuilder"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,1170 @@
+{
+  "name": "Scene-dependent tools across game states",
+  "description": "Probes the scene-dependent tools in a level, while a level loads, at the main menu, on the world map and at a finished level. While a level loads and on the world map player 0 is still playing with no Player of its own, so it is listed as joined. From the main menu it also presses fire through Start, Continue Campaign, the save slot and Play Offline to the join screen, where it reads game_state, a fire joins player 0 on controller 4 and it reads game_state and inspect_player again, the slot being listed as joined, then returns to the main menu so the next level load puts player 0 back on controller 0. Loading is reached by a go_to_level with no wait and a check that the LoadingScreen scene is up, and the world map by loading it and probing within the second or so campaign 0 stays there before it moves on to the next briefing; game speed 0 cannot hold it, since freezing the game while the world map loads crashed it. Both are races fixed waits cannot remove: a precondition step that fails is a timing miss, not a tool fault. The finished level is held with game speed 0 and its outcome held off, so finishing it writes nothing to the save, and the last step checks the territory's start level is the one the run found. Needs campaign 0 and Swap Bros Mod. Its first step presses escape until a frame reads it, so a run started during the loading screen waits that out; the next steps undo whatever an earlier run left changed and wait until the scene has stood unchanged for 4 s, outside the loading screen and, in a level, with the level built and not moving on, so a run started during a load, or from the world map as it moves on, records the level the game settles in; its last steps restore the speed and the Swap Bros selection and reload the level it started in. Its cleanup runs the restore again whatever ended the steps: pause, speed, the second player, IronBro, the lock and the Swap Bros selection.",
+  "steps": [
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "escape"
+      },
+      "until": {
+        "timeout": 90,
+        "interval": 1
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 1000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nstring log = \"\";\ntry { if (PauseController.pauseStatus != PauseStatus.UnPaused) { PauseController.SetPause(PauseStatus.UnPaused); log += \"unpaused \"; } } catch (System.Exception ex) { log += \"unpause failed: \" + ex.Message + \" \"; }\nif (UnityEngine.Time.timeScale != 1f) { UnityEngine.Time.timeScale = 1f; log += \"speed1 \"; }\ntry { if (d.GetData(\"uimtest.joined\") != null && HeroController.IsPlaying(1)) { HeroController.Dropout(1, false); log += \"dropped1 \"; } } catch (System.Exception ex) { log += \"dropout failed: \" + ex.Message + \" \"; }\nd.SetData(\"uimtest.joined\", null);\nvar hc = d.GetData(\"uimtest.ironbro\") as string;\nd.SetData(\"uimtest.ironbro\", null);\ntry {\n  var save = GameState.Instance.currentWorldmapSave;\n  if (hc != null && save != null) {\n    var parts = hc.Split(':');\n    save.worldMapIsHardcoreCampaign = parts[0] == \"1\";\n    save.hardcoreLives = int.Parse(parts[1]);\n    save.hardcoreModeAvailableBros.Clear();\n    foreach (var n in parts[2].Split(',')) if (n.Length > 0) save.hardcoreModeAvailableBros.Add((HeroType)System.Enum.Parse(typeof(HeroType), n));\n    log += \"ironbro-restored \";\n  }\n} catch (System.Exception ex) { log += \"ironbro restore failed: \" + ex.Message + \" \"; }\nvar lk = d.GetData(\"uimtest.lock\") as string;\nd.SetData(\"uimtest.lock\", null);\ntry {\n  if (lk != null) {\n    var fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\n    var t = System.Type.GetType(\"BroMakerLib.Unlocks.BroUnlockManager, BroMakerLib\");\n    var pd = t.GetField(\"progressData\", fl).GetValue(null);\n    var states = pd.GetType().GetProperty(\"BroStates\").GetValue(pd, null) as System.Collections.IDictionary;\n    var st = states[lk];\n    st.GetType().GetProperty(\"IsUnlocked\").SetValue(st, true, null);\n    st.GetType().GetProperty(\"UnlockedDate\").SetValue(st, d.GetData(\"uimtest.lock.date\"), null);\n    var names = t.GetProperty(\"UnlockedBroNames\", fl).GetValue(null, null) as System.Collections.Generic.List<string>;\n    var bros = t.GetProperty(\"UnlockedBros\", fl).GetValue(null, null) as System.Collections.IList;\n    int ni = (int)d.GetData(\"uimtest.lock.ni\"); if (ni < 0 || ni > names.Count) ni = names.Count;\n    if (!names.Contains(lk)) names.Insert(ni, lk);\n    var hero = d.GetData(\"uimtest.lock.hero\");\n    int hi = (int)d.GetData(\"uimtest.lock.hi\"); if (hi < 0 || hi > bros.Count) hi = bros.Count;\n    if (hero != null && !bros.Contains(hero)) bros.Insert(hi, hero);\n    typeof(BroMakerLib.Storages.BroSpawnManager).GetMethod(\"BroStatusChanged\", fl).Invoke(null, null);\n    log += \"unlocked \" + lk + \" \";\n  }\n} catch (System.Exception ex) { log += \"unlock failed: \" + ex.Message + \" \"; }\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); set.selGridInt[i] = ix < 0 ? 0 : ix; }\n    log += \"swap-settings-restored \";\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar sc = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;\nvar camp = LevelSelectionController.currentCampaign;\nstring key = sc + \"|\" + (camp == null ? \"\" : camp.name) + \"|\" + LevelSelectionController.CurrentLevelNum;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nfloat now = UnityEngine.Time.realtimeSinceStartup;\nvar last = d.GetData(\"uimtest.settle\") as string;\nint cut = last == null ? -1 : last.LastIndexOf('|');\nif (last == null || last.Substring(0, cut) != key) {\n  d.SetData(\"uimtest.settle\", key + \"|\" + now.ToString(ic));\n  return \"waiting: \" + sc + \" just came up\";\n}\nfloat since = now - float.Parse(last.Substring(cut + 1), ic);\nif (sc == \"LoadingScreen\") return \"waiting: loading\";\nif (LevelSelectionController.IsCampaignScene) {\n  if (HeroController.Instance == null || Map.Instance == null || GameModeController.Instance == null) return \"waiting: the level is still being built\";\n  var wt = typeof(GameModeController).GetField(\"winTimer\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\n  if (GameModeController.IsLevelFinished() && (float)wt.GetValue(GameModeController.Instance) < 999999f) return \"waiting: the level finished and is moving on\";\n}\nif (since < 4f) return \"waiting: \" + sc + \" unchanged for \" + since.ToString(\"0.0\", ic) + \" s\";\nreturn \"settled in \" + sc;"
+      },
+      "until": {
+        "timeout": 90,
+        "interval": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "settled in"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar set = Swap_Bros_Mod.Main.settings;\nSwap_Bros_Mod.API.EnsureBroListUpdated();\nvar l = Swap_Bros_Mod.Main.currentBroList;\nstring sw = set.alwaysChosen + \"|\" + set.ignoreCurrentUnlocked;\nfor (int i = 0; i < 4; i++) sw += \"|\" + l[set.selGridInt[i]];\nd.SetData(\"uimtest.swap\", sw);\nd.SetData(\"uimtest.found\", sw);\nstring lv = \"0|1\";\nif (LevelSelectionController.IsCampaignScene && LevelSelectionController.currentCampaign != null) {\n  var all = typeof(Unity_Inspector_Mod.StateModifier).GetField(\"CampaignNames\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null) as string[];\n  for (int i = 0; i < all.Length; i++) if (string.Equals(all[i], LevelSelectionController.currentCampaign.name, System.StringComparison.OrdinalIgnoreCase)) lv = i + \"|\" + LevelSelectionController.CurrentLevelNum;\n}\nd.SetData(\"uimtest.level\", lv);\nvar save = GameState.Instance == null ? null : GameState.Instance.currentWorldmapSave;\nvar wp = save == null ? null : save.currentWorldMapProgress;\nvar tp = wp == null || string.IsNullOrEmpty(wp.currentTerritoryName) ? null : wp.GetTerritoryProgress(wp.currentTerritoryName);\nd.SetData(\"uimtest.startlevel\", tp == null ? null : wp.currentTerritoryName + \"|\" + tp.startLevel);\nd.SetData(\"uimtest.settle\", null);\nreturn \"recorded swap=\" + sw + \" level=\" + d.GetData(\"uimtest.level\") + \" startLevel=\" + d.GetData(\"uimtest.startlevel\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "recorded swap="
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar rec = (d.GetData(\"uimtest.level\") as string) ?? \"0|1\";\n\nvar p = rec.Split('|');\nvar r = Unity_Inspector_Mod.StateModifier.GoToLevel(int.Parse(p[0]), int.Parse(p[1]));\nvar j = Newtonsoft.Json.Linq.JToken.FromObject(r);\nif (d.GetData(\"uimtest.startlevel\") == null) {\n  var save = GameState.Instance == null ? null : GameState.Instance.currentWorldmapSave;\n  var wp = save == null ? null : save.currentWorldMapProgress;\n  var tp = wp == null || string.IsNullOrEmpty(wp.currentTerritoryName) ? null : wp.GetTerritoryProgress(wp.currentTerritoryName);\n  if (tp != null) d.SetData(\"uimtest.startlevel\", wp.currentTerritoryName + \"|\" + tp.startLevel);\n}\nreturn \"loading recorded level \" + rec + \": success=\" + j[\"success\"] + \" startLevel=\" + (d.GetData(\"uimtest.startlevel\") ?? \"unrecorded\") + \" \" + j.ToString(Newtonsoft.Json.Formatting.None);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "success=True"
+        ],
+        "notContains": [
+          "startLevel=unrecorded"
+        ]
+      },
+      "wait": 10000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"scene\": \"Test Evan2\"",
+          "\"isCampaignScene\": true",
+          "\"isInGame\": true",
+          "\"playerCount\": 1",
+          "\"isAlive\": true",
+          "\"position\": {"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var r = Unity_Inspector_Mod.StateModifier.GoToLevel(0, 1);\nreturn Newtonsoft.Json.Linq.JToken.FromObject(r).ToString();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Loading WM_Intro(mouse) - Level 2"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var sc = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;\nreturn \"scene \" + sc + (sc == \"LoadingScreen\" ? \" as needed\" : \" is not LoadingScreen\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "scene LoadingScreen as needed"
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"scene\": \"LoadingScreen\"",
+          "\"playerCount\": 1",
+          "\"playerIndex\": 0",
+          "\"state\": \"joined\"",
+          "\"isAlive\": false",
+          "\"levelIndex\": null",
+          "\"levelName\": null"
+        ]
+      },
+      "wait": 5000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var r = Unity_Inspector_Mod.StateModifier.GoToLevel(0, 1);\nreturn Newtonsoft.Json.Linq.JToken.FromObject(r).ToString();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Loading WM_Intro(mouse) - Level 2"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var sc = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;\nreturn \"scene \" + sc + (sc == \"LoadingScreen\" ? \" as needed\" : \" is not LoadingScreen\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "scene LoadingScreen as needed"
+        ]
+      }
+    },
+    {
+      "command": "inspect_player",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"playerIndex\": 0",
+          "\"state\": \"joined\"",
+          "\"isAlive\": false"
+        ]
+      },
+      "wait": 5000
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Mook",
+        "x": 800,
+        "y": 520,
+        "ignoreSuppression": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"networked\": true"
+        ]
+      },
+      "wait": 500
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var r = Unity_Inspector_Mod.StateModifier.GoToLevel(0, 1);\nreturn Newtonsoft.Json.Linq.JToken.FromObject(r).ToString();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Loading WM_Intro(mouse) - Level 2"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var sc = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;\nreturn \"scene \" + sc + (sc == \"LoadingScreen\" ? \" as needed\" : \" is not LoadingScreen\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "scene LoadingScreen as needed"
+        ]
+      }
+    },
+    {
+      "command": "list_enemies",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"count\": 0"
+        ]
+      },
+      "wait": 5000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var r = Unity_Inspector_Mod.StateModifier.GoToLevel(0, 1);\nreturn Newtonsoft.Json.Linq.JToken.FromObject(r).ToString();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Loading WM_Intro(mouse) - Level 2"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var sc = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;\nreturn \"scene \" + sc + (sc == \"LoadingScreen\" ? \" as needed\" : \" is not LoadingScreen\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "scene LoadingScreen as needed"
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Mook",
+        "x": 800,
+        "y": 520,
+        "ignoreSuppression": true
+      },
+      "expect": {
+        "success": false
+      },
+      "wait": 5000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var r = Unity_Inspector_Mod.StateModifier.GoToLevel(0, 1);\nreturn Newtonsoft.Json.Linq.JToken.FromObject(r).ToString();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Loading WM_Intro(mouse) - Level 2"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var sc = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;\nreturn \"scene \" + sc + (sc == \"LoadingScreen\" ? \" as needed\" : \" is not LoadingScreen\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "scene LoadingScreen as needed"
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Brommando",
+        "playerNum": 0
+      },
+      "expect": {
+        "success": false,
+        "notContains": [
+          "not found"
+        ],
+        "contains": [
+          "\"reason\": \"no-level\""
+        ]
+      },
+      "wait": 5000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var r = Unity_Inspector_Mod.StateModifier.GoToLevel(0, 1);\nreturn Newtonsoft.Json.Linq.JToken.FromObject(r).ToString();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Loading WM_Intro(mouse) - Level 2"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var sc = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;\nreturn \"scene \" + sc + (sc == \"LoadingScreen\" ? \" as needed\" : \" is not LoadingScreen\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "scene LoadingScreen as needed"
+        ]
+      }
+    },
+    {
+      "command": "restart_level",
+      "params": {},
+      "expect": {
+        "success": false
+      },
+      "wait": 5000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var r = Unity_Inspector_Mod.StateModifier.GoToLevel(0, 1);\nreturn Newtonsoft.Json.Linq.JToken.FromObject(r).ToString();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Loading WM_Intro(mouse) - Level 2"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var sc = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;\nreturn \"scene \" + sc + (sc == \"LoadingScreen\" ? \" as needed\" : \" is not LoadingScreen\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "scene LoadingScreen as needed"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "jump"
+      },
+      "expect": {
+        "contains": [
+          "\"framesRead\": "
+        ]
+      },
+      "wait": 5000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var r = Unity_Inspector_Mod.StateModifier.GoToLevel(0, 1);\nreturn Newtonsoft.Json.Linq.JToken.FromObject(r).ToString();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Loading WM_Intro(mouse) - Level 2"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var sc = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;\nreturn \"scene \" + sc + (sc == \"LoadingScreen\" ? \" as needed\" : \" is not LoadingScreen\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "scene LoadingScreen as needed"
+        ]
+      }
+    },
+    {
+      "command": "take_screenshot",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"path\""
+        ]
+      },
+      "wait": 5000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var r = Unity_Inspector_Mod.StateModifier.GoToLevel(0, 1);\nreturn Newtonsoft.Json.Linq.JToken.FromObject(r).ToString();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Loading WM_Intro(mouse) - Level 2"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var sc = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;\nreturn \"scene \" + sc + (sc == \"LoadingScreen\" ? \" as needed\" : \" is not LoadingScreen\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "scene LoadingScreen as needed"
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 0,
+        "levelIndex": 2
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Level 3"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "\"waited\""
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 6000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"scene\": \"Test Evan2\"",
+          "\"levelIndex\": 2",
+          "\"playerCount\": 1",
+          "\"isAlive\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "GameState.LoadLevel(LevelSelectionController.MainMenuScene);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      },
+      "wait": 5000
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"scene\": \"MainMenu\"",
+          "\"isCampaignScene\": false",
+          "\"isInGame\": false",
+          "\"playerCount\": 0",
+          "\"levelNumber\": null",
+          "\"campaignName\": null"
+        ]
+      }
+    },
+    {
+      "command": "inspect_player",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"players\": []"
+        ]
+      }
+    },
+    {
+      "command": "list_bros",
+      "params": {
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"currentBros\": []",
+          "\"allNormal\"",
+          "\"currentlyAvailable\""
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Brommando",
+        "playerNum": 0,
+        "nextSpawn": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"nextBro\": \"Brommando\""
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Brommando",
+        "playerNum": 0
+      },
+      "expect": {
+        "success": false,
+        "notContains": [
+          "not found"
+        ],
+        "contains": [
+          "\"reason\": \"no-level\""
+        ]
+      }
+    },
+    {
+      "command": "teleport_player",
+      "params": {
+        "x": 100,
+        "y": 100,
+        "playerNum": 0
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Cannot teleport: no level is being played",
+          "MainMenu",
+          "\"reason\": \"no-level\""
+        ]
+      }
+    },
+    {
+      "command": "set_player_health",
+      "params": {
+        "health": 5,
+        "playerNum": 0
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Cannot set health: no level is being played",
+          "MainMenu",
+          "\"reason\": \"no-level\""
+        ]
+      }
+    },
+    {
+      "command": "restart_level",
+      "params": {},
+      "expect": {
+        "success": false,
+        "contains": [
+          "MainMenu"
+        ]
+      }
+    },
+    {
+      "command": "list_enemies",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"mapLoaded\": false",
+          "\"count\": 0"
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Mook",
+        "x": 100,
+        "y": 100
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Cannot spawn: no level is being played",
+          "MainMenu",
+          "\"reason\": \"no-level\""
+        ]
+      }
+    },
+    {
+      "command": "ping",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"message\": \"pong\"",
+          "\"mainThreadAnswered\": true"
+        ]
+      }
+    },
+    {
+      "command": "query_gameobjects",
+      "params": {
+        "namePattern": "Menu",
+        "includeInactive": true,
+        "maxResults": 5
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"results\": ["
+        ]
+      }
+    },
+    {
+      "command": "take_screenshot",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"path\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return HeroController.players[0].character.name;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "NullReferenceException",
+          "\"line\": 1",
+          "\"statement\": \"return HeroController.players[0].character.name;\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var m = UnityEngine.Object.FindObjectOfType<MainMenu>();\nif (m != null) System.AppDomain.CurrentDomain.SetData(\"uimtest.menu\", m.Index);\nreturn m == null ? \"no main menu\" : \"menu index \" + m.Index + \" active=\" + m.MenuActive;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "menu index"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "down"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "no level is being played"
+        ]
+      },
+      "wait": 800
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar m = UnityEngine.Object.FindObjectOfType<MainMenu>();\nint before = (int)d.GetData(\"uimtest.menu\");\nd.SetData(\"uimtest.menu\", null);\nreturn m.Index != before ? \"menu moved from \" + before + \" to \" + m.Index : \"menu still at \" + m.Index;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "menu moved"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "up"
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 800
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var m = UnityEngine.Object.FindObjectOfType<MainMenu>();\nstring p = \"\";\nfor (int i = 0; i < 4; i++) if (HeroController.IsPlaying(i)) p += i;\nreturn (m == null ? \"no main menu\" : \"menu index \" + m.Index + \" active=\" + m.MenuActive) + (p.Length == 0 ? \" nobody playing\" : \" playing \" + p);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "menu index 0 active=True",
+          "nobody playing"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "fire"
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 1500
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "fire"
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 1500
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "fire"
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 1500
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "fire"
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 3000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "string p = \"\";\nfor (int i = 0; i < 4; i++) if (HeroController.IsPlaying(i)) p += i;\nreturn \"scene \" + UnityEngine.SceneManagement.SceneManager.GetActiveScene().name + (p.Length == 0 ? \" nobody playing\" : \" playing \" + p);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "scene newJoin nobody playing"
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"scene\": \"newJoin\"",
+          "\"isCampaignScene\": false",
+          "\"isInGame\": false",
+          "\"playerCount\": 0",
+          "\"players\": []"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "fire"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"player\": 0",
+          "controller 4"
+        ]
+      },
+      "wait": 500
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "string p = \"\";\nfor (int i = 0; i < 4; i++) if (HeroController.IsPlaying(i)) p += i;\nreturn p == \"0\" ? \"only player 0 joined, on controller \" + HeroController.playerControllerIDs[0] : (p.Length == 0 ? \"nobody joined\" : \"players \" + p + \" joined\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "only player 0 joined, on controller 4"
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"scene\": \"newJoin\"",
+          "\"isCampaignScene\": false",
+          "\"isInGame\": false",
+          "\"playerCount\": 1",
+          "\"playerIndex\": 0",
+          "\"state\": \"joined\"",
+          "\"isAlive\": false",
+          "\"lives\": null"
+        ]
+      }
+    },
+    {
+      "command": "inspect_player",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"playerIndex\": 0",
+          "\"playerNum\": 0",
+          "\"state\": \"joined\"",
+          "\"isAlive\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "\"waited\""
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 10000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "GameState.LoadLevel(LevelSelectionController.MainMenuScene);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      },
+      "wait": 5000
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"scene\": \"MainMenu\"",
+          "\"isInGame\": false",
+          "\"playerCount\": 0"
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 0,
+        "levelIndex": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Level 2"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "\"waited\""
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 6000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"scene\": \"Test Evan2\"",
+          "\"levelIndex\": 1",
+          "\"isInGame\": true",
+          "\"playerCount\": 1",
+          "\"isAlive\": true",
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return HeroController.IsPlaying(0) ? \"player 0 on controller \" + HeroController.playerControllerIDs[0] : \"player 0 not playing\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "player 0 on controller 0"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "GameState.LoadLevel(LevelSelectionController.WorldMapScene);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      },
+      "wait": 1000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var sc = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;\nreturn \"scene \" + sc + (sc == \"WorldMap3D\" ? \" as needed\" : \" is not WorldMap3D\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "scene WorldMap3D as needed"
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"scene\": \"WorldMap3D\"",
+          "\"isCampaignScene\": false",
+          "\"isInGame\": false",
+          "\"levelIndex\": null",
+          "\"levelName\": null",
+          "\"campaignName\": null"
+        ]
+      }
+    },
+    {
+      "command": "inspect_player",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"playerIndex\": 0",
+          "\"state\": \"joined\"",
+          "\"isAlive\": false"
+        ]
+      }
+    },
+    {
+      "command": "list_enemies",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"mapLoaded\": false",
+          "\"count\": 0"
+        ]
+      }
+    },
+    {
+      "command": "restart_level",
+      "params": {},
+      "expect": {
+        "success": false,
+        "contains": [
+          "WorldMap3D"
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 0,
+        "levelIndex": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Level 2"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "\"waited\""
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 6000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"scene\": \"Test Evan2\"",
+          "\"levelIndex\": 1",
+          "\"isInGame\": true",
+          "\"playerCount\": 1",
+          "\"isAlive\": true",
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "GameModeController.LevelFinish(LevelResult.Success);\nvar wt = typeof(GameModeController).GetField(\"winTimer\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\nwt.SetValue(GameModeController.Instance, 999999f);\nUnityEngine.Time.timeScale = 0f;\nreturn \"levelFinished=\" + GameModeController.IsLevelFinished() + \", outcome \" + ((float)wt.GetValue(GameModeController.Instance) >= 999999f ? \"held\" : \"not held\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "levelFinished=True",
+          "outcome held"
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"levelFinished\": true"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "escape"
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 1000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nstring log = \"\";\ntry { if (PauseController.pauseStatus != PauseStatus.UnPaused) { PauseController.SetPause(PauseStatus.UnPaused); log += \"unpaused \"; } } catch (System.Exception ex) { log += \"unpause failed: \" + ex.Message + \" \"; }\nif (UnityEngine.Time.timeScale != 1f) { UnityEngine.Time.timeScale = 1f; log += \"speed1 \"; }\ntry { if (d.GetData(\"uimtest.joined\") != null && HeroController.IsPlaying(1)) { HeroController.Dropout(1, false); log += \"dropped1 \"; } } catch (System.Exception ex) { log += \"dropout failed: \" + ex.Message + \" \"; }\nd.SetData(\"uimtest.joined\", null);\nvar hc = d.GetData(\"uimtest.ironbro\") as string;\nd.SetData(\"uimtest.ironbro\", null);\ntry {\n  var save = GameState.Instance.currentWorldmapSave;\n  if (hc != null && save != null) {\n    var parts = hc.Split(':');\n    save.worldMapIsHardcoreCampaign = parts[0] == \"1\";\n    save.hardcoreLives = int.Parse(parts[1]);\n    save.hardcoreModeAvailableBros.Clear();\n    foreach (var n in parts[2].Split(',')) if (n.Length > 0) save.hardcoreModeAvailableBros.Add((HeroType)System.Enum.Parse(typeof(HeroType), n));\n    log += \"ironbro-restored \";\n  }\n} catch (System.Exception ex) { log += \"ironbro restore failed: \" + ex.Message + \" \"; }\nvar lk = d.GetData(\"uimtest.lock\") as string;\nd.SetData(\"uimtest.lock\", null);\ntry {\n  if (lk != null) {\n    var fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\n    var t = System.Type.GetType(\"BroMakerLib.Unlocks.BroUnlockManager, BroMakerLib\");\n    var pd = t.GetField(\"progressData\", fl).GetValue(null);\n    var states = pd.GetType().GetProperty(\"BroStates\").GetValue(pd, null) as System.Collections.IDictionary;\n    var st = states[lk];\n    st.GetType().GetProperty(\"IsUnlocked\").SetValue(st, true, null);\n    st.GetType().GetProperty(\"UnlockedDate\").SetValue(st, d.GetData(\"uimtest.lock.date\"), null);\n    var names = t.GetProperty(\"UnlockedBroNames\", fl).GetValue(null, null) as System.Collections.Generic.List<string>;\n    var bros = t.GetProperty(\"UnlockedBros\", fl).GetValue(null, null) as System.Collections.IList;\n    int ni = (int)d.GetData(\"uimtest.lock.ni\"); if (ni < 0 || ni > names.Count) ni = names.Count;\n    if (!names.Contains(lk)) names.Insert(ni, lk);\n    var hero = d.GetData(\"uimtest.lock.hero\");\n    int hi = (int)d.GetData(\"uimtest.lock.hi\"); if (hi < 0 || hi > bros.Count) hi = bros.Count;\n    if (hero != null && !bros.Contains(hero)) bros.Insert(hi, hero);\n    typeof(BroMakerLib.Storages.BroSpawnManager).GetMethod(\"BroStatusChanged\", fl).Invoke(null, null);\n    log += \"unlocked \" + lk + \" \";\n  }\n} catch (System.Exception ex) { log += \"unlock failed: \" + ex.Message + \" \"; }\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); set.selGridInt[i] = ix < 0 ? 0 : ix; }\n    log += \"swap-settings-restored \";\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar rec = (d.GetData(\"uimtest.level\") as string) ?? \"0|1\";\nd.SetData(\"uimtest.level\", null);\nvar p = rec.Split('|');\nvar r = Unity_Inspector_Mod.StateModifier.GoToLevel(int.Parse(p[0]), int.Parse(p[1]));\nvar j = Newtonsoft.Json.Linq.JToken.FromObject(r);\nreturn \"loading recorded level \" + rec + \": success=\" + j[\"success\"] + \" \" + j.ToString(Newtonsoft.Json.Formatting.None);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "success=True"
+        ]
+      },
+      "wait": 6000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar f = d.GetData(\"uimtest.found\") as string;\nvar set = Swap_Bros_Mod.Main.settings;\nSwap_Bros_Mod.API.EnsureBroListUpdated();\nvar l = Swap_Bros_Mod.Main.currentBroList;\nstring now = set.alwaysChosen + \"|\" + set.ignoreCurrentUnlocked;\nfor (int i = 0; i < 4; i++) now += \"|\" + l[set.selGridInt[i]];\nd.SetData(\"uimtest.found\", null);\nvar sl = d.GetData(\"uimtest.startlevel\") as string;\nd.SetData(\"uimtest.startlevel\", null);\nstring slText = \"startLevel unrecorded\";\nif (sl != null) {\n  var sp = sl.Split('|');\n  var cs = GameState.Instance.currentWorldmapSave;\n  var tp = cs == null || cs.currentWorldMapProgress == null ? null : cs.currentWorldMapProgress.GetTerritoryProgress(sp[0]);\n  slText = tp == null ? \"startLevel unreadable\" : tp.startLevel.ToString() == sp[1] ? \"startLevel kept\" : \"startLevel changed from \" + sp[1] + \" to \" + tp.startLevel;\n}\nvar c = HeroController.players[0] == null ? null : HeroController.players[0].character;\nreturn slText + \" settings \" + (now == f ? \"match\" : \"differ: found \" + f + \" now \" + now) + \" speed=\" + UnityEngine.Time.timeScale + \" pause=\" + PauseController.pauseStatus + \" p1=\" + HeroController.IsPlaying(1) + \" hc=\" + GameModeController.IsHardcoreMode + \" locked=\" + !BroMakerLib.Storages.BroSpawnManager.IsBroUnlocked(\"Cobro\") + \" scene=\" + UnityEngine.SceneManagement.SceneManager.GetActiveScene().name + \" level=\" + LevelSelectionController.CurrentLevelNum + \" bro=\" + (c == null ? \"none\" : c.name);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "startLevel kept",
+          "settings match",
+          "speed=1 ",
+          "pause=UnPaused",
+          "p1=False",
+          "hc=False",
+          "locked=False",
+          "scene=Test Evan2"
+        ]
+      }
+    }
+  ],
+  "cleanup": [
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nd.SetData(\"uimtest.found\", null);\nd.SetData(\"uimtest.level\", null);\nd.SetData(\"uimtest.startlevel\", null);\nstring log = \"\";\ntry { if (PauseController.pauseStatus != PauseStatus.UnPaused) { PauseController.SetPause(PauseStatus.UnPaused); log += \"unpaused \"; } } catch (System.Exception ex) { log += \"unpause failed: \" + ex.Message + \" \"; }\nif (UnityEngine.Time.timeScale != 1f) { UnityEngine.Time.timeScale = 1f; log += \"speed1 \"; }\ntry { if (d.GetData(\"uimtest.joined\") != null && HeroController.IsPlaying(1)) { HeroController.Dropout(1, false); log += \"dropped1 \"; } } catch (System.Exception ex) { log += \"dropout failed: \" + ex.Message + \" \"; }\nd.SetData(\"uimtest.joined\", null);\nvar hc = d.GetData(\"uimtest.ironbro\") as string;\nd.SetData(\"uimtest.ironbro\", null);\ntry {\n  var save = GameState.Instance.currentWorldmapSave;\n  if (hc != null && save != null) {\n    var parts = hc.Split(':');\n    save.worldMapIsHardcoreCampaign = parts[0] == \"1\";\n    save.hardcoreLives = int.Parse(parts[1]);\n    save.hardcoreModeAvailableBros.Clear();\n    foreach (var n in parts[2].Split(',')) if (n.Length > 0) save.hardcoreModeAvailableBros.Add((HeroType)System.Enum.Parse(typeof(HeroType), n));\n    log += \"ironbro-restored \";\n  }\n} catch (System.Exception ex) { log += \"ironbro restore failed: \" + ex.Message + \" \"; }\nvar lk = d.GetData(\"uimtest.lock\") as string;\nd.SetData(\"uimtest.lock\", null);\ntry {\n  if (lk != null) {\n    var fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\n    var t = System.Type.GetType(\"BroMakerLib.Unlocks.BroUnlockManager, BroMakerLib\");\n    var pd = t.GetField(\"progressData\", fl).GetValue(null);\n    var states = pd.GetType().GetProperty(\"BroStates\").GetValue(pd, null) as System.Collections.IDictionary;\n    var st = states[lk];\n    st.GetType().GetProperty(\"IsUnlocked\").SetValue(st, true, null);\n    st.GetType().GetProperty(\"UnlockedDate\").SetValue(st, d.GetData(\"uimtest.lock.date\"), null);\n    var names = t.GetProperty(\"UnlockedBroNames\", fl).GetValue(null, null) as System.Collections.Generic.List<string>;\n    var bros = t.GetProperty(\"UnlockedBros\", fl).GetValue(null, null) as System.Collections.IList;\n    int ni = (int)d.GetData(\"uimtest.lock.ni\"); if (ni < 0 || ni > names.Count) ni = names.Count;\n    if (!names.Contains(lk)) names.Insert(ni, lk);\n    var hero = d.GetData(\"uimtest.lock.hero\");\n    int hi = (int)d.GetData(\"uimtest.lock.hi\"); if (hi < 0 || hi > bros.Count) hi = bros.Count;\n    if (hero != null && !bros.Contains(hero)) bros.Insert(hi, hero);\n    typeof(BroMakerLib.Storages.BroSpawnManager).GetMethod(\"BroStatusChanged\", fl).Invoke(null, null);\n    log += \"unlocked \" + lk + \" \";\n  }\n} catch (System.Exception ex) { log += \"unlock failed: \" + ex.Message + \" \"; }\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); set.selGridInt[i] = ix < 0 ? 0 : ix; }\n    log += \"swap-settings-restored \";\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    }
+  ]
+}

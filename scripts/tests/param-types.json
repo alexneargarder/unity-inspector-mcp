@@ -1,0 +1,314 @@
+{
+  "name": "Argument types the mod reads",
+  "description": "Sends the mod's message handler, through execute_code, numbers and booleans of the wrong JSON type, a non-integer and an out-of-range value where an integer is meant, a float past the float range, and null optional and required arguments; each wrong type is refused naming the argument before anything acts, and a null reads as absent. The server refuses these before they are sent, so this is the only path that reaches the mod's own reads. Changes nothing in the game.",
+  "steps": [
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"list_gameobjects\\\",\\\"params\\\":{\\\"maxResults\\\":\\\"abc\\\"}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "False|maxResults must be a number, got"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"list_gameobjects\\\",\\\"params\\\":{\\\"includeInactive\\\":\\\"yes\\\"}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "False|includeInactive must be a boolean, got"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"query_gameobjects\\\",\\\"params\\\":{\\\"maxResults\\\":100000000000}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "False|maxResults must be an integer from -2147483648 to 2147483647, got 100000000000"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"inspect_gameobject\\\",\\\"params\\\":{\\\"path\\\":\\\"/Nothing Here\\\",\\\"detailed\\\":\\\"yes\\\"}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "False|detailed must be a boolean, got"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"go_to_level\\\",\\\"params\\\":{\\\"campaignIndex\\\":1.5,\\\"levelIndex\\\":0}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "False|campaignIndex must be an integer, got 1.5"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"list_bros\\\",\\\"params\\\":{\\\"playerNum\\\":\\\"x\\\"}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "False|playerNum must be a number, got"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"set_player_health\\\",\\\"params\\\":{\\\"health\\\":50.5}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "False|health must be an integer, got 50.5"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"simulate_input\\\",\\\"params\\\":{\\\"action\\\":\\\"jump\\\",\\\"duration\\\":\\\"x\\\"}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "False|duration must be a number, got"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"simulate_input\\\",\\\"params\\\":{\\\"sequence\\\":[{\\\"action\\\":\\\"jump\\\",\\\"duration\\\":\\\"x\\\"}]}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "False|sequence[0].duration must be a number, got"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"teleport_player\\\",\\\"params\\\":{\\\"x\\\":\\\"a\\\",\\\"y\\\":1}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "False|x must be a number, got"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"spawn_entity\\\",\\\"params\\\":{\\\"type\\\":\\\"Mook\\\",\\\"x\\\":\\\"a\\\",\\\"y\\\":1}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "False|x must be a number, got"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"spawn_entity\\\",\\\"params\\\":{\\\"type\\\":\\\"Mook\\\",\\\"x\\\":1,\\\"y\\\":1,\\\"ignoreSuppression\\\":\\\"false\\\"}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "False|ignoreSuppression must be a boolean, got"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"swap_bro\\\",\\\"params\\\":{\\\"broName\\\":\\\"Rambro\\\",\\\"ignoreUnlocks\\\":\\\"false\\\"}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "False|ignoreUnlocks must be a boolean, got"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"set_game_speed\\\",\\\"params\\\":{\\\"speed\\\":\\\"fast\\\"}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "False|speed must be a number, got"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"set_game_speed\\\",\\\"params\\\":{\\\"speed\\\":1e+300}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "False|speed is out of range, got"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"trace_spawns\\\",\\\"params\\\":{\\\"action\\\":\\\"read\\\",\\\"since\\\":\\\"x\\\"}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "False|since must be a number, got"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"list_gameobjects\\\",\\\"params\\\":{\\\"maxResults\\\":null,\\\"includeInactive\\\":null}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "True|"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"trace_spawns\\\",\\\"params\\\":{\\\"action\\\":\\\"read\\\",\\\"since\\\":null}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "True|"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"list_bros\\\",\\\"params\\\":{\\\"playerNum\\\":null}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "True|"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"set_game_speed\\\",\\\"params\\\":{\\\"speed\\\":null}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "False|",
+          "Speed value is required"
+        ],
+        "notContains": [
+          "Null object"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"teleport_player\\\",\\\"params\\\":{\\\"x\\\":null,\\\"y\\\":1}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "False|",
+          "X and Y coordinates are required"
+        ],
+        "notContains": [
+          "Null object"
+        ]
+      }
+    }
+  ]
+}

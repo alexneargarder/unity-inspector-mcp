@@ -2,7 +2,7 @@
   "schema": 1,
   "name": "TestVanDammeAnim + BroBase base states",
   "source": "Broforce-Source/TestVanDammeAnim.cs, Broforce-Source/BroBase.cs",
-  "note": "Every entry names the fields that steer ChangeFrame (TestVanDammeAnim.cs:4023-4210) to one Animate* method, the field the frames are stepped with, and the cells the base sprite sheet holds for it. Bare :NNNN line references are TestVanDammeAnim.cs; BroBase.cs is named explicitly. Expected cells were cross-checked against the sprite validator's base range table. The harness re-applies setup before every step, so animations that clear their own flag mid-sequence still run to the end of their column span. An entry with knownMismatch addresses fewer cells than its expect says for a reason the source explains, and the driver reports it separately from a real mismatch. An entry marked lethal kills or respawns the live player, so the driver leaves it out unless --include-lethal is passed. The harness patches UseSpecial, UsePockettedSpecial, PerformKnifeMeleeAttack and PerformPunchAttack out for the duration of a sweep, so the states that walk those frames fire nothing at the level.",
+  "note": "Every entry names the fields that steer ChangeFrame (TestVanDammeAnim.cs:4023-4210) to one Animate* method, the field the frames are stepped with, and the cells the base sprite sheet holds for it. Bare :NNNN line references are TestVanDammeAnim.cs; BroBase.cs is named explicitly. Expected cells were cross-checked against the sprite validator's base range table. The harness re-applies setup before every step, so animations that clear their own flag mid-sequence still run to the end of their column span. An entry with knownMismatch addresses fewer cells than its expect says for a reason the source explains, and the driver reports it separately from a real mismatch. An entry marked lethal pins the bro dead (actionState Dead, health 0), which a BroMaker hero takes for its death and runs its own OnDeath for, though the game itself takes no life and respawns nothing; the driver leaves it out unless includeLethal is set. Unless allowSideEffects, the harness skips the swept bro's UseSpecial, UsePockettedSpecial, PerformKnifeMeleeAttack, PerformPunchAttack, Land, TriggerFlexEvent, FireWeapon and ReleaseHeldObject, and the Map and MapController damage methods game-wide, for the duration of a sweep, so the states that walk those frames fire nothing at the level. A step's call list runs right after ChangeFrame, the way the game's Update runs RunGun after it; provide gives a state the ZipLine or ladder collider it needs.",
   "states": [
     {
       "name": "idle",
@@ -24,7 +24,8 @@
         "currentGesture": "None",
         "stunTime": 0.0,
         "isAirFlexing": false,
-        "gettingUpFromElbowSlam": false
+        "gettingUpFromElbowSlam": false,
+        "gunFrame": 0
       },
       "step": {
         "field": "frame",
@@ -40,7 +41,63 @@
           0
         ]
       },
-      "note": "ChangeFrame :4071-4074 -> AnimateIdle :3399; the !ducking arm falls through :3407-3452 to AnimateActualIdleFrames :3494-3505 (frame % 1 is always 0). BroBase.AnimateActualIdleFrames (BroBase.cs:1937-1951) forwards to the base method only while gettingUpFromElbowSlam and isAirFlexing are false."
+      "note": "ChangeFrame :4071-4074 -> AnimateIdle :3399; the !ducking arm falls through :3407-3452 to AnimateActualIdleFrames :3494-3505 (frame % 1 is always 0). BroBase.AnimateActualIdleFrames (BroBase.cs:1937-1951) forwards to the base method only while gettingUpFromElbowSlam and isAirFlexing are false. gunFrame is pinned at 0, since the gun cell is written only while gunFrame <= 0."
+    },
+    {
+      "name": "idle_firing",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "None",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false,
+        "fire": true
+      },
+      "step": {
+        "field": "gunFrame",
+        "values": [
+          4,
+          3,
+          2,
+          1
+        ],
+        "before": {
+          "gunCounter": 0.04
+        },
+        "call": [
+          "RunGun"
+        ],
+        "after": {
+          "gunCounter": 0
+        }
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 1,
+        "col": 0
+      },
+      "expectGun": {
+        "sheet": "gun",
+        "row": 1,
+        "cols": [
+          3,
+          0
+        ]
+      },
+      "note": "The idle body of idle (AnimateActualIdleFrames :3494-3505) with the recoil walk on the gun, row 1 columns 3 to 0. Each step pins gunFrame one above the cell and gunCounter over RunGun's 0.0334 threshold, then calls RunGun (:9230-9242) after ChangeFrame, the order the game's Update runs them in; RunGun steps gunFrame down and draws SetGunSprite(gunFrame, 0) (:9245-9263). gunCounter is put back to 0 after the call, so the bro's own Update does not step the gun again before the frame is read. ChangeFrame's own gun write is gated on gunFrame <= 0, so it leaves the recoil cell alone. fire is pinned as the firing animation has it; FireWeapon (:2389-2396) is suppressed unless allowSideEffects."
     },
     {
       "name": "idle_ducking",
@@ -65,7 +122,8 @@
         "currentGesture": "None",
         "stunTime": 0.0,
         "isAirFlexing": false,
-        "gettingUpFromElbowSlam": false
+        "gettingUpFromElbowSlam": false,
+        "gunFrame": 0
       },
       "step": {
         "field": "frame",
@@ -81,7 +139,66 @@
           6
         ]
       },
-      "note": "AnimateIdle :3455 takes the ducking arm when ducking && useDuckingFrames, then :3486-3489 -> AnimateActualIdleDuckingFrames :3508-3519 (6 + frame % 1). BroBase override BroBase.cs:1954-1964 forwards while gettingUpFromElbowSlam is false."
+      "note": "AnimateIdle :3458-3490 takes the ducking arm when ducking && useDuckingFrames, then :3487-3490 -> AnimateActualIdleDuckingFrames :3508-3519 (6 + frame % 1). BroBase override BroBase.cs:1954-1964 forwards while gettingUpFromElbowSlam is false. gunFrame is pinned at 0, since the gun cell is written only while gunFrame <= 0."
+    },
+    {
+      "name": "idle_ducking_firing",
+      "requires": {
+        "useDuckingFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": true,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "None",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false,
+        "fire": true
+      },
+      "step": {
+        "field": "gunFrame",
+        "values": [
+          4,
+          3,
+          2,
+          1
+        ],
+        "before": {
+          "gunCounter": 0.04
+        },
+        "call": [
+          "RunGun"
+        ],
+        "after": {
+          "gunCounter": 0
+        }
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 1,
+        "col": 6
+      },
+      "expectGun": {
+        "sheet": "gun",
+        "row": 1,
+        "cols": [
+          3,
+          0
+        ]
+      },
+      "note": "The ducking body of idle_ducking (AnimateActualIdleDuckingFrames :3508-3519) with the recoil walk on the gun, row 1 columns 3 to 0. Each step pins gunFrame one above the cell and gunCounter over RunGun's 0.0334 threshold, then calls RunGun (:9230-9242) after ChangeFrame, the order the game's Update runs them in; RunGun steps gunFrame down and draws SetGunSprite(gunFrame, 0) (:9245-9263). gunCounter is put back to 0 after the call, so the bro's own Update does not step the gun again before the frame is read. ChangeFrame's own gun write is gated on gunFrame <= 0, so it leaves the recoil cell alone. fire is pinned as the firing animation has it; FireWeapon (:2389-2396) is suppressed unless allowSideEffects."
     },
     {
       "name": "running",
@@ -107,7 +224,8 @@
         "isInQuicksand": false,
         "fire": false,
         "ducking": false,
-        "dashing": false
+        "dashing": false,
+        "gunFrame": 0
       },
       "step": {
         "field": "frame",
@@ -130,7 +248,67 @@
           7
         ]
       },
-      "note": "ChangeFrame :4075-4078 -> AnimateRunning :3522; the else arm :3570-3596 needs !throwingHeldObject, !doingMelee, !releasingHighFive, no usingSpecial*, pushingTime <= 0, rollingTime <= 0 and rollingFrames <= 0. useNewFrames then routes to AnimateActualNewRunningFrames :3719-3740 (frame % 8, row 2 while !dashing). Footstep sound and poof effect fire at frame % 4 == 0."
+      "note": "ChangeFrame :4075-4078 -> AnimateRunning :3522; the else arm :3572-3601 needs !throwingHeldObject, !doingMelee, !releasingHighFive, no usingSpecial*, pushingTime <= 0, rollingTime <= 0 and rollingFrames <= 0. useNewFrames then routes to AnimateActualNewRunningFrames :3719-3740 (frame % 8, row 2 while !dashing). Footstep sound and poof effect fire at frame % 4 == 0. gunFrame is pinned at 0, since the gun cell is written only while gunFrame <= 0."
+    },
+    {
+      "name": "running_firing",
+      "requires": {
+        "useNewFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Running",
+        "releasingHighFive": false,
+        "pushingTime": 0.0,
+        "rollingTime": 0.0,
+        "rollingFrames": 0,
+        "ledgeGrapple": false,
+        "isInQuicksand": false,
+        "fire": true,
+        "ducking": false,
+        "dashing": false,
+        "frame": 0
+      },
+      "step": {
+        "field": "gunFrame",
+        "values": [
+          4,
+          3,
+          2,
+          1
+        ],
+        "before": {
+          "gunCounter": 0.04
+        },
+        "call": [
+          "RunGun"
+        ],
+        "after": {
+          "gunCounter": 0
+        }
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 2,
+        "col": 0
+      },
+      "expectGun": {
+        "sheet": "gun",
+        "row": 1,
+        "cols": [
+          3,
+          0
+        ]
+      },
+      "note": "running's body held at frame 0 (AnimateActualNewRunningFrames :3719-3740) with the recoil walk on the gun, row 1 columns 3 to 0. Each step pins gunFrame one above the cell and gunCounter over RunGun's 0.0334 threshold, then calls RunGun (:9230-9242) after ChangeFrame, the order the game's Update runs them in; RunGun steps gunFrame down and draws SetGunSprite(gunFrame, 0) (:9245-9263). gunCounter is put back to 0 after the call, so the bro's own Update does not step the gun again before the frame is read. ChangeFrame's own gun write is gated on gunFrame <= 0, so it leaves the recoil cell alone. fire is pinned as the firing animation has it; FireWeapon (:2389-2396) is suppressed unless allowSideEffects."
     },
     {
       "name": "running_dashing",
@@ -157,7 +335,8 @@
         "isInQuicksand": false,
         "fire": false,
         "ducking": false,
-        "dashing": true
+        "dashing": true,
+        "gunFrame": 0
       },
       "step": {
         "field": "frame",
@@ -180,7 +359,7 @@
           7
         ]
       },
-      "note": "Same path as running; :3735 selects spritePixelHeight * 4 instead of * 2 when dashing && useDashFrames."
+      "note": "Same path as running; :3735 selects spritePixelHeight * 4 instead of * 2 when dashing && useDashFrames. gunFrame is pinned at 0, since the gun cell is written only while gunFrame <= 0."
     },
     {
       "name": "running_legacy",
@@ -251,7 +430,8 @@
         "ledgeGrapple": false,
         "isInQuicksand": false,
         "fire": false,
-        "ducking": true
+        "ducking": true,
+        "gunFrame": 0
       },
       "step": {
         "field": "frame",
@@ -274,7 +454,7 @@
           15
         ]
       },
-      "note": "AnimateRunning :3596-3599 takes the ducking arm when ducking && useDuckingFrames -> AnimateActualDuckingRunning :3605; the useNewDuckingFrames arm :3608-3625 is 8 + frame % 8 on row 2."
+      "note": "AnimateRunning :3597-3600 takes the ducking arm when ducking && useDuckingFrames -> AnimateActualDuckingRunning :3605; the useNewDuckingFrames arm :3608-3625 is 8 + frame % 8 on row 2. gunFrame is pinned at 0, since the gun cell is written only while gunFrame <= 0."
     },
     {
       "name": "running_ducking_legacy",
@@ -300,7 +480,8 @@
         "ledgeGrapple": false,
         "isInQuicksand": false,
         "fire": false,
-        "ducking": true
+        "ducking": true,
+        "gunFrame": 0
       },
       "step": {
         "field": "frame",
@@ -319,7 +500,7 @@
           9
         ]
       },
-      "note": "AnimateActualDuckingRunning :3626-3637, the !useNewDuckingFrames arm: 6 + frame % 4 on row 1."
+      "note": "AnimateActualDuckingRunning :3626-3635, the !useNewDuckingFrames arm: 6 + frame % 4 on row 1. gunFrame is pinned at 0, since the gun cell is written only while gunFrame <= 0."
     },
     {
       "name": "pushing",
@@ -345,7 +526,8 @@
         "isInQuicksand": false,
         "fire": false,
         "ducking": false,
-        "dashing": false
+        "dashing": false,
+        "gunFrame": 0
       },
       "step": {
         "field": "frame",
@@ -368,7 +550,7 @@
           7
         ]
       },
-      "note": "AnimateRunning :3556-3559 needs pushingTime > 0 && useNewPushingFrames && !fire -> AnimatePushing :3743-3757 (frame % 8 on row 5). The gun overlay is mirrored at :3756."
+      "note": "AnimateRunning :3558-3561 needs pushingTime > 0 && useNewPushingFrames && !fire -> AnimatePushing :3743-3757 (frame % 8 on row 5). The gun overlay is mirrored at :3757. gunFrame is pinned at 0, since the gun cell is written only while gunFrame <= 0."
     },
     {
       "name": "panicking",
@@ -437,7 +619,8 @@
         "gettingUpFromElbowSlam": false,
         "frontSomersaulting": false,
         "yI": 100.0,
-        "xI": 100.0
+        "xI": 100.0,
+        "gunFrame": 0
       },
       "step": {
         "field": "frame",
@@ -455,7 +638,7 @@
           2
         ]
       },
-      "note": "ChangeFrame :4199 -> AnimateJumping :3133 -> AnimateActualJumpingFrames :3281. :3293-3300 needs yI > 20 and |xI| > 50 -> frame % 3 on row 3. Reaching :4199 needs every earlier Jumping arm false (:4130-4196): throwingHeldObject, usingSpecial*, ledgeGrapple, chimneyFlip, wallClimbing, WallDrag, isInQuicksand, the wall-anticipation arm (:4183, blocked by left/right false), rollingTime and airdashTime."
+      "note": "ChangeFrame :4199 -> AnimateJumping :3133 -> AnimateActualJumpingFrames :3281. :3293-3300 needs yI > 20 and |xI| > 50 -> frame % 3 on row 3. Reaching :4199 needs every earlier Jumping arm false (:4130-4196): throwingHeldObject, usingSpecial*, ledgeGrapple, chimneyFlip, wallClimbing, WallDrag, isInQuicksand, the wall-anticipation arm (:4183, blocked by left/right false), rollingTime and airdashTime. gunFrame is pinned at 0, since the gun cell is written only while gunFrame <= 0."
     },
     {
       "name": "jumping_rising_slow",
@@ -491,7 +674,8 @@
         "gettingUpFromElbowSlam": false,
         "frontSomersaulting": false,
         "yI": 100.0,
-        "xI": 0.0
+        "xI": 0.0,
+        "gunFrame": 0
       },
       "step": {
         "field": "frame",
@@ -509,7 +693,77 @@
           8
         ]
       },
-      "note": "AnimateActualJumpingFrames :3301-3305: yI > 20 and |xI| <= 50 -> 6 + frame % 3 on row 3."
+      "note": "AnimateActualJumpingFrames :3301-3304: yI > 20 and |xI| <= 50 -> 6 + frame % 3 on row 3. gunFrame is pinned at 0, since the gun cell is written only while gunFrame <= 0."
+    },
+    {
+      "name": "jumping_firing",
+      "requires": {
+        "useNewFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": false,
+        "wallDrag": false,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 0.0,
+        "fire": true,
+        "ducking": false,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false,
+        "yI": 100.0,
+        "xI": 0.0,
+        "frame": 0
+      },
+      "step": {
+        "field": "gunFrame",
+        "values": [
+          4,
+          3,
+          2,
+          1
+        ],
+        "before": {
+          "gunCounter": 0.04
+        },
+        "call": [
+          "RunGun"
+        ],
+        "after": {
+          "gunCounter": 0
+        }
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 3,
+        "col": 6
+      },
+      "expectGun": {
+        "sheet": "gun",
+        "row": 1,
+        "cols": [
+          3,
+          0
+        ]
+      },
+      "note": "jumping_rising_slow's body held at frame 0 (AnimateActualJumpingFrames :3281-3353) with the recoil walk on the gun, row 1 columns 3 to 0. Each step pins gunFrame one above the cell and gunCounter over RunGun's 0.0334 threshold, then calls RunGun (:9230-9242) after ChangeFrame, the order the game's Update runs them in; RunGun steps gunFrame down and draws SetGunSprite(gunFrame, 0) (:9245-9263). gunCounter is put back to 0 after the call, so the bro's own Update does not step the gun again before the frame is read. ChangeFrame's own gun write is gated on gunFrame <= 0, so it leaves the recoil cell alone. fire is pinned as the firing animation has it; FireWeapon (:2389-2396) is suppressed unless allowSideEffects."
     },
     {
       "name": "jumping_falling_momentum",
@@ -545,7 +799,8 @@
         "gettingUpFromElbowSlam": false,
         "frontSomersaulting": false,
         "yI": -100.0,
-        "xI": 100.0
+        "xI": 100.0,
+        "gunFrame": 0
       },
       "step": {
         "field": "frame",
@@ -563,7 +818,7 @@
           5
         ]
       },
-      "note": "AnimateActualJumpingFrames :3313-3323: yI < -55 and |xI| > 50 -> 3 + frame % 3 on row 3."
+      "note": "AnimateActualJumpingFrames :3313-3320: yI < -55 and |xI| > 50 -> 3 + frame % 3 on row 3. gunFrame is pinned at 0, since the gun cell is written only while gunFrame <= 0."
     },
     {
       "name": "jumping_falling_slow",
@@ -599,7 +854,8 @@
         "gettingUpFromElbowSlam": false,
         "frontSomersaulting": false,
         "yI": -100.0,
-        "xI": 0.0
+        "xI": 0.0,
+        "gunFrame": 0
       },
       "step": {
         "field": "frame",
@@ -617,7 +873,7 @@
           11
         ]
       },
-      "note": "AnimateActualJumpingFrames :3313-3323: yI < -55 and |xI| <= 50 -> 9 + frame % 3 on row 3. The middle arm :3333-3345 (-55 <= yI <= 20) addresses the same two column groups."
+      "note": "AnimateActualJumpingFrames :3313-3323: yI < -55 and |xI| <= 50 -> 9 + frame % 3 on row 3. The middle arm :3333-3345 (-55 <= yI <= 20) addresses the same two column groups. gunFrame is pinned at 0, since the gun cell is written only while gunFrame <= 0."
     },
     {
       "name": "jumping_legacy_rising",
@@ -653,7 +909,8 @@
         "gettingUpFromElbowSlam": false,
         "frontSomersaulting": false,
         "yI": 100.0,
-        "xI": 0.0
+        "xI": 0.0,
+        "gunFrame": 0
       },
       "step": {
         "field": "frame",
@@ -669,7 +926,7 @@
           1
         ]
       },
-      "note": "AnimateActualJumpingFrames :3306-3310, the !useNewFrames arm of the yI > 20 branch: fixed column 1 on row 1."
+      "note": "AnimateActualJumpingFrames :3306-3310, the !useNewFrames arm of the yI > 20 branch: fixed column 1 on row 1. gunFrame is pinned at 0, since the gun cell is written only while gunFrame <= 0."
     },
     {
       "name": "jumping_legacy_falling",
@@ -705,7 +962,8 @@
         "gettingUpFromElbowSlam": false,
         "frontSomersaulting": false,
         "yI": -100.0,
-        "xI": 0.0
+        "xI": 0.0,
+        "gunFrame": 0
       },
       "step": {
         "field": "frame",
@@ -721,7 +979,7 @@
           2
         ]
       },
-      "note": "AnimateActualJumpingFrames :3324-3330, the !useNewFrames arm of the yI < -55 branch: fixed column 2 on row 1."
+      "note": "AnimateActualJumpingFrames :3326-3330, the !useNewFrames arm of the yI < -55 branch: fixed column 2 on row 1. gunFrame is pinned at 0, since the gun cell is written only while gunFrame <= 0."
     },
     {
       "name": "jumping_ducking_rising",
@@ -884,7 +1142,7 @@
           21
         ]
       },
-      "note": "AnimateJumping -> BroBase.AnimateActualJumpingFrames (BroBase.cs:1967) :1990-2004: needs frontSomersaulting && hasNewAirFlexFrames and both WallClimbing and WallDrag false, else it clears the flag and re-enters ChangeFrame. 10 + frame % 12 on row 11."
+      "note": "AnimateJumping -> BroBase.AnimateActualJumpingFrames (BroBase.cs:1967) :1991-2004: needs frontSomersaulting && hasNewAirFlexFrames and both WallClimbing and WallDrag false, else it clears the flag and re-enters ChangeFrame. 10 + frame % 12 on row 11."
     },
     {
       "name": "elbow_slam",
@@ -938,7 +1196,7 @@
           21
         ]
       },
-      "note": "BroBase.AnimateActualJumpingFrames :1972-1986: isElbowSlamming && hasNewAirFlexFrames. 18 + flexSpecialFrame on row 14, clamped to 3 at :1980. yI must be <= 50 or :1976 resets flexSpecialFrame to 0 before the cell is written."
+      "note": "BroBase.AnimateActualJumpingFrames :1973-1986: isElbowSlamming && hasNewAirFlexFrames. 18 + flexSpecialFrame on row 14, clamped to 3 at :1981-1984. yI must be <= 50 or :1977-1980 resets flexSpecialFrame to 0 before the cell is written."
     },
     {
       "name": "air_flex",
@@ -985,7 +1243,7 @@
           22
         ]
       },
-      "note": "AnimateIdle -> BroBase.AnimateActualIdleFrames :1937-1951 -> AnimateAirFlexing :2012-2050 (isAirFlexing && hasNewAirFlexFrames, and gettingUpFromElbowSlam false so :1939 does not win). 18 + flexSpecialFrame on row 13. Side effects: :2036 calls AirFlexJump at frame 3, which adds jump force, and :2038-2049 clears isAirFlexing and sets frontSomersaulting at frame 4; yI and frontSomersaulting are named in the setup so both are snapshotted and put back."
+      "note": "AnimateIdle -> BroBase.AnimateActualIdleFrames :1937-1951 -> AnimateAirFlexing :2012-2048 (isAirFlexing && hasNewAirFlexFrames, and gettingUpFromElbowSlam false so :1939 does not win). 18 + flexSpecialFrame on row 13. Side effects: :2027 calls AirFlexJump at frame 3, which adds jump force, and :2031-2032 clears isAirFlexing and sets frontSomersaulting at frame 4; yI and frontSomersaulting are pinned, so each step starts from them."
     },
     {
       "name": "getting_up_from_elbow_slam",
@@ -1139,7 +1397,7 @@
           15
         ]
       },
-      "note": "AnimateAirdash :3102-3106, the Left/Right case while airDashDelay > 0: 13 + frame % 3 on row 8."
+      "note": "AnimateAirdash :3101-3106, the Left/Right case while airDashDelay > 0: 13 + frame % 3 on row 8."
     },
     {
       "name": "airdash_up",
@@ -1194,7 +1452,7 @@
           12
         ]
       },
-      "note": "AnimateAirdash :3093-3097, the Up case: 10 + frame % 3 on row 8. The gun is deactivated at :3094."
+      "note": "AnimateAirdash :3094-3097, the Up case: 10 + frame % 3 on row 8. The gun is deactivated at :3095."
     },
     {
       "name": "airdash_down",
@@ -1308,7 +1566,7 @@
           22
         ]
       },
-      "note": "ChangeFrame :4158-4161 (Jumping && chimneyFlip) -> AnimateChimneyFlip :3255-3266, which addresses 22 - chimneyFlipFrames on row 7. ChangeFrame :4045-4048 decrements chimneyFlipFrames before dispatch, so the stepped values run 12..1 to address columns 11..22. The last step also clears chimneyFlip at :3260."
+      "note": "ChangeFrame :4158-4161 (Jumping && chimneyFlip) -> AnimateChimneyFlip :3255-3266, which addresses 22 - chimneyFlipFrames on row 7. ChangeFrame :4045-4048 decrements chimneyFlipFrames before dispatch, so the stepped values run 12..1 to address columns 11..22. The last step also clears chimneyFlip at :3261."
     },
     {
       "name": "rolling",
@@ -1360,12 +1618,12 @@
           31
         ]
       },
-      "note": "AnimateIdle :3439-3442 (rollingFrames > 0) -> AnimateRolling :3363-3372, which addresses 19 + (13 - rollingFrames) on row 2. ChangeFrame :4049-4052 decrements rollingFrames before dispatch, so the stepped values run 13..2 to address columns 20..31. AnimateRunning :3566-3569 reaches the same method from actionState Running. The animation is only authored for bros that roll on landing, hence the requires; the dispatch itself does not read doRollOnLand."
+      "note": "AnimateIdle :3441-3444 (rollingFrames > 0) -> AnimateRolling :3363-3372, which addresses 19 + (13 - rollingFrames) on row 2. ChangeFrame :4049-4052 decrements rollingFrames before dispatch, so the stepped values run 13..2 to address columns 20..31. AnimateRunning :3568-3571 reaches the same method from actionState Running. The animation is only authored for bros that roll on landing, hence the requires; the dispatch itself does not read doRollOnLand."
     },
     {
       "name": "insemination",
       "lethal": true,
-      "lethalReason": "reached through AnimateDeath, so it needs actionState Dead and health 0 and kills the player the same way death_grounded does",
+      "lethalReason": "reached through AnimateDeath, so it pins actionState Dead and health 0 the way death_grounded does",
       "setup": {
         "frozenTime": 0.0,
         "health": 0,
@@ -1399,7 +1657,7 @@
           18
         ]
       },
-      "note": "ChangeFrame :4202-4205 -> AnimateDeath :4637; :4640-4643 needs IsInseminated() (inseminatedCounter > 0, :1741-1744) and CalculateInseminationFrame() >= 0 (:1747-1750, Clamp((int)((0.45 - inseminatedCounter) * 22.222223), -1, 7)) -> AnimateInseminationFrames :4670-4674, 11 + that frame on row 8. The stepped counter values land mid-bucket for frames 0..7. No inseminatorUnit reference is needed: ChangeFrame :4034-4043 only touches it when it is non-null."
+      "note": "ChangeFrame :4202-4205 -> AnimateDeath :4637; :4640-4643 needs IsInseminated() (inseminatedCounter > 0, :1741-1744) and CalculateInseminationFrame() >= 0 (:1747-1750, Clamp((int)((0.45 - inseminatedCounter) * 22.222223), -1, 7)) -> AnimateInseminationFrames :4670-4674, 11 + that frame on row 8. The stepped counter values land mid-bucket for frames 0..7. No inseminatorUnit reference is needed: ChangeFrame :4034-4044 only touches it when it is non-null."
     },
     {
       "name": "ladder_transition_out",
@@ -1440,7 +1698,7 @@
           5
         ]
       },
-      "note": "ChangeFrame :4085-4119 (ClimbingLadder, with throwingHeldObject/doingMelee/usingSpecial* false) -> AnimateClimbingLadder :4240. Both the no-ladder arm :4243-4246 and the no-input arm :4262-4265 reach AnimateClimbingLadderTransition(false) :4213-4236 when useLadderClimbingTransition && ladderClimbingTransitionFrames > 0, so it is the one ladder cell group reachable away from a ladder. Clamp(ladderClimbingTransitionFrames, 0, 5) on row 7; column 0 is unreachable because the gate is > 0."
+      "note": "ChangeFrame :4085-4119 (ClimbingLadder, with throwingHeldObject/doingMelee/usingSpecial* false) -> AnimateClimbingLadder :4240. Both the no-ladder arm :4243-4246 and the no-input arm :4258-4261 reach AnimateClimbingLadderTransition(false) :4213-4237 when useLadderClimbingTransition && ladderClimbingTransitionFrames > 0, so it is the one ladder cell group reachable away from a ladder. Clamp(ladderClimbingTransitionFrames, 0, 5) on row 7; column 0 is unreachable because the gate is > 0."
     },
     {
       "name": "hanging_moving",
@@ -1485,7 +1743,7 @@
           22
         ]
       },
-      "note": "ChangeFrame :4120-4123 -> AnimateHanging :3055; the left/right arm :3063-3072 is 11 + frame % 12 on row 4. The gun is deactivated at :3065 and the sprite offset is (0, -2) from :3062."
+      "note": "ChangeFrame :4120-4123 -> AnimateHanging :3055; the left/right arm :3064-3072 is 11 + frame % 12 on row 4. The gun is deactivated at :3066 and the sprite offset is (0, -2) from :3063."
     },
     {
       "name": "hanging_one_armed",
@@ -1503,7 +1761,9 @@
         "chimneyFlip": false,
         "right": false,
         "left": false,
-        "wasHangingMoving": false
+        "wasHangingMoving": false,
+        "gunFrame": 0,
+        "ducking": false
       },
       "step": {
         "field": "frame",
@@ -1514,6 +1774,9 @@
           3,
           4,
           5
+        ],
+        "call": [
+          "StartHanging"
         ]
       },
       "expect": {
@@ -1524,7 +1787,66 @@
           28
         ]
       },
-      "note": "AnimateHanging :3073-3084, the no-input arm: 23 + Clamp(frame, 0, 5) on row 4, hangingOneArmed set at :3075 (ChangeFrame clears it at :4054). wasHangingMoving must be false or :3076-3080 zeroes frame after the harness has set it."
+      "note": "AnimateHanging :3073-3084, the no-input arm: 23 + Clamp(frame, 0, 5) on row 4, hangingOneArmed set at :3075 (ChangeFrame clears it at :4054). wasHangingMoving must be false or :3076-3080 zeroes frame after the harness has set it. The arm draws no gun cell, so each step calls StartHanging (:7297-7307) after ChangeFrame, as the game does on grabbing the ceiling: with ducking false and gunFrame 0 it sets Hanging and SetGunSprite(0, 1) (:9245-9263), the hanging column gunSpriteHangingFrame (6) on row 2.",
+      "expectGun": {
+        "sheet": "gun",
+        "row": 2,
+        "col": 6
+      }
+    },
+    {
+      "name": "hanging_firing",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Hanging",
+        "chimneyFlip": false,
+        "right": false,
+        "left": false,
+        "wasHangingMoving": false,
+        "ducking": false,
+        "fire": true,
+        "frame": 0
+      },
+      "step": {
+        "field": "gunFrame",
+        "values": [
+          4,
+          3,
+          2,
+          1
+        ],
+        "before": {
+          "gunCounter": 0.04
+        },
+        "call": [
+          "RunGun"
+        ],
+        "after": {
+          "gunCounter": 0
+        }
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 4,
+        "col": 23
+      },
+      "expectGun": {
+        "sheet": "gun",
+        "row": 1,
+        "cols": [
+          9,
+          6
+        ]
+      },
+      "note": "hanging_one_armed's body held at frame 0 (AnimateHanging :3055-3087) with the recoil walk on the gun: SetGunSprite's Hanging branch adds gunSpriteHangingFrame (6), so row 1 columns 9 to 6. Each step pins gunFrame one above the cell and gunCounter over RunGun's 0.0334 threshold, then calls RunGun (:9230-9242) after ChangeFrame, the order the game's Update runs them in; RunGun steps gunFrame down and draws SetGunSprite(gunFrame, 0) (:9245-9263). gunCounter is put back to 0 after the call, so the bro's own Update does not step the gun again before the frame is read. ChangeFrame's own gun write is gated on gunFrame <= 0, so it leaves the recoil cell alone. fire is pinned as the firing animation has it; FireWeapon (:2389-2396) is suppressed unless allowSideEffects."
     },
     {
       "name": "highfive_hold",
@@ -1571,7 +1893,7 @@
           19
         ]
       },
-      "note": "AnimateIdle :3413-3416 -> AnimateHighFiveHold :2894-2915: 16 + 1 + Clamp(frame, 0, 2) on row 1. highfiveHoldTime is pinned far negative so :2903-2907 cannot call high5Bubble.RestartBubble, and highFiveNoBoost suppresses the CheckHighFive at :2911-2913."
+      "note": "AnimateIdle :3413-3416 -> AnimateHighFiveHold :2894-2915: 16 + 1 + Clamp(frame, 0, 2) on row 1. highfiveHoldTime is pinned far negative so :2903-2906 cannot call high5Bubble.RestartBubble, and highFiveNoBoost suppresses the CheckHighFive at :2911-2913."
     },
     {
       "name": "highfive_hold_legacy",
@@ -1618,7 +1940,7 @@
           18
         ]
       },
-      "note": "AnimateHighFiveHold :2900, the !useNewHighFivingFrames arm: 16 + Clamp(frame, 0, 2) on row 1."
+      "note": "AnimateHighFiveHold :2899, the !useNewHighFivingFrames arm: 16 + Clamp(frame, 0, 2) on row 1."
     },
     {
       "name": "highfive_release",
@@ -1666,7 +1988,7 @@
           22
         ]
       },
-      "note": "AnimateIdle :3417-3420 -> AnimateHighFiveRelease :2918-2949: 16 + 1 + Clamp(frame, 2, 5) on row 1. successfulHighFive false keeps :2933-2936 from spawning effects and highFiveNoBoost blocks :2937-2940. The terminating branch :2941 is frame >= 6 here, so no step self-cancels."
+      "note": "AnimateIdle :3417-3420 -> AnimateHighFiveRelease :2918-2950: 16 + 1 + Clamp(frame, 2, 5) on row 1. successfulHighFive false keeps :2933-2935 from spawning effects and highFiveNoBoost blocks :2937-2939. The terminating branch :2940 is frame >= 6 here, so no step self-cancels."
     },
     {
       "name": "highfive_release_legacy",
@@ -1714,7 +2036,7 @@
         ]
       },
       "knownMismatch": "frame 4 writes column 20 and then clears releasingHighFive and re-enters ChangeFrame (:2946), so the captured cell for the last step is the post-cancel idle pose rather than column 20",
-      "note": "AnimateHighFiveRelease :2918-2949, the legacy arm: 16 + Clamp(frame, 2, 4) on row 1. Known limitation: the terminating branch :2941 is frame >= 4 for legacy, so the last step writes column 20 and then clears releasingHighFive and re-enters ChangeFrame at :2946, which overwrites the sprite with the idle pose before the harness reads it."
+      "note": "AnimateHighFiveRelease :2918-2950, the legacy arm: 16 + Clamp(frame, 2, 4) on row 1. Known limitation: the terminating branch :2940 is frame >= 4 for legacy, so the last step writes column 20 and then clears releasingHighFive and re-enters ChangeFrame at :2946, which overwrites the sprite with the idle pose before the harness reads it."
     },
     {
       "name": "throwing_new",
@@ -1763,7 +2085,7 @@
         ]
       },
       "knownMismatch": "frame 7 writes column 24 and then clears throwingHeldObject and re-enters ChangeFrame (:2700-2701), so the captured cell for the last step is the post-cancel pose rather than column 24",
-      "note": "AnimateIdle :3402-3405 -> AnimateThrowingHeldObject :2651; the useNewThrowingFrames arm :2678-2704 is 17 + Clamp(frame, 0, 7) at y = spritePixelHeight * 5. SetHeldObjectPos and ReleaseHeldObject are null-safe (:2760-2774, :2707). Known limitation: frame 7 clears throwingHeldObject and re-enters ChangeFrame at :2700-2701, so that step's captured cell is the post-cancel pose."
+      "note": "AnimateIdle :3402-3405 -> AnimateThrowingHeldObject :2651; the useNewThrowingFrames arm :2678-2704 is 17 + Clamp(frame, 0, 7) at y = spritePixelHeight * 5. SetHeldObjectPos and ReleaseHeldObject are null-safe (:2800-2813, :2708). Known limitation: frame 7 clears throwingHeldObject and re-enters ChangeFrame at :2700-2701, so that step's captured cell is the post-cancel pose."
     },
     {
       "name": "throwing_legacy",
@@ -1809,7 +2131,7 @@
           22
         ]
       },
-      "note": "AnimateThrowingHeldObject :2656-2677, the legacy arm: 17 + Clamp(frame, 0, 5) on row 1. Frame 3 clears throwingHeldObject at :2670-2672; the harness re-applies the setup before every step, so frames 4 and 5 still dispatch. No recursive ChangeFrame here, so every column is captured."
+      "note": "AnimateThrowingHeldObject :2656-2676, the legacy arm: 17 + Clamp(frame, 0, 5) on row 1. Frame 3 clears throwingHeldObject at :2673; the harness re-applies the setup before every step, so frames 4 and 5 still dispatch. No recursive ChangeFrame here, so every column is captured."
     },
     {
       "name": "special_new",
@@ -1858,7 +2180,7 @@
         ]
       },
       "knownMismatch": "frame 7 writes column 24 and then clears usingSpecial and re-enters ChangeFrame (:2848-2853), so the captured cell for the last step is the post-cancel pose rather than column 24",
-      "note": "AnimateIdle :3421-3424 -> AnimateSpecial :2816; the useNewThrowingFrames arm :2837-2855 is 17 + Clamp(frame, 0, 7) at y = spritePixelHeight * 5. Frame 4 would fire the bro's real special via UseSpecial (:2845); the harness patches UseSpecial out for the sweep. Known limitation: frame 7 clears usingSpecial and re-enters ChangeFrame at :2848-2853, so that step's captured cell is the post-cancel pose."
+      "note": "AnimateIdle :3421-3424 -> AnimateSpecial :2816; the useNewThrowingFrames arm :2837-2854 is 17 + Clamp(frame, 0, 7) at y = spritePixelHeight * 5. Frame 4 would fire the bro's real special via UseSpecial (:2845); the harness patches UseSpecial out for the sweep. Known limitation: frame 7 clears usingSpecial and re-enters ChangeFrame at :2848-2853, so that step's captured cell is the post-cancel pose."
     },
     {
       "name": "special_legacy",
@@ -1903,7 +2225,7 @@
           20
         ]
       },
-      "note": "AnimateSpecial :2818-2836, the legacy arm: 16 + Clamp(frame, 0, 4) on row 1. Frame 2 would fire UseSpecial (:2827); the harness patches it out for the sweep. Frame 4 clears usingSpecial at :2830-2835 but does not re-enter ChangeFrame, so every column is captured."
+      "note": "AnimateSpecial :2818-2835, the legacy arm: 16 + Clamp(frame, 0, 4) on row 1. Frame 2 would fire UseSpecial (:2827); the harness patches it out for the sweep. Frame 4 clears usingSpecial at :2830-2834 but does not re-enter ChangeFrame, so every column is captured."
     },
     {
       "name": "pocketed_special",
@@ -1953,7 +2275,7 @@
         ]
       },
       "knownMismatch": "frame 10 writes column 26 and then clears usingPockettedSpecial and re-enters ChangeFrame (:2869-2874), so the captured cell for the last step is the post-cancel pose rather than column 26",
-      "note": "AnimateIdle :3425-3428 -> BroBase.AnimatePockettedSpecial (BroBase.cs:1265-1289), which forwards to TestVanDammeAnim.AnimatePockettedSpecial :2858-2876 for every type except Airstrike/MechDrop/AlienPheromones: 16 + Clamp(frame, 0, 10) at y = spritePixelHeight * 12. Frame 4 would fire UsePockettedSpecial, which the harness patches out for the sweep. Known limitation: frame 10 clears the flag and re-enters ChangeFrame at :2869-2874, so that step's captured cell is the post-cancel pose."
+      "note": "AnimateIdle :3425-3428 -> BroBase.AnimatePockettedSpecial (BroBase.cs:1265-1290), which forwards to TestVanDammeAnim.AnimatePockettedSpecial :2858-2876 for every type except Airstrike/MechDrop/AlienPheromones: 16 + Clamp(frame, 0, 10) at y = spritePixelHeight * 12. Frame 4 would fire UsePockettedSpecial, which the harness patches out for the sweep. Known limitation: frame 10 clears the flag and re-enters ChangeFrame at :2869-2874, so that step's captured cell is the post-cancel pose."
     },
     {
       "name": "pocketed_special_airstrike",
@@ -2000,7 +2322,7 @@
         ]
       },
       "knownMismatch": "frame 7 writes column 24 and then clears usingPockettedSpecial and re-enters ChangeFrame (BroBase.cs:1283-1288), so the captured cell for the last step is the post-cancel pose rather than column 24",
-      "note": "BroBase.AnimatePockettedSpecial (BroBase.cs:1272-1288) handles Airstrike/MechDrop/AlienPheromones itself: 17 + Clamp(frame, 0, 7) at y = spritePixelHeight * 5. Frame 4 would fire UsePockettedSpecial, which the harness patches out for the sweep. Known limitation: frame 7 clears the flag and re-enters ChangeFrame at BroBase.cs:1283-1288."
+      "note": "BroBase.AnimatePockettedSpecial (BroBase.cs:1272-1289) handles Airstrike/MechDrop/AlienPheromones itself: 17 + Clamp(frame, 0, 7) at y = spritePixelHeight * 5. Frame 4 would fire UsePockettedSpecial, which the harness patches out for the sweep. Known limitation: frame 7 clears the flag and re-enters ChangeFrame at BroBase.cs:1283-1288."
     },
     {
       "name": "melee_knife_standing",
@@ -2047,7 +2369,7 @@
         ]
       },
       "knownMismatch": "frame 6 writes column 31 and then CancelMelee clears doingMelee and re-enters ChangeFrame (TestVanDammeAnim.cs:6686-6713, from BroBase.cs:1163-1167), so the captured cell for the last step is the post-cancel pose rather than column 31",
-      "note": "AnimateIdle :3407-3411 (doingMelee && !canDoIndependentMeleeAnimation) -> BroBase.AnimateMelee (BroBase.cs:685-714) -> AnimateKnifeMelee (:1127-1153): 25 + Clamp(frame, 0, 6) on row 1 while standingMelee. meleeFollowUp false keeps AnimateMeleeCommon :755-761 from rewinding frame, and highFive false blocks the mook-throw at :764-769. Frame 3 calls PerformKnifeMeleeAttack (:1146-1149) unconditionally; the harness patches it out for the sweep, so the frames still walk but nothing is hit."
+      "note": "AnimateIdle :3408-3412 (doingMelee && !canDoIndependentMeleeAnimation) -> BroBase.AnimateMelee (BroBase.cs:685-712) -> AnimateKnifeMelee (:1127-1153): 25 + Clamp(frame, 0, 6) on row 1 while standingMelee. meleeFollowUp false keeps AnimateMeleeCommon :755-761 from rewinding frame, and highFive false blocks the mook-throw at :764-769. Frame 3 calls PerformKnifeMeleeAttack (:1154-1158) unconditionally; the harness patches it out for the sweep, so the frames still walk but nothing is hit."
     },
     {
       "name": "melee_knife_jumping",
@@ -2097,7 +2419,7 @@
         ]
       },
       "knownMismatch": "frame 6 writes column 23 and then CancelMelee clears doingMelee and re-enters ChangeFrame (TestVanDammeAnim.cs:6686-6713, from BroBase.cs:1163-1167), so the captured cell for the last step is the post-cancel pose rather than column 23",
-      "note": "ChangeFrame :4124-4127 takes the melee arm before the Jumping arm -> BroBase.AnimateMelee -> AnimateKnifeMelee (BroBase.cs:1132-1139): 17 + Clamp(frame, 0, 6) on row 6 while !standingMelee && jumpingMelee. SetMeleeType (TestVanDammeAnim.cs:8981-8990) forces standingMelee for bros without useNewKnifingFrames, which is why these cells are only authored for bros that set the flag."
+      "note": "ChangeFrame :4124-4127 takes the melee arm before the Jumping arm -> BroBase.AnimateMelee -> AnimateKnifeMelee (BroBase.cs:1132-1138): 17 + Clamp(frame, 0, 6) on row 6 while !standingMelee && jumpingMelee. SetMeleeType (TestVanDammeAnim.cs:8983-8988) forces standingMelee for bros without useNewKnifingFrames, which is why these cells are only authored for bros that set the flag."
     },
     {
       "name": "melee_punch",
@@ -2146,7 +2468,7 @@
           31
         ]
       },
-      "note": "BroBase.AnimateMelee (BroBase.cs:692-694) routes Punch and JetpackPunch to AnimatePunch (:814-843): 25 + Clamp(frame, 0, 8) on row 9, of which the sheet holds 25-31. PerformPunchAttack at :829-832 is gated on !meleeHasHit, which the setup pins true, so no punch lands even before the harness's suppression patch. Frame 7 would clear the melee at :838-842, which is why the steps stop at 6."
+      "note": "BroBase.AnimateMelee (BroBase.cs:692-694) routes Punch and JetpackPunch to AnimatePunch (:814-843): 25 + Clamp(frame, 0, 8) on row 9, of which the sheet holds 25-31. PerformPunchAttack at :830-833 is gated on !meleeHasHit, which the setup pins true, so no punch lands even before the harness's suppression patch. Frame 7 would clear the melee at :838-842, which is why the steps stop at 6."
     },
     {
       "name": "gesture_flex",
@@ -2214,7 +2536,7 @@
     {
       "name": "death_grounded",
       "lethal": true,
-      "lethalReason": "actionState Dead with health 0 is a real death: the game's own Update still runs while the sweep holds timeScale at 0, so the player dies and respawns mid-sweep",
+      "lethalReason": "pins actionState Dead with health 0, which a BroMaker hero reads as its death and runs its own OnDeath for; the game itself calls neither Death (:9602) nor ReduceLives (:10211-10226) and the respawn countdown runs on the frozen clock, so no life is lost and nothing respawns during the sweep",
       "setup": {
         "frozenTime": 0.0,
         "health": 0,
@@ -2248,7 +2570,7 @@
     {
       "name": "death_falling",
       "lethal": true,
-      "lethalReason": "actionState Dead with health 0 is a real death: the game's own Update still runs while the sweep holds timeScale at 0, so the player dies and respawns mid-sweep",
+      "lethalReason": "pins actionState Dead with health 0, which a BroMaker hero reads as its death and runs its own OnDeath for; the game itself calls neither Death (:9602) nor ReduceLives (:10211-10226) and the respawn countdown runs on the frozen clock, so no life is lost and nothing respawns during the sweep",
       "setup": {
         "frozenTime": 0.0,
         "health": 0,
@@ -2333,7 +2655,7 @@
           16
         ]
       },
-      "note": "ChangeFrame :4167-4171 (WallDrag, the property over the wallDrag field at :564-570) -> AnimateWallDrag :4339; the useNewKnifeClimbingFrames arm with yI <= 100 and knifeHand even is :4371-4379, 12 + Clamp(frame, 0, 4) on row 3."
+      "note": "ChangeFrame :4167-4171 (WallDrag, the property over the wallDrag field at :564-603) -> AnimateWallDrag :4339; the useNewKnifeClimbingFrames arm with yI <= 100 and knifeHand even is :4371-4379, 12 + Clamp(frame, 0, 4) on row 3."
     },
     {
       "name": "wall_drag_hand_b",
@@ -2659,7 +2981,7 @@
           16
         ]
       },
-      "note": "ChangeFrame :4162-4166 (wallClimbing && !fire) -> AnimateWallClimb :4492; the useNewKnifeClimbingFrames arm with frame < 8 and knifeHand even is :4506-4511, 12 + Clamp(frame, 0, 4) on row 3. yI must be <= 16 or :4529-4533 decrements frame at step 1."
+      "note": "ChangeFrame :4162-4166 (wallClimbing && !fire) -> AnimateWallClimb :4492; the useNewKnifeClimbingFrames arm with frame < 8 and knifeHand even is :4506-4511, 12 + Clamp(frame, 0, 4) on row 3. yI must be <= 16 or :4524-4527 decrements frame at step 1."
     },
     {
       "name": "wall_climb_hand_b",
@@ -2770,7 +3092,7 @@
           13
         ]
       },
-      "note": "AnimateWallClimb :4555-4576, the !useNewKnifeClimbingFrames arm with knifeHand even: 10 + Clamp(frame, 0, 3) on row 1. Frame 1 sets yI to 190 at :4560; the harness re-applies the setup before every step so the pinned yI is restored."
+      "note": "AnimateWallClimb :4555-4576, the !useNewKnifeClimbingFrames arm with knifeHand even: 10 + Clamp(frame, 0, 3) on row 1. Frame 1 sets yI to 190 at :4561; the harness re-applies the setup before every step so the pinned yI is restored."
     },
     {
       "name": "wall_climb_legacy_hand_b",
@@ -2825,52 +3147,406 @@
           16
         ]
       },
-      "note": "AnimateWallClimb :4577-4598, the !useNewKnifeClimbingFrames arm with knifeHand odd: 13 + Clamp(frame, 0, 3) on row 1."
+      "note": "AnimateWallClimb :4577-4597, the !useNewKnifeClimbingFrames arm with knifeHand odd: 13 + Clamp(frame, 0, 3) on row 1."
     },
     {
       "name": "ledge_grapple",
       "unsupported": "unreachable from ChangeFrame",
-      "note": "ChangeFrame's Jumping arm tests ledgeGrapple at :4154-4157 and routes it to AnimateRunning, which is before the only two call sites of AnimateJumping (:4199 and AnimateAirdashDown :3123). AnimateJumping's own ledge-grapple arm :3165-3168 and AnimateLedgeGrapple :3202-3214 (row 3, columns 12-25, driven by ledgeOffsetY) therefore cannot be reached by pinning fields and calling ChangeFrame."
+      "note": "ChangeFrame's Jumping arm tests ledgeGrapple at :4154-4157 and routes it to AnimateRunning, which is before the only two call sites of AnimateJumping (:4199 and AnimateAirdashDown :3123). AnimateJumping's own ledge-grapple arm :3165-3168 and AnimateLedgeGrapple :3202-3215 (row 3, columns 12-25, driven by ledgeOffsetY) therefore cannot be reached by pinning fields and calling ChangeFrame."
     },
     {
       "name": "ladder_climb_up",
-      "unsupported": "needs a ladder collider in the level",
-      "note": "AnimateClimbingLadder up the ladder, row 6 columns 0-7 (:4326-4335) is only reached after IsNearbyLadder(:4241) returns true, and IsNearbyLadder (:5907-5911) is a Physics.OverlapSphere against ladderLayer. With no ladder within 4 units the method falls through to AnimateActualIdleFrames or AnimateActualNewRunningFrames (:4243-4251), so no pinned field can reach these cells."
+      "requires": {
+        "useNewLadderClimbingFrames": true
+      },
+      "provide": "ladder",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "ClimbingLadder",
+        "up": true,
+        "down": false,
+        "left": false,
+        "right": false,
+        "fire": false,
+        "gunFrame": 0,
+        "hangingOneArmed": false,
+        "ladderClimbingTransitionFrames": 5
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 6,
+        "cols": [
+          0,
+          7
+        ]
+      },
+      "note": "ChangeFrame's ClimbingLadder arm (:4085-4119) -> AnimateClimbingLadder (:4240-4336), which needs IsNearbyLadder (:5907-5911), a 4-unit Physics.OverlapSphere on the Ladders layer at (X + localScale.x * 6, Y + 22). provide: ladder puts a ladder collider there for the state's length. Holding up, the last arm (:4328-4335) draws frame % 8 on row 6 with the gun deactivated. ladderClimbingTransitionFrames is pinned at 5 so AnimateClimbingLadderTransition(true), which bumps it and zeroes frame, is not taken."
     },
     {
       "name": "ladder_climb_down",
-      "unsupported": "needs a ladder collider in the level",
-      "note": "AnimateClimbingLadder down the ladder, row 6 columns 8-10 (:4305-4325) is only reached after IsNearbyLadder(:4241) returns true, and IsNearbyLadder (:5907-5911) is a Physics.OverlapSphere against ladderLayer. With no ladder within 4 units the method falls through to AnimateActualIdleFrames or AnimateActualNewRunningFrames (:4243-4251), so no pinned field can reach these cells."
+      "requires": {
+        "useNewLadderClimbingFrames": true
+      },
+      "provide": "ladder",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "ClimbingLadder",
+        "up": false,
+        "down": true,
+        "left": false,
+        "right": false,
+        "fire": false,
+        "gunFrame": 0,
+        "hangingOneArmed": false,
+        "ladderClimbingTransitionFrames": 5,
+        "yI": 0
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 6,
+        "cols": [
+          8,
+          10
+        ]
+      },
+      "note": "ChangeFrame's ClimbingLadder arm (:4085-4119) -> AnimateClimbingLadder (:4240-4336), which needs IsNearbyLadder (:5907-5911), a 4-unit Physics.OverlapSphere on the Ladders layer at (X + localScale.x * 6, Y + 22). provide: ladder puts a ladder collider there for the state's length. Holding down, the down arm (:4304-4323) draws 8 + frame % 3 on row 6 with the gun deactivated; yI is pinned at 0 so the fast-slide foot poofs are not spawned. ladderClimbingTransitionFrames is pinned at 5, as for ladder_climb_up."
     },
     {
       "name": "ladder_one_armed_hang",
-      "unsupported": "needs a ladder collider in the level",
-      "note": "AnimateClimbingLadder one-armed hang, row 6 columns 11-13 (:4258-4275) is only reached after IsNearbyLadder(:4241) returns true, and IsNearbyLadder (:5907-5911) is a Physics.OverlapSphere against ladderLayer. With no ladder within 4 units the method falls through to AnimateActualIdleFrames or AnimateActualNewRunningFrames (:4243-4251), so no pinned field can reach these cells."
+      "requires": {
+        "useNewLadderClimbingFrames": true
+      },
+      "provide": "ladder",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "ClimbingLadder",
+        "up": false,
+        "down": false,
+        "left": false,
+        "right": false,
+        "fire": false,
+        "gunFrame": 0,
+        "hangingOneArmed": false,
+        "ladderClimbingTransitionFrames": 0
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 6,
+        "cols": [
+          11,
+          13
+        ]
+      },
+      "expectGun": {
+        "sheet": "gun",
+        "row": 1,
+        "col": 6
+      },
+      "note": "ChangeFrame's ClimbingLadder arm (:4085-4119) -> AnimateClimbingLadder (:4240-4336), which needs IsNearbyLadder (:5907-5911), a 4-unit Physics.OverlapSphere on the Ladders layer at (X + localScale.x * 6, Y + 22). provide: ladder puts a ladder collider there for the state's length. With no input the one-armed arm (:4263-4274) sets hangingOneArmed and draws 11 + frame % 3 on row 6, and the gun through SetGunSprite(0, 0) (:9245-9263), whose ClimbingLadder && hangingOneArmed branch adds gunSpriteHangingFrame (6): row 1 column 6. ladderClimbingTransitionFrames is pinned at 0 so the transition arm does not take the frame."
     },
     {
       "name": "ladder_climb_legacy",
-      "unsupported": "needs a ladder collider in the level",
-      "note": "AnimateClimbingLadder legacy climb, row 1 columns 0-3 (:4278-4304) is only reached after IsNearbyLadder(:4241) returns true, and IsNearbyLadder (:5907-5911) is a Physics.OverlapSphere against ladderLayer. With no ladder within 4 units the method falls through to AnimateActualIdleFrames or AnimateActualNewRunningFrames (:4243-4251), so no pinned field can reach these cells."
+      "requires": {
+        "useNewLadderClimbingFrames": false
+      },
+      "provide": "ladder",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "ClimbingLadder",
+        "up": true,
+        "down": false,
+        "left": false,
+        "right": false,
+        "fire": false,
+        "gunFrame": 0,
+        "hangingOneArmed": false,
+        "ladderClimbingTransitionFrames": 0
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 1,
+        "cols": [
+          0,
+          3
+        ]
+      },
+      "expectGun": {
+        "sheet": "gun",
+        "row": 1,
+        "col": 0
+      },
+      "note": "ChangeFrame's ClimbingLadder arm (:4085-4119) -> AnimateClimbingLadder (:4240-4336), which needs IsNearbyLadder (:5907-5911), a 4-unit Physics.OverlapSphere on the Ladders layer at (X + localScale.x * 6, Y + 22). provide: ladder puts a ladder collider there for the state's length. Without useNewLadderClimbingFrames the moving arm (:4280-4303) draws frame % 4 on row 1 and the gun through SetGunSprite(0, 0): hangingOneArmed is false, so row 1 column 0."
     },
     {
       "name": "zipline_moving",
-      "unsupported": "needs a live ZipLine reference",
-      "note": "AnimateJumping :3145-3148 dispatches on attachedToZipline != null -> AnimateZipline :3226; the moving arm :3228-3233 additionally reads attachedToZipline.Direction and IsHorizontalZipline."
+      "provide": "zipline",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": false,
+        "wallDrag": false,
+        "isInQuicksand": false,
+        "left": false,
+        "right": true,
+        "rollingTime": 0.0,
+        "airdashTime": 0.0,
+        "fire": false,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false,
+        "ducking": false,
+        "slidingOnZipline": false,
+        "gunFrame": 0
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 4,
+        "cols": [
+          11,
+          22
+        ]
+      },
+      "note": "ChangeFrame's Jumping arm -> AnimateJumping, which dispatches on attachedToZipline != null (:3142-3145) to AnimateZipline (:3226-3252). provide: zipline gives the state an inactive, horizontal ZipLine 128 units wide centred over the bro, pinned as attachedToZipline on every step; inactive, it never runs its Start or Update. Holding right on a horizontal line, the moving arm (:3228-3233) draws 11 + frame % 12 on row 4 with the gun deactivated."
+    },
+    {
+      "name": "zipline_hanging",
+      "provide": "zipline",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": false,
+        "wallDrag": false,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 0.0,
+        "fire": false,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false,
+        "ducking": false,
+        "slidingOnZipline": false,
+        "gunFrame": 0
+      },
+      "step": {
+        "field": "frame",
+        "values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "call": [
+          "AttachToZipline"
+        ]
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 4,
+        "cols": [
+          23,
+          28
+        ]
+      },
+      "expectGun": {
+        "sheet": "gun",
+        "row": 1,
+        "col": 6
+      },
+      "note": "ChangeFrame's Jumping arm -> AnimateJumping, which dispatches on attachedToZipline != null (:3142-3145) to AnimateZipline (:3226-3252). provide: zipline gives the state an inactive, horizontal ZipLine 128 units wide centred over the bro, pinned as attachedToZipline on every step; inactive, it never runs its Start or Update. With no input the hanging arm (:3234-3251) draws 23 + Clamp(frame, 0, 5) on row 4 and writes no gun cell, so each step calls AttachToZipline (:3218-3223) with the provided line, as the game does on grabbing one: SetGunSprite(gunFrame, 0) with Jumping and a zipline adds gunSpriteHangingFrame (6), row 1 column 6. It also zeroes frame after the cell is drawn, which the next step's pin undoes."
     },
     {
       "name": "zipline_firing",
-      "unsupported": "needs a live ZipLine reference",
-      "note": "AnimateZipline :3234-3251 reads attachedToZipline.isGuts; the whole method is gated on attachedToZipline != null at AnimateJumping :3145."
+      "provide": "zipline",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": false,
+        "wallDrag": false,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 0.0,
+        "fire": true,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false,
+        "ducking": false,
+        "slidingOnZipline": false,
+        "frame": 0
+      },
+      "step": {
+        "field": "gunFrame",
+        "values": [
+          4,
+          3,
+          2,
+          1
+        ],
+        "before": {
+          "gunCounter": 0.04
+        },
+        "call": [
+          "RunGun"
+        ],
+        "after": {
+          "gunCounter": 0
+        }
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 4,
+        "col": 23
+      },
+      "expectGun": {
+        "sheet": "gun",
+        "row": 1,
+        "cols": [
+          9,
+          6
+        ]
+      },
+      "note": "ChangeFrame's Jumping arm -> AnimateJumping, which dispatches on attachedToZipline != null (:3142-3145) to AnimateZipline (:3226-3252). provide: zipline gives the state an inactive, horizontal ZipLine 128 units wide centred over the bro, pinned as attachedToZipline on every step; inactive, it never runs its Start or Update. Firing takes the hanging arm (:3234-3251, !fire fails the moving test), 23 on row 4 at frame 0; isGuts is false and slidingOnZipline is pinned false, so no particles are spawned. Each step pins gunFrame one above the cell and gunCounter over RunGun's 0.0334 threshold, then calls RunGun (:9230-9242) after ChangeFrame, the order the game's Update runs them in; RunGun steps gunFrame down and draws SetGunSprite(gunFrame, 0) (:9245-9263). gunCounter is put back to 0 after the call, so the bro's own Update does not step the gun again before the frame is read. ChangeFrame's own gun write is gated on gunFrame <= 0, so it leaves the recoil cell alone. fire is pinned as the firing animation has it; FireWeapon (:2389-2396) is suppressed unless allowSideEffects. SetGunSprite's zipline branch adds 6: row 1 columns 9 to 6."
     },
     {
       "name": "impaled",
       "unsupported": "needs a live impaledByTransform reference",
-      "note": "ChangeFrame :4067-4070 requires impaledByTransform != null && useImpaledFrames before AnimateImpaled :3375-3384 (row 2 columns 10-12) can run."
+      "note": "ChangeFrame :4067-4070 requires impaledByTransform != null && useImpaledFrames before AnimateImpaled :3375-3388 (row 2 columns 10-12) can run."
     },
     {
       "name": "impaled_dead",
       "unsupported": "needs a live impaledByTransform reference",
-      "note": "AnimateImpaled :3385-3388 (row 2 columns 8-9) is the actionState Dead arm of the same method, behind the same impaledByTransform gate at ChangeFrame :4067."
+      "note": "AnimateImpaled :3384-3387 (row 2 columns 8-9) is the actionState Dead arm of the same method, behind the same impaledByTransform gate at ChangeFrame :4067."
     },
     {
       "name": "on_back_of",
@@ -2880,17 +3556,17 @@
     {
       "name": "strung_up",
       "unsupported": "needs a live strungUpBy reference",
-      "note": "ChangeFrame :4063-4066 dispatches to AnimateStrungUpFrames :3269-3272 (row 1 column 15) only while strungUpBy != null; AnimateJumping :3141-3144 has the same gate."
+      "note": "ChangeFrame :4063-4066 dispatches to AnimateStrungUpFrames :3269-3272 (row 1 column 15) only while strungUpBy != null; AnimateJumping :3138-3141 has the same gate."
     },
     {
       "name": "wall_anticipation_stab",
       "unsupported": "keyed to a live world position",
-      "note": "AnimateWallAnticipation :4455-4468 (row 3 columns 16-21 and 26-31) picks its column from Y + knifeClimbStabHeight - lastKnifeClimbStabY (:4453), a delta against the position where the knife was last planted. A static field value cannot express it, and the dispatch at ChangeFrame :4183-4186 also needs left/right plus canTouchLeftWalls/canTouchRightWalls, which are set by wall contact."
+      "note": "AnimateWallAnticipation :4455-4470 (row 3 columns 16-21 and 26-31) picks its column from Y + knifeClimbStabHeight - lastKnifeClimbStabY (:4454), a delta against the position where the knife was last planted. A static field value cannot express it, and the dispatch at ChangeFrame :4183-4186 also needs left/right plus canTouchLeftWalls/canTouchRightWalls, which are set by wall contact."
     },
     {
       "name": "wall_climb_stab",
       "unsupported": "keyed to a live world position",
-      "note": "AnimateWallClimb :4536-4547 (row 3 columns 16-21 and 26-31) is the frame >= 8 arm and picks its column from Y + knifeClimbStabHeight - lastKnifeClimbStabY (:4535), the same live delta."
+      "note": "AnimateWallClimb :4536-4547 (row 3 columns 16-21 and 26-31) is the frame >= 8 arm and picks its column from Y + knifeClimbStabHeight - lastKnifeClimbStabY (:4536), the same live delta."
     },
     {
       "name": "frozen",

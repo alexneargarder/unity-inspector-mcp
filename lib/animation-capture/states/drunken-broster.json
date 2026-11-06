@@ -37,6 +37,9 @@
         "invulnerableTime": 0.0,
         "speed": 110.0
       },
+      "after": [
+        "BecomeSober"
+      ],
       "step": {
         "field": "usingSpecialFrame",
         "values": [
@@ -58,8 +61,8 @@
           7
         ]
       },
-      "knownMismatch": "usingSpecialFrame 7 writes column 7 and then StopUsingSpecial clears usingSpecial and re-enters ChangeFrame (DrunkenBroster.cs:3089-3092, :3157-3170), so the captured cell for the last step is the post-cancel pose rather than column 7",
-      "note": "Replaces the base special_new entry: DrunkenBroster.AnimateSpecial (DrunkenBroster.cs:3061-3119) overrides TestVanDammeAnim.AnimateSpecial and is driven by its own usingSpecialFrame counter (:135, incremented from IncreaseFrame :1901-1912), not by frame, so the base entry's step field addresses nothing here. The !wasDrunk arm :3070-3092 is usingSpecialFrame * spritePixelWidth at spritePixelHeight * 8, so row 8 columns 0-7 on the main sheet. usingSpecialFrame 6 calls UseSpecial (:3085), whose override (:3143-3156) runs BecomeDrunk (:3174-3189) and swaps the renderer's material to the drunk sheet: with the harness's default suppression that call is patched out and every frame stays on the main sheet, so run with --allow-side-effects to see the swap as a change of texId from frame 6 onward. Invulnerable, invulnerableTime and speed are named in the setup only so the values :3064-3077 writes are snapshotted and put back."
+      "knownMismatch": "usingSpecialFrame 7 writes column 7 and then StopUsingSpecial clears usingSpecial and re-enters ChangeFrame (DrunkenBroster.cs:3090-3093, :3161-3173), so the captured cell for the last step is the post-cancel pose rather than column 7",
+      "note": "Replaces the base special_new entry: DrunkenBroster.AnimateSpecial (DrunkenBroster.cs:3062-3121) overrides TestVanDammeAnim.AnimateSpecial and is driven by its own usingSpecialFrame counter (:135, incremented from IncreaseFrame :1902-1913), not by frame, so the base entry's step field addresses nothing here. The !wasDrunk arm :3072-3095 is usingSpecialFrame * spritePixelWidth at spritePixelHeight * 8, so row 8 columns 0-7 on the main sheet. usingSpecialFrame 6 calls UseSpecial (:3088), whose override (:3143-3159) runs BecomeDrunk (:3175-3190) and swaps the renderer's material to the drunk sheet: with the harness's default suppression that call is patched out and every frame stays on the main sheet, so run with --allow-side-effects to see the swap as a change of texId from frame 6 onward. Invulnerable, invulnerableTime and speed are pinned, so each step starts from them whatever :3066-3078 wrote on the last. after calls BecomeSober because the real BecomeDrunk registers him with DrunkenCameraManager (:3189), a static list the restore between states cannot reach; on a baseline run it changes nothing that restore does not put back."
     },
     {
       "name": "special_new_sober",
@@ -94,6 +97,12 @@
         "invulnerableTime": 0.0,
         "speed": 110.0
       },
+      "before": [
+        "BecomeDrunk"
+      ],
+      "after": [
+        "BecomeSober"
+      ],
       "step": {
         "field": "usingSpecialFrame",
         "values": [
@@ -118,8 +127,8 @@
           10
         ]
       },
-      "knownMismatch": "usingSpecialFrame 10 writes column 10 and then StopUsingSpecial clears usingSpecial and re-enters ChangeFrame (DrunkenBroster.cs:3115-3118, :3157-3170), so the captured cell for the last step is the post-cancel pose rather than column 10",
-      "note": "The wasDrunk arm of DrunkenBroster.AnimateSpecial (:3094-3118): usingSpecialFrame * spritePixelWidth at spritePixelHeight * 10, so row 10 columns 0-10. Which sheet those rows come off depends on suppression: the bro is on the drunk sheet when the state starts, and usingSpecialFrame 6 calls UseSpecial (:3111) -> BecomeSober (:3207-3222), which swaps the material back to the normal sheet, so with --allow-side-effects frames 0-5 carry the drunk sheet's texId and 6-10 the normal one. Under the default suppression every frame stays on whichever sheet the bro was already wearing. Getting there needs the bro actually drunk first: sweep special_new with --allow-side-effects, or trigger the special in game, before this entry."
+      "knownMismatch": "usingSpecialFrame 10 writes column 10 and then StopUsingSpecial clears usingSpecial and re-enters ChangeFrame (DrunkenBroster.cs:3116-3119, :3161-3173), so the captured cell for the last step is the post-cancel pose rather than column 10",
+      "note": "The wasDrunk arm of DrunkenBroster.AnimateSpecial (:3097-3120): usingSpecialFrame * spritePixelWidth at spritePixelHeight * 10, so row 10 columns 0-10. before calls BecomeDrunk (:3175-3190), so the state starts on the drunk sheet, and usingSpecialFrame 6 calls UseSpecial (:3114) -> BecomeSober (:3208-3224), which swaps the material back to the normal sheet, so with --allow-side-effects frames 0-5 carry the drunk sheet's texId and 6-10 the normal one. Under the default suppression every frame stays on the drunk sheet. after calls BecomeSober for the DrunkenCameraManager registration, which the restore between states cannot reach."
     },
     {
       "name": "running_holding_item",
@@ -189,7 +198,379 @@
           7
         ]
       },
-      "note": "The base running body frames walked with a melee item in hand. before calls SwitchToHeldItem (DrunkenBroster.cs:2751-2766), which sets holdingItem, moves chosenItem into heldItem, activates the gunSpriteMelee object, hides the original gun object and repoints gunSprite at gunSpriteMeleeSprite, whose material is the 512x768 gunSpriteMelee.png cut into 32x32 cells (DrunkenBroster.cs:179-195); after calls ClearHeldItem (DrunkenBroster.cs:2768-2778), which puts the original gun sprite back. The body cells are the base running ones: DrunkenBroster.ChangeFrame (DrunkenBroster.cs:1914-1940) dispatches on attackStationary, attackUpwards, attackDownwards and attackForwards before anything else, so the setup pins all four false and it forwards to base.ChangeFrame, where TestVanDammeAnim.cs:4075-4078 -> AnimateRunning :3522 reaches DrunkenBroster.AnimateActualNewRunningFrames (DrunkenBroster.cs:2983-3008), which writes frame % 8 at spritePixelHeight * 2 -- main row 2 columns 0-7. expectGun holds the gun cells, so a SwitchToHeldItem that stopped repointing gunSprite fails the state rather than passing on an unchanged body row: DrunkenBroster.cs:3004-3006 calls SetGunSprite(frame % 8, 1) while gunFrame <= 0 and !doingMelee, and the override (DrunkenBroster.cs:419-447) adds (int)heldItem * 2 to the row, so with heldItem Bottle (= 3, DrunkenBroster.cs:69-82) the lower-left pixel is gunSpritePixelHeight * (1 + 1 + 6) which is melee-sheet row 8, columns 0-7. gunFrame is pinned to 0 so that branch is taken on every step. The melee gun object is drawn on every step whatever active state it inherited from the original at DrunkenBroster.cs:2756: ChangeFrame calls ActivateGun on the swapped-in gunSprite whenever health > 0 and neither usingSpecial nor doingMelee (TestVanDammeAnim.cs:4055-4058, :9776-9782), all three pinned here, and AnimateRunning's else arm calls it again (TestVanDammeAnim.cs:3574). Bottle rather than ExplosiveBarrel because a barrel arms a five-second timer in SwitchToHeldItem (DrunkenBroster.cs:2761-2765) that Update runs down through RunBarrelEffects (DrunkenBroster.cs:272-276). insert_before and the holdingItem requirement are there because BecomeDrunk (DrunkenBroster.cs:3174-3189) picks up a bottle of its own and BecomeSober (DrunkenBroster.cs:3207-3223) never puts it down: sweeping special_new with --allow-side-effects leaves the bro holding, and running this state afterwards would hand ClearHeldItem an item the bro is meant to keep, on top of a chosenItem the restore had already put back. Placed ahead of special_new it runs on an empty-handed bro, and the requires check skips it rather than corrupting one that is already holding."
+      "note": "The base running body frames walked with a melee item in hand. before calls SwitchToHeldItem (DrunkenBroster.cs:2752-2767), which sets holdingItem, moves chosenItem into heldItem, activates the gunSpriteMelee object, hides the original gun object and repoints gunSprite at gunSpriteMeleeSprite, whose material is the 512x768 gunSpriteMelee.png cut into 32x32 cells (DrunkenBroster.cs:179-195); after calls ClearHeldItem (DrunkenBroster.cs:2769-2779), which puts the original gun sprite back. The body cells are the base running ones: DrunkenBroster.ChangeFrame (DrunkenBroster.cs:1915-1941) dispatches on attackStationary, attackUpwards, attackDownwards and attackForwards before anything else, so the setup pins all four false and it forwards to base.ChangeFrame, where TestVanDammeAnim.cs:4075-4078 -> AnimateRunning :3522 reaches DrunkenBroster.AnimateActualNewRunningFrames (DrunkenBroster.cs:2984-3009), which writes frame % 8 at spritePixelHeight * 2 -- main row 2 columns 0-7. expectGun holds the gun cells, so a SwitchToHeldItem that stopped repointing gunSprite fails the state rather than passing on an unchanged body row: DrunkenBroster.cs:3005-3007 calls SetGunSprite(frame % 8, 1) while gunFrame <= 0 and !doingMelee, and the override (DrunkenBroster.cs:419-447) adds (int)heldItem * 2 to the row, so with heldItem Bottle (= 3, DrunkenBroster.cs:69-82) the lower-left pixel is gunSpritePixelHeight * (1 + 1 + 6) which is melee-sheet row 8, columns 0-7. gunFrame is pinned to 0 so that branch is taken on every step. The melee gun object is drawn on every step whatever active state it inherited from the original at DrunkenBroster.cs:2757: ChangeFrame calls ActivateGun on the swapped-in gunSprite whenever health > 0 and neither usingSpecial nor doingMelee (TestVanDammeAnim.cs:4055-4058, :9776-9782), all three pinned here, and AnimateRunning's else arm calls it again (TestVanDammeAnim.cs:3574). Bottle rather than ExplosiveBarrel because a barrel arms a five-second timer in SwitchToHeldItem (DrunkenBroster.cs:2762-2766) that Update runs down through RunBarrelEffects (DrunkenBroster.cs:272-276). The holdingItem requirement skips a bro already holding at sweep start rather than handing ClearHeldItem an item he is meant to keep."
+    },
+    {
+      "name": "idle_firing",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": false,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "None",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false,
+        "fire": true,
+        "attackStationary": false,
+        "attackUpwards": false,
+        "attackDownwards": false,
+        "attackForwards": false
+      },
+      "step": {
+        "field": "gunFrame",
+        "values": [
+          4,
+          3,
+          2,
+          1
+        ],
+        "before": {
+          "gunCounter": 0.04
+        },
+        "call": [
+          "RunGun"
+        ],
+        "after": {
+          "gunCounter": 0.0
+        }
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 1,
+        "col": 0
+      },
+      "expectGun": {
+        "sheet": "gun",
+        "row": 1,
+        "col": 0
+      },
+      "note": "Restates the base idle_firing: DrunkenBroster.RunGun (DrunkenBroster.cs:401-416) steps gunFrame but draws SetGunSprite(0, 0) on every tick, so his gun holds row 1 column 0 through the recoil instead of walking it."
+    },
+    {
+      "name": "idle_ducking_firing",
+      "requires": {
+        "useDuckingFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Idle",
+        "ducking": true,
+        "holdingHighFive": false,
+        "releasingHighFive": false,
+        "rollingFrames": 0,
+        "currentGesture": "None",
+        "stunTime": 0.0,
+        "isAirFlexing": false,
+        "gettingUpFromElbowSlam": false,
+        "fire": true,
+        "attackStationary": false,
+        "attackUpwards": false,
+        "attackDownwards": false,
+        "attackForwards": false
+      },
+      "step": {
+        "field": "gunFrame",
+        "values": [
+          4,
+          3,
+          2,
+          1
+        ],
+        "before": {
+          "gunCounter": 0.04
+        },
+        "call": [
+          "RunGun"
+        ],
+        "after": {
+          "gunCounter": 0.0
+        }
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 1,
+        "col": 6
+      },
+      "expectGun": {
+        "sheet": "gun",
+        "row": 1,
+        "col": 0
+      },
+      "note": "Restates the base idle_ducking_firing: DrunkenBroster.RunGun (DrunkenBroster.cs:401-416) steps gunFrame but draws SetGunSprite(0, 0) on every tick, so his gun holds row 1 column 0 through the recoil instead of walking it."
+    },
+    {
+      "name": "running_firing",
+      "requires": {
+        "useNewFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Running",
+        "releasingHighFive": false,
+        "pushingTime": 0.0,
+        "rollingTime": 0.0,
+        "rollingFrames": 0,
+        "ledgeGrapple": false,
+        "isInQuicksand": false,
+        "fire": true,
+        "ducking": false,
+        "dashing": false,
+        "frame": 0,
+        "attackStationary": false,
+        "attackUpwards": false,
+        "attackDownwards": false,
+        "attackForwards": false
+      },
+      "step": {
+        "field": "gunFrame",
+        "values": [
+          4,
+          3,
+          2,
+          1
+        ],
+        "before": {
+          "gunCounter": 0.04
+        },
+        "call": [
+          "RunGun"
+        ],
+        "after": {
+          "gunCounter": 0.0
+        }
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 2,
+        "col": 0
+      },
+      "expectGun": {
+        "sheet": "gun",
+        "row": 1,
+        "col": 0
+      },
+      "note": "Restates the base running_firing: DrunkenBroster.RunGun (DrunkenBroster.cs:401-416) steps gunFrame but draws SetGunSprite(0, 0) on every tick, so his gun holds row 1 column 0 through the recoil instead of walking it."
+    },
+    {
+      "name": "jumping_firing",
+      "requires": {
+        "useNewFrames": true
+      },
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": false,
+        "wallDrag": false,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 0,
+        "fire": true,
+        "ducking": false,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false,
+        "yI": 100,
+        "xI": 0,
+        "frame": 0,
+        "attackStationary": false,
+        "attackUpwards": false,
+        "attackDownwards": false,
+        "attackForwards": false
+      },
+      "step": {
+        "field": "gunFrame",
+        "values": [
+          4,
+          3,
+          2,
+          1
+        ],
+        "before": {
+          "gunCounter": 0.04
+        },
+        "call": [
+          "RunGun"
+        ],
+        "after": {
+          "gunCounter": 0.0
+        }
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 3,
+        "col": 6
+      },
+      "expectGun": {
+        "sheet": "gun",
+        "row": 1,
+        "col": 0
+      },
+      "note": "Restates the base jumping_firing: DrunkenBroster.RunGun (DrunkenBroster.cs:401-416) steps gunFrame but draws SetGunSprite(0, 0) on every tick, so his gun holds row 1 column 0 through the recoil instead of walking it."
+    },
+    {
+      "name": "hanging_firing",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Hanging",
+        "chimneyFlip": false,
+        "right": false,
+        "left": false,
+        "wasHangingMoving": false,
+        "ducking": false,
+        "fire": true,
+        "frame": 0,
+        "attackStationary": false,
+        "attackUpwards": false,
+        "attackDownwards": false,
+        "attackForwards": false
+      },
+      "step": {
+        "field": "gunFrame",
+        "values": [
+          4,
+          3,
+          2,
+          1
+        ],
+        "before": {
+          "gunCounter": 0.04
+        },
+        "call": [
+          "RunGun"
+        ],
+        "after": {
+          "gunCounter": 0.0
+        }
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 4,
+        "col": 23
+      },
+      "expectGun": {
+        "sheet": "gun",
+        "row": 1,
+        "col": 6
+      },
+      "note": "Restates the base hanging_firing: DrunkenBroster.RunGun (DrunkenBroster.cs:401-416) steps gunFrame but draws SetGunSprite(0, 0) on every tick, so his gun holds row 1 column 6 through the recoil instead of walking it. SetGunSprite adds gunSpriteHangingFrame (6) in this pose (:430-442)."
+    },
+    {
+      "name": "zipline_firing",
+      "provide": "zipline",
+      "setup": {
+        "frozenTime": 0.0,
+        "health": 3,
+        "throwingHeldObject": false,
+        "doingMelee": false,
+        "usingSpecial": false,
+        "usingPockettedSpecial": false,
+        "usingSpecial2": false,
+        "usingSpecial3": false,
+        "usingSpecial4": false,
+        "actionState": "Jumping",
+        "ledgeGrapple": false,
+        "chimneyFlip": false,
+        "wallClimbing": false,
+        "wallDrag": false,
+        "isInQuicksand": false,
+        "left": false,
+        "right": false,
+        "rollingTime": 0.0,
+        "airdashTime": 0,
+        "fire": true,
+        "releasingHighFive": false,
+        "holdingHighFive": false,
+        "isAirFlexing": false,
+        "isElbowSlamming": false,
+        "gettingUpFromElbowSlam": false,
+        "frontSomersaulting": false,
+        "ducking": false,
+        "slidingOnZipline": false,
+        "frame": 0,
+        "attackStationary": false,
+        "attackUpwards": false,
+        "attackDownwards": false,
+        "attackForwards": false
+      },
+      "step": {
+        "field": "gunFrame",
+        "values": [
+          4,
+          3,
+          2,
+          1
+        ],
+        "before": {
+          "gunCounter": 0.04
+        },
+        "call": [
+          "RunGun"
+        ],
+        "after": {
+          "gunCounter": 0.0
+        }
+      },
+      "expect": {
+        "sheet": "main",
+        "row": 4,
+        "col": 23
+      },
+      "expectGun": {
+        "sheet": "gun",
+        "row": 1,
+        "col": 6
+      },
+      "note": "Restates the base zipline_firing: DrunkenBroster.RunGun (DrunkenBroster.cs:401-416) steps gunFrame but draws SetGunSprite(0, 0) on every tick, so his gun holds row 1 column 6 through the recoil instead of walking it. SetGunSprite adds gunSpriteHangingFrame (6) in this pose (:430-442)."
     }
   ]
 }

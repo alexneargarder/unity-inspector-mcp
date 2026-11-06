@@ -162,7 +162,7 @@ test('an explicit UNITY_INSPECTOR_LOG that is missing is reported, not silently 
     const response = await handleToolCall({ params: { name: 'read_log' } });
     assert.equal(response.isError, true);
     const text = response.content.map((c) => c.text).join('\n');
-    assert.match(text, /UMM log file not found/);
+    assert.match(text, /Log file not found/);
     assert.match(text, /UNITY_INSPECTOR_LOG/);
     assert.match(text, /does-not-exist\.txt/);
   } finally {
@@ -240,15 +240,28 @@ test('an active profile with no UMM log falls back to the Unity player log', fak
   });
 });
 
-test("an active profile's own UMM log beats the player log once a start time exists", fakeHomeWorks, async () => {
+test("the player log beats an active profile's UMM log the game also writes, whichever was written last", fakeHomeWorks, async () => {
   await withFakeHome(async ({ profileLog, writePlayerLog, playerLogPath }) => {
-    const live = await profileLog('Test-Live-8c02', 'live profile\n', new Date('2024-01-01T00:00:00Z'));
+    const live = await profileLog('Test-Live-8c02', 'live profile\n', new Date('2024-06-01T00:00:30Z'));
     await writePlayerLog('player log\n', new Date('2024-06-01T00:00:00Z'));
 
-    const startedAt = Date.parse('2023-01-01T00:00:00Z');
-    assert.equal(await findLogPath(async () => 'Test-Live-8c02', async () => startedAt), live);
+    const startedAt = Date.parse('2024-05-01T00:00:00Z');
+    assert.equal(await findLogPath(async () => 'Test-Live-8c02', async () => startedAt), playerLogPath);
+    assert.equal(await findLogPath(async () => 'Test-Live-8c02', noGameStart), playerLogPath, 'a UMM log flushed just after the player log');
 
-    assert.equal(await findLogPath(async () => 'Test-Live-8c02', noGameStart), playerLogPath);
+    await fs.utimes(playerLogPath, new Date('2024-04-01T00:00:00Z'), new Date('2024-04-01T00:00:00Z'));
+    assert.equal(await findLogPath(async () => 'Test-Live-8c02', async () => startedAt), live, 'a player log this run never wrote gives way');
+  });
+});
+
+test('with no profile resolved, the player log is read while both are live, never the newer of the two', fakeHomeWorks, async () => {
+  await withFakeHome(async ({ profileLog, writePlayerLog, playerLogPath }) => {
+    await profileLog('Test-Some-8c02', 'batched\n', new Date('2024-06-01T00:00:10Z'));
+    await writePlayerLog('every line\n', new Date('2024-06-01T00:00:05Z'));
+
+    const startedAt = Date.parse('2024-06-01T00:00:00Z');
+    assert.equal(await findLogPath(async () => null, async () => startedAt), playerLogPath);
+    assert.equal(await findLogPath(async () => null, noGameStart), playerLogPath);
   });
 });
 
@@ -436,7 +449,7 @@ test('the not-found error lists the profile globs it searched', fakeHomeWorks, a
     const response = await handleToolCall({ params: { name: 'read_log', arguments: { onlyNew: true } } });
     assert.equal(response.isError, true);
     const text = response.content.map((c) => c.text).join('\n');
-    assert.match(text, /UMM log file not found/);
+    assert.match(text, /Log file not found/);
     assert.match(text, /profiles\/\*\/UMM\/Core\/Log\.txt/);
     assert.match(text, /unity3d\/Free Lives\/Broforce\/Player\.log/);
     assert.match(text, /AppData\/LocalLow\/Free Lives\/Broforce\/Player\.log/);
@@ -446,4 +459,271 @@ test('the not-found error lists the profile globs it searched', fakeHomeWorks, a
     if (savedOverride !== undefined) process.env.UNITY_INSPECTOR_LOG = savedOverride;
     await fs.rm(emptyHome, { recursive: true, force: true });
   }
+});
+
+import fsDefault from 'fs/promises';
+
+async function withLog(t, contents) {
+  const file = path.join(logDir, `case-${Math.random().toString(36).slice(2)}.log`);
+  await fs.writeFile(file, contents);
+  process.env.UNITY_INSPECTOR_LOG = file;
+  t.after(() => { process.env.UNITY_INSPECTOR_LOG = logPath; });
+  return file;
+}
+
+const numbered = (count, prefix = 'line') => Array.from({ length: count }, (_, i) => `${prefix} ${i + 1}`).join('\n') + '\n';
+const readLog = async (args) => payload(await handleToolCall({ params: { name: 'read_log', arguments: args } }));
+
+test('read_log returns the last 50 lines by default, the trailing newline starting none', async (t) => {
+  const file = await withLog(t, numbered(80));
+  const result = await readLog({});
+  assert.equal(result.path, file);
+  assert.equal(result.returnedLines, 50);
+  assert.equal(result.content.split('\n')[0], 'line 31');
+  assert.ok(result.content.endsWith('line 80'));
+  assert.equal(result.truncated, undefined);
+  assert.equal(typeof result.modifiedAt, 'string');
+  assert.notEqual(result.stale, true);
+});
+
+test('read_log refuses a line count that is not a whole number of at least 1', async (t) => {
+  await withLog(t, numbered(10));
+  assert.deepEqual((await readLog({ lines: 3 })).content.split('\n'), ['line 8', 'line 9', 'line 10']);
+  assert.equal((await readLog({ lines: 1000 })).returnedLines, 10);
+
+  const refusal = async (lines) => {
+    const response = await handleToolCall({ params: { name: 'read_log', arguments: { lines } } });
+    assert.equal(response.isError, true, JSON.stringify(lines));
+    return response.content[0].text;
+  };
+  for (const lines of [0, -4]) {
+    assert.match(await refusal(lines), /lines must be a whole number of at least 1/);
+  }
+  assert.match(await refusal(2.9), /read_log: lines must be an integer, got 2\.9/);
+  assert.match(await refusal('lots'), /read_log: lines must be an integer, got "lots"/);
+});
+
+test('read_log filters case-insensitively and then takes the last lines of the matches', async (t) => {
+  await withLog(t, '[Mod] loaded\nother\n[MOD] patched\nnoise\n[mod] ready\n');
+
+  const all = await readLog({ filter: '[mod]' });
+  assert.equal(all.content, '[Mod] loaded\n[MOD] patched\n[mod] ready');
+  assert.equal(all.returnedLines, 3);
+
+  assert.equal((await readLog({ filter: '[mod]', lines: 2 })).content, '[MOD] patched\n[mod] ready');
+
+  const none = await readLog({ filter: 'nothing like this' });
+  assert.equal(none.content, '');
+  assert.equal(none.returnedLines, 0);
+});
+
+test('read_log refuses a filter that is not a string, and reads a null one as no filter', async (t) => {
+  await withLog(t, numbered(3));
+
+  for (const [filter, sent] of [[5, '5'], [['mod'], 'an array'], [{ text: 'mod' }, 'an object'], [true, 'true']]) {
+    const response = await handleToolCall({ params: { name: 'read_log', arguments: { filter } } });
+    assert.equal(response.isError, true, JSON.stringify(filter));
+    assert.equal(response.content[0].text, `Error: read_log: filter must be a string, got ${sent}`);
+  }
+
+  assert.equal((await readLog({ filter: null })).returnedLines, 3);
+});
+
+test('read_log caps its text at 64KB, keeping the newest lines and saying how many it dropped', async (t) => {
+  await withLog(t, numbered(1433, 'x'.repeat(95)));
+
+  const result = await readLog({ lines: 1433 });
+  assert.ok(Buffer.byteLength(result.content) <= 64 * 1024, `content was ${Buffer.byteLength(result.content)} bytes`);
+  assert.equal(result.truncated, true);
+  assert.equal(result.returnedLines + result.droppedLines, 1433);
+  assert.ok(result.droppedLines > 0);
+  assert.ok(result.content.endsWith(`${'x'.repeat(95)} 1433`), 'the newest line is kept');
+  assert.equal(result.content.split('\n').length, result.returnedLines);
+  assert.match(result.message, new RegExp(`${result.droppedLines} earlier lines dropped`));
+
+  const small = await readLog({ lines: 10 });
+  assert.equal(small.truncated, undefined, 'a reply under the cap is not flagged');
+});
+
+test('read_log keeps the end of a single line longer than the cap', async (t) => {
+  const huge = 'é'.repeat(40 * 1024) + 'END';
+  await withLog(t, `before\n${huge}\n`);
+
+  const result = await readLog({ lines: 2 });
+  assert.equal(result.truncated, true);
+  assert.equal(result.returnedLines, 1);
+  assert.equal(result.droppedLines, 1);
+  assert.match(result.message, /the newest line is cut to its last 65536 bytes, and 1 earlier line dropped/);
+
+  const alone = await readLog({ lines: 1 });
+  assert.equal(alone.droppedLines, 0);
+  assert.match(alone.message, /the newest line is cut to its last 65536 bytes\./);
+  assert.doesNotMatch(alone.message, /dropped/);
+  assert.ok(Buffer.byteLength(result.content) <= 64 * 1024);
+  assert.ok(result.content.endsWith('END'));
+  assert.doesNotMatch(result.content, /�/, 'the cut never splits a character');
+});
+
+test('read_log looks the log up again when it vanishes under it, with and without onlyNew', async (t) => {
+  const file = await withLog(t, numbered(3));
+  const original = { open: fsDefault.open, stat: fsDefault.stat };
+  t.after(() => Object.assign(fsDefault, original));
+
+  const vanishOnce = (method, nth) => {
+    let calls = 0;
+    let vanished = false;
+    fsDefault[method] = async (target, ...rest) => {
+      if (target === file && ++calls === nth) {
+        vanished = true;
+        throw Object.assign(new Error(`ENOENT: ${target}`), { code: 'ENOENT' });
+      }
+      return original[method](target, ...rest);
+    };
+    return () => vanished;
+  };
+
+  const readVanished = vanishOnce('open', 1);
+  assert.equal((await readLog({})).content, 'line 1\nline 2\nline 3');
+  assert.ok(readVanished(), 'the read never hit the vanished file');
+
+  const statVanished = vanishOnce('stat', 2);
+  assert.equal((await readNew({})).isBaseline, true);
+  assert.ok(statVanished(), 'the onlyNew read never hit the vanished file');
+});
+
+test('read_log with onlyNew starts with the last 20 lines of the log', async (t) => {
+  await withLog(t, numbered(30));
+  const baseline = await readNew({});
+  assert.equal(baseline.isBaseline, true);
+  assert.equal(baseline.newLines, 20);
+  assert.equal(baseline.content.split('\n')[0], 'line 11');
+  assert.ok(baseline.content.endsWith('line 30'));
+});
+
+test('read_log with onlyNew restarts as a baseline when the log is truncated in place', async (t) => {
+  const file = await withLog(t, numbered(30));
+  await readNew({});
+  const { ino } = await fs.stat(file);
+
+  await fs.writeFile(file, 'fresh start\n');
+  assert.equal((await fs.stat(file)).ino, ino, 'the file was truncated, not replaced');
+
+  const after = await readNew({});
+  assert.equal(after.isBaseline, true);
+  assert.equal(after.content, 'fresh start');
+});
+
+test('read_log with onlyNew restarts as a baseline when the game rewrote the log in place past the old position', async (t) => {
+  const file = await withLog(t, numbered(30, 'old run'));
+  await readNew({});
+  const { ino } = await fs.stat(file);
+
+  await fs.writeFile(file, numbered(60, 'new run'));
+  assert.equal((await fs.stat(file)).ino, ino, 'the file was rewritten in place, not replaced');
+
+  const after = await readNew({});
+  assert.equal(after.isBaseline, true, 'the old position was read as if the new run had appended to the old one');
+  assert.ok(after.content.endsWith('new run 60'));
+});
+
+test('read_log with onlyNew holds back a line still being written and reads CRLF lines whole', async (t) => {
+  const file = await withLog(t, 'first\r\n');
+  await readNew({});
+
+  await fs.appendFile(file, 'second\r\n\r\nhalf a li');
+  const partial = await readNew({});
+  assert.equal(partial.content, 'second');
+  assert.equal(partial.newLines, 1, 'a blank CRLF line is not a new line');
+
+  await fs.appendFile(file, 'ne\r\n');
+  const rest = await readNew({});
+  assert.equal(rest.content, 'half a line');
+  assert.equal(rest.newLines, 1);
+});
+
+test('read_log with onlyNew cuts a huge delta at a line boundary', async (t) => {
+  const file = await withLog(t, 'start\n');
+  await readNew({});
+  await fs.appendFile(file, Array.from({ length: 3000 }, (_, i) => `${'y'.repeat(97)}${String(i).padStart(4, '0')}`).join('\n') + '\n');
+
+  const delta = await readNew({});
+  assert.equal(delta.truncated, true);
+  assert.match(delta.content.split('\n')[0], /^y{97}\d{4}$/, 'the first line is whole');
+});
+
+test('a baseline never repeats lines the next onlyNew call returns', async (t) => {
+  const file = await withLog(t, numbered(5));
+  const baseline = await readNew({});
+  await fs.appendFile(file, 'line 6\n');
+  const next = await readNew({});
+  assert.equal(next.content, 'line 6');
+  assert.ok(!baseline.content.includes('line 6'));
+});
+
+test('parallel onlyNew calls hand each new line out once', async (t) => {
+  const file = await withLog(t, numbered(3));
+  await readNew({});
+  await fs.appendFile(file, 'line 4\nline 5\n');
+
+  const replies = await Promise.all([readNew({}), readNew({}), readNew({})]);
+  assert.deepEqual(replies.map((reply) => reply.newLines).sort(), [0, 0, 2]);
+});
+
+test('onlyNew keeps reading the file it started on while that file is still written', fakeHomeWorks, async () => {
+  await withFakeHome(async ({ profileLog, writePlayerLog, playerLogPath }) => {
+    const umm = await profileLog('Test-Only-8c02', 'umm line 1\n', new Date());
+    const baseline = await readNew({});
+    assert.equal(baseline.path, umm);
+
+    await writePlayerLog('the player log turns up\n', new Date());
+    await fs.appendFile(umm, 'umm line 2\n');
+    const next = await readNew({});
+    assert.equal(next.path, umm, 'the read switched files and rebaselined');
+    assert.equal(next.isBaseline, false);
+    assert.equal(next.content, 'umm line 2');
+
+    assert.equal((await readLog({ lines: 1 })).path, playerLogPath, 'a plain read takes the player log');
+  });
+});
+
+test('the player log paths wait for the Proton detection, so the first read after a start finds the prefix log', fakeHomeWorks, async () => {
+  const { unityClient, targetLogPaths } = await import('../index.js');
+  await withFakeHome(async () => {
+    const prefix = await fs.mkdtemp(path.join(os.tmpdir(), 'proton-prefix-'));
+    const outputLog = path.join(prefix, 'drive_c/users/steamuser/AppData/LocalLow/Free Lives/Broforce/output_log.txt');
+    await fs.mkdir(path.dirname(outputLog), { recursive: true });
+    await fs.writeFile(outputLog, 'proton run\n');
+
+    const original = unityClient.detectPlatform;
+    unityClient.detectPlatform = async function detectLater() {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      this.platform = 'linux';
+      this.protonPrefix = prefix;
+    };
+    try {
+      assert.equal((await targetLogPaths()).player, outputLog);
+    } finally {
+      unityClient.detectPlatform = original;
+      await fs.rm(prefix, { recursive: true, force: true });
+    }
+  });
+});
+
+test('while a game runs, the logs a test run snapshots name no player log it has not written', fakeHomeWorks, async () => {
+  const { targetLogPaths } = await import('../index.js');
+  await withFakeHome(async ({ profileLog, writePlayerLog }) => {
+    const started = Date.now() - 60000;
+    const old = new Date(started - 3600000);
+    await writePlayerLog('another install\n', old);
+    const live = await profileLog('Test-Live-8c02', 'this run\n', new Date());
+
+    assert.deepEqual(await targetLogPaths({ detectProfile: async () => 'Test-Live-8c02', startTime: async () => started }), { umm: live, player: null });
+
+    process.env.UNITY_INSPECTOR_LOG = live;
+    try {
+      assert.deepEqual(await targetLogPaths({ startTime: async () => started }), { umm: live, player: null }, 'a UMM override follows the same rule');
+    } finally {
+      delete process.env.UNITY_INSPECTOR_LOG;
+    }
+  });
 });

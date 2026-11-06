@@ -1,0 +1,2781 @@
+{
+  "name": "Inspection tools over value kinds and path forms",
+  "description": "Covers list_gameobjects, inspect_gameobject, inspect_component, modify_component and query_gameobjects over every value kind (int, float, bool, string, enum, Vector2/Vector3, Color, Quaternion, arrays, Lists and Dictionaries, null, UnityEngine.Object references, private fields, properties, statics, consts), dotted member paths, shared* twins, unknown members with suggestions, and every path form: by name, by path, a [local] suffix, duplicates, inactive roots and children, a root whose name holds a slash. Also the detailed walk, the size of the largest replies with the 100-child cap and the detailed budget, and both caps through inspect_gameobject itself on a probe with 105 children and ten 9,000-character fields, whole-name * and ? globs, a component named by its full type name, a member read while a MonoBehaviour's Update holds the main thread past the read's 5 s budget, then the read once it is free; instance ids, a GameObject and a component resolved by instanceId directly and as a highlight, matches and asset refusals, direct and through a reference, list indexes and collections, static getters left unrun, read errors, strict conversion, write read-back with a value the game resets each frame, a stale script type, the screenshot folder recreated and pruned, and ping and game_state with the main thread held. Writes go to probe objects the script creates (UimProbe, UimDup, UimInactive, UimBudgetProbe) and to HeroController statics and fields it records first. It changes no Utility Mod setting itself: its restore only puts back what a failed spawning.json run recorded, so a settings save during the run writes the user's values. Its first steps undo whatever an earlier run left changed; its last steps restore the HeroController values, destroy the probes and reload the level it started in. Its cleanup runs the restore again whatever ended the steps: pause, speed, the second player, IronBro, the lock, the Swap Bros selection, the Utility Mod settings that a failed spawning run recorded, and the HeroController values it recorded.",
+  "steps": [
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "escape"
+      },
+      "until": {
+        "timeout": 90,
+        "interval": 1
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 1000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nstring log = \"\";\ntry { if (PauseController.pauseStatus != PauseStatus.UnPaused) { PauseController.SetPause(PauseStatus.UnPaused); log += \"unpaused \"; } } catch (System.Exception ex) { log += \"unpause failed: \" + ex.Message + \" \"; }\nif (UnityEngine.Time.timeScale != 1f) { UnityEngine.Time.timeScale = 1f; log += \"speed1 \"; }\ntry { if (d.GetData(\"uimtest.joined\") != null && HeroController.IsPlaying(1)) { HeroController.Dropout(1, false); log += \"dropped1 \"; } } catch (System.Exception ex) { log += \"dropout failed: \" + ex.Message + \" \"; }\nd.SetData(\"uimtest.joined\", null);\nvar hc = d.GetData(\"uimtest.ironbro\") as string;\nd.SetData(\"uimtest.ironbro\", null);\ntry {\n  var save = GameState.Instance.currentWorldmapSave;\n  if (hc != null && save != null) {\n    var parts = hc.Split(':');\n    save.worldMapIsHardcoreCampaign = parts[0] == \"1\";\n    save.hardcoreLives = int.Parse(parts[1]);\n    save.hardcoreModeAvailableBros.Clear();\n    foreach (var n in parts[2].Split(',')) if (n.Length > 0) save.hardcoreModeAvailableBros.Add((HeroType)System.Enum.Parse(typeof(HeroType), n));\n    log += \"ironbro-restored \";\n  }\n} catch (System.Exception ex) { log += \"ironbro restore failed: \" + ex.Message + \" \"; }\nvar lk = d.GetData(\"uimtest.lock\") as string;\nd.SetData(\"uimtest.lock\", null);\ntry {\n  if (lk != null) {\n    var fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\n    var t = System.Type.GetType(\"BroMakerLib.Unlocks.BroUnlockManager, BroMakerLib\");\n    var pd = t.GetField(\"progressData\", fl).GetValue(null);\n    var states = pd.GetType().GetProperty(\"BroStates\").GetValue(pd, null) as System.Collections.IDictionary;\n    var st = states[lk];\n    st.GetType().GetProperty(\"IsUnlocked\").SetValue(st, true, null);\n    st.GetType().GetProperty(\"UnlockedDate\").SetValue(st, d.GetData(\"uimtest.lock.date\"), null);\n    var names = t.GetProperty(\"UnlockedBroNames\", fl).GetValue(null, null) as System.Collections.Generic.List<string>;\n    var bros = t.GetProperty(\"UnlockedBros\", fl).GetValue(null, null) as System.Collections.IList;\n    int ni = (int)d.GetData(\"uimtest.lock.ni\"); if (ni < 0 || ni > names.Count) ni = names.Count;\n    if (!names.Contains(lk)) names.Insert(ni, lk);\n    var hero = d.GetData(\"uimtest.lock.hero\");\n    int hi = (int)d.GetData(\"uimtest.lock.hi\"); if (hi < 0 || hi > bros.Count) hi = bros.Count;\n    if (hero != null && !bros.Contains(hero)) bros.Insert(hi, hero);\n    typeof(BroMakerLib.Storages.BroSpawnManager).GetMethod(\"BroStatusChanged\", fl).Invoke(null, null);\n    log += \"unlocked \" + lk + \" \";\n  }\n} catch (System.Exception ex) { log += \"unlock failed: \" + ex.Message + \" \"; }\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); set.selGridInt[i] = ix < 0 ? 0 : ix; }\n    log += \"swap-settings-restored \";\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nvar fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\nstring log = \"\";\nvar ums = d.GetData(\"uimtest.u3.ums\") as string;\nd.SetData(\"uimtest.u3.ums\", null);\ntry {\n  if (ums != null) {\nSystem.Type um = null;\nforeach (var a in System.AppDomain.CurrentDomain.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\nvar umEnabled = um.GetField(\"enabled\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);\nvar umSettings = um.GetField(\"settings\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null);\nvar umDisable = umSettings.GetType().GetField(\"disableEnemySpawn\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\n    var p = ums.Split('|');\n    umEnabled.SetValue(null, p[0] == \"True\");\n    umDisable.SetValue(umSettings, p[1] == \"True\");\n    log += \"utility-mod-restored \";\n  }\n} catch (System.Exception ex) { log += \"utility mod restore failed: \" + ex.Message + \" \"; }\nvar hcs = d.GetData(\"uimtest.u3.hc\") as string;\nd.SetData(\"uimtest.u3.hc\", null);\ntry {\n  if (hcs != null) {\n    var p = hcs.Split('|');\n    HeroController.mustShowHUDS = p[0] == \"True\";\n    typeof(HeroController).GetField(\"doubleBroSevenAvatarCount\", fl).SetValue(null, int.Parse(p[1], ic));\n    var hc = UnityEngine.Object.FindObjectOfType<HeroController>();\n    if (hc != null) {\n      var ifl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance;\n      typeof(HeroController).GetField(\"explosivesCounter\", ifl).SetValue(hc, float.Parse(p[2], ic));\n      var c = p[3].Split(',');\n      hc.infoBarColor = new Color(float.Parse(c[0], ic), float.Parse(c[1], ic), float.Parse(c[2], ic), float.Parse(c[3], ic));\n      var ds = p[4].Split(',');\n      var arr = new float[ds.Length];\n      for (int i = 0; i < ds.Length; i++) arr[i] = float.Parse(ds[i], ic);\n      typeof(HeroController).GetField(\"suicideBroSpawnDelay\", ifl).SetValue(hc, arr);\n    }\n    log += \"hero-controller-restored \";\n  }\n} catch (System.Exception ex) { log += \"hero controller restore failed: \" + ex.Message + \" \"; }\ntry {\n  string dropped = \"\";\n  for (int i = 1; i < 4; i++) if (HeroController.IsPlaying(i)) { HeroController.Dropout(i, false); dropped += i; }\n  if (dropped.Length > 0) log += \"dropped-in-players-removed=\" + dropped + \" \";\n} catch (System.Exception ex) { log += \"drop-in removal failed: \" + ex.Message + \" \"; }\ntry {\n  string[] probes = { \"UimProbe\", \"UimDup\", \"UimInactive\", \"UimConstHolder\", \"UimShotProbe\", \"UimFarProbe\", \"UimBareProbe\", \"UimHiddenProbe\" };\n  int gone = 0;\n  foreach (var tr in Resources.FindObjectsOfTypeAll<Transform>()) {\n    if (tr == null || tr.parent != null || !tr.gameObject.scene.IsValid()) continue;\n    if (System.Array.IndexOf(probes, tr.name) < 0) continue;\n    UnityEngine.Object.DestroyImmediate(tr.gameObject);\n    gone++;\n  }\n  if (gone > 0) log += \"probes-destroyed=\" + gone + \" \";\n} catch (System.Exception ex) { log += \"probe cleanup failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar sc = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;\nvar camp = LevelSelectionController.currentCampaign;\nstring key = sc + \"|\" + (camp == null ? \"\" : camp.name) + \"|\" + LevelSelectionController.CurrentLevelNum;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nfloat now = UnityEngine.Time.realtimeSinceStartup;\nvar last = d.GetData(\"uimtest.settle\") as string;\nint cut = last == null ? -1 : last.LastIndexOf('|');\nif (last == null || last.Substring(0, cut) != key) {\n  d.SetData(\"uimtest.settle\", key + \"|\" + now.ToString(ic));\n  return \"waiting: \" + sc + \" just came up\";\n}\nfloat since = now - float.Parse(last.Substring(cut + 1), ic);\nif (sc == \"LoadingScreen\") return \"waiting: loading\";\nif (LevelSelectionController.IsCampaignScene) {\n  if (HeroController.Instance == null || Map.Instance == null || GameModeController.Instance == null) return \"waiting: the level is still being built\";\n  var wt = typeof(GameModeController).GetField(\"winTimer\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\n  if (GameModeController.IsLevelFinished() && (float)wt.GetValue(GameModeController.Instance) < 999999f) return \"waiting: the level finished and is moving on\";\n}\nif (since < 4f) return \"waiting: \" + sc + \" unchanged for \" + since.ToString(\"0.0\", ic) + \" s\";\nreturn \"settled in \" + sc;"
+      },
+      "until": {
+        "timeout": 90,
+        "interval": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "settled in"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar set = Swap_Bros_Mod.Main.settings;\nSwap_Bros_Mod.API.EnsureBroListUpdated();\nvar l = Swap_Bros_Mod.Main.currentBroList;\nstring sw = set.alwaysChosen + \"|\" + set.ignoreCurrentUnlocked;\nfor (int i = 0; i < 4; i++) sw += \"|\" + l[set.selGridInt[i]];\nd.SetData(\"uimtest.swap\", sw);\nd.SetData(\"uimtest.found\", sw);\nstring lv = \"0|1\";\nif (LevelSelectionController.IsCampaignScene && LevelSelectionController.currentCampaign != null) {\n  var all = typeof(Unity_Inspector_Mod.StateModifier).GetField(\"CampaignNames\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null) as string[];\n  for (int i = 0; i < all.Length; i++) if (string.Equals(all[i], LevelSelectionController.currentCampaign.name, System.StringComparison.OrdinalIgnoreCase)) lv = i + \"|\" + LevelSelectionController.CurrentLevelNum;\n}\nd.SetData(\"uimtest.level\", lv);\nd.SetData(\"uimtest.settle\", null);\nreturn \"recorded swap=\" + sw + \" level=\" + d.GetData(\"uimtest.level\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "recorded swap="
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar rec = (d.GetData(\"uimtest.level\") as string) ?? \"0|1\";\n\nvar p = rec.Split('|');\nvar r = Unity_Inspector_Mod.StateModifier.GoToLevel(int.Parse(p[0]), int.Parse(p[1]));\nvar j = Newtonsoft.Json.Linq.JToken.FromObject(r);\nreturn \"loading recorded level \" + rec + \": success=\" + j[\"success\"] + \" \" + j.ToString(Newtonsoft.Json.Formatting.None);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "success=True"
+        ]
+      },
+      "wait": 6000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var ic = System.Globalization.CultureInfo.InvariantCulture;\nvar hc = UnityEngine.Object.FindObjectOfType<HeroController>();\nvar ifl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance;\nvar col = hc.infoBarColor;\nvar delays = (float[])typeof(HeroController).GetField(\"suicideBroSpawnDelay\", ifl).GetValue(hc);\nstring ds = \"\";\nfor (int i = 0; i < delays.Length; i++) ds += (i > 0 ? \",\" : \"\") + delays[i].ToString(\"R\", ic);\nstring snap = HeroController.mustShowHUDS + \"|\" + ((int)typeof(HeroController).GetField(\"doubleBroSevenAvatarCount\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null)).ToString(ic) + \"|\" + ((float)typeof(HeroController).GetField(\"explosivesCounter\", ifl).GetValue(hc)).ToString(\"R\", ic) + \"|\" + col.r.ToString(\"R\", ic) + \",\" + col.g.ToString(\"R\", ic) + \",\" + col.b.ToString(\"R\", ic) + \",\" + col.a.ToString(\"R\", ic) + \"|\" + ds;\nvar d = System.AppDomain.CurrentDomain;\nif (d.GetData(\"uimtest.u3.hc\") == null) d.SetData(\"uimtest.u3.hc\", snap);\nd.SetData(\"uimtest.u3.hc.found\", snap);\nreturn \"recorded hero controller \" + d.GetData(\"uimtest.u3.hc\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "recorded hero controller"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "foreach (var n in new[] { \"UimProbe\", \"UimDup\", \"UimInactive\", \"UimBudgetProbe\", \"UimPinned\", \"UimLateHolder\", \"UimStaleHolder\" }) {\n  foreach (var tr in Resources.FindObjectsOfTypeAll<Transform>())\n    if (tr != null && tr.parent == null && tr.name == n && tr.gameObject.scene.IsValid()) UnityEngine.Object.DestroyImmediate(tr.gameObject);\n}\nvar probe = new GameObject(\"UimProbe\");\nprobe.transform.position = new Vector3(100f, 200f, 0f);\nvar sr = probe.AddComponent<SpriteRenderer>();\nsr.color = new Color(1f, 0.5f, 0.25f, 1f);\nsr.sortingOrder = 3;\nSystem.AppDomain.CurrentDomain.SetData(\"uimtest.sizey\", sr.size.y.ToString(System.Globalization.CultureInfo.InvariantCulture));\nnew GameObject(\"Visible Child\").transform.parent = probe.transform;\nvar hidden = new GameObject(\"Hidden Child (x)\");\nhidden.transform.parent = probe.transform;\nhidden.SetActive(false);\nvar dup1 = new GameObject(\"UimDup\");\ndup1.transform.position = new Vector3(1f, 0f, 0f);\ndup1.AddComponent<SpriteRenderer>();\nnew GameObject(\"UimDup\").transform.position = new Vector3(2f, 0f, 0f);\nvar inactive = new GameObject(\"UimInactive\");\ninactive.SetActive(false);\ninactive.AddComponent<TestVanDammeAnim>();\nvar holder = new GameObject(\"Rambro holder\");\nholder.transform.parent = inactive.transform;\nholder.AddComponent<Rambro>();\nreturn \"probes created: UimProbe, 2 x UimDup, UimInactive (inactive, TestVanDammeAnim, Rambro holder)\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "probes created"
+        ]
+      }
+    },
+    {
+      "command": "list_gameobjects",
+      "params": {
+        "includeInactive": false,
+        "maxResults": 3
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"returnedCount\": 3",
+          "\"truncated\": true",
+          "\"path\": \"/",
+          "\"isActive\": true"
+        ]
+      }
+    },
+    {
+      "command": "list_gameobjects",
+      "params": {
+        "includeInactive": true,
+        "maxResults": 0
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "maxResults must be at least 1, got 0"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "inspect_gameobject",
+      "params": {
+        "path": "/UimProbe"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"name\": \"UimProbe\"",
+          "\"isActive\": true",
+          "\"x\": 100",
+          "\"type\": \"SpriteRenderer\"",
+          "\"path\": \"/UimProbe/Visible Child\"",
+          "\"path\": \"/UimProbe/Hidden Child (x)\""
+        ],
+        "notContains": [
+          "childrenTruncated"
+        ]
+      }
+    },
+    {
+      "command": "inspect_gameobject",
+      "params": {
+        "path": "UimProbe"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"path\": \"/UimProbe\""
+        ]
+      }
+    },
+    {
+      "command": "inspect_gameobject",
+      "params": {
+        "path": "Visible Child"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"path\": \"/UimProbe/Visible Child\""
+        ]
+      }
+    },
+    {
+      "command": "inspect_gameobject",
+      "params": {
+        "path": "/UimProbe/Hidden Child (x)"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"name\": \"Hidden Child (x)\"",
+          "\"isActive\": false"
+        ]
+      }
+    },
+    {
+      "command": "inspect_gameobject",
+      "params": {
+        "path": "/UimInactive"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"path\": \"/UimInactive\"",
+          "\"isActive\": false",
+          "\"type\": \"TestVanDammeAnim\""
+        ]
+      }
+    },
+    {
+      "command": "inspect_gameobject",
+      "params": {
+        "path": "/PlayerPrefab(Clone) [local]"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"name\": \"PlayerPrefab(Clone) [local]\"",
+          "\"type\": \"Player\""
+        ]
+      }
+    },
+    {
+      "command": "inspect_gameobject",
+      "params": {
+        "path": "/PlayerPrefab(Clone)"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "GameObject not found: /PlayerPrefab(Clone)"
+        ]
+      }
+    },
+    {
+      "command": "inspect_gameobject",
+      "params": {
+        "path": "/UimDup"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"name\": \"UimDup\"",
+          "\"path\": \"/UimDup\"",
+          "\"matches\": 2"
+        ]
+      }
+    },
+    {
+      "command": "inspect_gameobject",
+      "params": {
+        "path": "/ApplicationUtility/MonoBehaviourEventCatcher"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"name\": \"ApplicationUtility/MonoBehaviourEventCatcher\""
+        ]
+      }
+    },
+    {
+      "command": "inspect_gameobject",
+      "params": {
+        "path": "/PlasmaBullet"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"name\": \"PlasmaBullet\"",
+          "\"type\": \"PlasmaBullet\"",
+          "\"isAsset\": true"
+        ]
+      }
+    },
+    {
+      "command": "inspect_gameobject",
+      "params": {
+        "path": "/NoSuchObject"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "GameObject not found: /NoSuchObject"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "inspect_gameobject",
+      "params": {
+        "path": "/UimProbe/Hidden Child (x)",
+        "detailed": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"components\": [",
+          "\"localToWorldMatrix\"",
+          "\"transform\": {"
+        ],
+        "notContains": [
+          "\"truncated\": true"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/HeroContoller",
+        "componentType": "HeroController"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"mustShowHUDS\": ",
+          "\"doubleBroSevenAvatarCount\": ",
+          "\"explosivesCounter\": ",
+          "\"infoBarColor\": {",
+          "\"listType\": \"List<HeroSetupKeyPair>\"",
+          "\"dictionaryType\": \"Dictionary<HeroType, HeroDefinition>\"",
+          "\"arrayType\": \"Single\"",
+          "\"methods\": ["
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimInactive",
+        "componentType": "TestVanDammeAnim"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"_skipped\": \"Complex type skipped\""
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimInactive/Rambro holder",
+        "componentType": "Rambro"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"type\": \"Rambro\"",
+          "\"heroType\": ",
+          "\"methods\": ["
+        ],
+        "notContains": [
+          "_skipped"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimProbe",
+        "componentType": "Rigidbody"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Component Rigidbody not found on GameObject UimProbe"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/NoSuchObject",
+        "componentType": "Transform"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "GameObject not found: /NoSuchObject"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimProbe",
+        "componentType": "SpriteRenderer",
+        "memberPath": "sortingOrder"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"declaringType\": \"Renderer\"",
+          "\"memberType\": \"Int32\"",
+          "\"isStatic\": false",
+          "\"value\": 3"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimProbe",
+        "componentType": "SpriteRenderer",
+        "memberPath": "color"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"memberType\": \"Color\"",
+          "\"r\": 1",
+          "\"g\": 0.5",
+          "\"b\": 0.25"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimProbe",
+        "componentType": "SpriteRenderer",
+        "memberPath": "sprite"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"memberType\": \"Sprite\"",
+          "\"value\": null"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/HeroContoller",
+        "componentType": "HeroController",
+        "memberPath": "mustShowHUDS"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"memberType\": \"Boolean\"",
+          "\"isStatic\": true"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/HeroContoller",
+        "componentType": "HeroController",
+        "memberPath": "doubleBroSevenAvatarCount"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"memberType\": \"Int32\"",
+          "\"isStatic\": true"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/HeroContoller",
+        "componentType": "HeroController",
+        "memberPath": "explosivesCounter"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"memberType\": \"Single\"",
+          "\"isStatic\": false"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/HeroContoller",
+        "componentType": "HeroController",
+        "memberPath": "forceSpecificBro"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"memberType\": \"HeroType\"",
+          "\"value\": \""
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/HeroContoller",
+        "componentType": "HeroController",
+        "memberPath": "suicideBroSpawnDelay"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"arrayType\": \"Single\"",
+          "\"length\": 4",
+          "\"items\": ["
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/HeroContoller",
+        "componentType": "HeroController",
+        "memberPath": "playerNames"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"memberType\": \"String[]\"",
+          "\"arrayType\": \"String\"",
+          "\"isStatic\": true"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/HeroContoller",
+        "componentType": "HeroController",
+        "memberPath": "heroList"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"memberType\": \"List<HeroSetupKeyPair>\"",
+          "\"listType\": \"List<HeroSetupKeyPair>\"",
+          "\"count\": ",
+          "\"items\": ["
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/HeroContoller",
+        "componentType": "HeroController",
+        "memberPath": "blankAvatar"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"memberType\": \"Material\"",
+          "\"type\": \"Material\"",
+          "\"instanceId\": "
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/HeroContoller",
+        "componentType": "HeroController",
+        "memberPath": "lastCameraFollowPos"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"memberType\": \"Vector3\"",
+          "\"isStatic\": true",
+          "\"z\": "
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/PlayerPrefab(Clone) [local]",
+        "componentType": "Player",
+        "memberPath": "AFKTimeLimit"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"memberPath\": \"AFKTimeLimit\"",
+          "\"isStatic\": true"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimProbe",
+        "componentType": "Transform",
+        "memberPath": "localScale.x"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"declaringType\": \"Vector3\"",
+          "\"memberType\": \"Single\"",
+          "\"value\": 1"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/HeroContoller",
+        "componentType": "HeroController",
+        "memberPath": "players.Length"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"declaringType\": \"Array\"",
+          "\"value\": 4"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimProbe",
+        "componentType": "Transform",
+        "memberPath": "localPostion.x"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "\"reason\": \"not-found\"",
+          "\"suggestions\": [",
+          "\"localPosition\""
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimProbe",
+        "componentType": "Transform",
+        "memberPath": "localScale.xx"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "\"reason\": \"not-found\"",
+          "\"localScale.x\""
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimProbe",
+        "componentType": "SpriteRenderer",
+        "memberPath": "sprite.name"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "\"reason\": \"error\"",
+          "Cannot resolve 'sprite.name': 'sprite' is null"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimProbe",
+        "componentType": "Transform",
+        "memberPath": "localScale..x"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Member path 'localScale..x' has an empty segment"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimProbe",
+        "componentType": "SpriteRenderer",
+        "memberPath": "material"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "\"reason\": \"error\"",
+          "may create instance"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimProbe",
+        "componentType": "SpriteRenderer",
+        "memberPath": "material.color"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "would instantiate a copy of Renderer.material - walk through sharedMaterial instead"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimProbe",
+        "componentType": "SpriteRenderer",
+        "memberPath": "sharedMaterial.name"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"declaringType\": \"Object\"",
+          "\"value\": \""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "uim-const-probe",
+        "source": "public class UimConstProbe : MonoBehaviour\n{\n    public const string NullConst = null;\n    public const string TextConst = \"text\";\n    public const int IntConst = 7;\n    public int plain = 3;\n}\n\npublic static class UimConstProbeScript\n{\n    public static void Main()\n    {\n        var go = new GameObject(\"UimConstHolder\");\n        ScriptContext.GameObjects.Add(go);\n        go.AddComponent<UimConstProbe>();\n        ScriptContext.Logger(\"const probe attached\");\n    }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"const probe attached\""
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimConstHolder",
+        "componentType": "UimConstProbe"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"NullConst\": null",
+          "\"TextConst\": \"text\"",
+          "\"IntConst\": 7",
+          "\"plain\": 3"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimConstHolder",
+        "componentType": "UimConstProbe",
+        "memberPath": "NullConst"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"memberType\": \"String\"",
+          "\"value\": null"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimConstHolder",
+        "component": "UimConstProbe",
+        "properties": {
+          "NullConst": "x",
+          "plain": 4
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"plain\"",
+          "\"property\": \"NullConst\"",
+          "\"reason\": \"read-only\"",
+          "is a constant"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return 1 + 1;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "uim-const-probe"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimProbe",
+        "component": "Transform",
+        "properties": {}
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "No properties were given"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/HeroContoller",
+        "component": "HeroController",
+        "properties": {
+          "mustShowHUDS": false
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"mustShowHUDS\"",
+          "\"errors\": []"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/HeroContoller",
+        "componentType": "HeroController",
+        "memberPath": "mustShowHUDS"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"value\": false"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/HeroContoller",
+        "component": "HeroController",
+        "properties": {
+          "doubleBroSevenAvatarCount": 7
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"doubleBroSevenAvatarCount\"",
+          "\"errors\": []"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/HeroContoller",
+        "component": "HeroController",
+        "properties": {
+          "explosivesCounter": 2.5
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"explosivesCounter\"",
+          "\"errors\": []"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/HeroContoller",
+        "component": "HeroController",
+        "properties": {
+          "suicideBroSpawnDelay": [
+            -1,
+            -1.5,
+            -2,
+            -2.5
+          ]
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"suicideBroSpawnDelay\"",
+          "\"errors\": []"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/HeroContoller",
+        "component": "HeroController",
+        "properties": {
+          "infoBarColor.r": 0.5
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"infoBarColor.r\"",
+          "\"errors\": []"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var hc = UnityEngine.Object.FindObjectOfType<HeroController>();\nvar ifl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance;\nvar sfl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nvar delays = (float[])typeof(HeroController).GetField(\"suicideBroSpawnDelay\", ifl).GetValue(hc);\nstring ds = \"\";\nfor (int i = 0; i < delays.Length; i++) ds += (i > 0 ? \",\" : \"\") + delays[i].ToString(ic);\nreturn \"mustShowHUDS=\" + HeroController.mustShowHUDS\n  + \" doubleBroSevenAvatarCount=\" + typeof(HeroController).GetField(\"doubleBroSevenAvatarCount\", sfl).GetValue(null)\n  + \" explosivesCounter=\" + ((float)typeof(HeroController).GetField(\"explosivesCounter\", ifl).GetValue(hc)).ToString(ic)\n  + \" infoBarColor.r=\" + hc.infoBarColor.r.ToString(ic)\n  + \" suicideBroSpawnDelay=\" + ds;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "mustShowHUDS=False",
+          "doubleBroSevenAvatarCount=7",
+          "explosivesCounter=2.5",
+          "infoBarColor.r=0.5",
+          "suicideBroSpawnDelay=-1,-1.5,-2,-2.5"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimProbe",
+        "component": "SpriteRenderer",
+        "properties": {
+          "enabled": false,
+          "flipX": true
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"enabled\"",
+          "\"flipX\"",
+          "\"errors\": []"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimProbe",
+        "component": "SpriteRenderer",
+        "properties": {
+          "shadowCastingMode": "TwoSided"
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"shadowCastingMode\"",
+          "\"errors\": []"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimProbe",
+        "componentType": "SpriteRenderer",
+        "memberPath": "shadowCastingMode"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"value\": \"TwoSided\""
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimProbe",
+        "component": "SpriteRenderer",
+        "properties": {
+          "shadowCastingMode": 3
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"shadowCastingMode\"",
+          "\"errors\": []"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimProbe",
+        "component": "Transform",
+        "properties": {
+          "localPosition": {
+            "x": 110,
+            "y": 210
+          }
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"localPosition\"",
+          "\"errors\": []"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimProbe",
+        "component": "SpriteRenderer",
+        "properties": {
+          "color": {
+            "r": 0.25,
+            "g": 0.75
+          }
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"color\"",
+          "\"errors\": []"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimProbe",
+        "component": "SpriteRenderer",
+        "properties": {
+          "size": {
+            "x": 2
+          }
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"size\"",
+          "\"errors\": []"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimProbe",
+        "component": "Transform",
+        "properties": {
+          "localRotation": {
+            "euler": {
+              "z": 90
+            }
+          }
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"localRotation\"",
+          "\"errors\": []"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimProbe",
+        "component": "Transform",
+        "properties": {
+          "localScale.x": 3
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"localScale.x\"",
+          "\"errors\": []"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimProbe",
+        "component": "Transform",
+        "properties": {
+          "localScale.y": 2,
+          "nope": 3
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"localScale.y\"",
+          "\"property\": \"nope\"",
+          "\"reason\": \"not-found\""
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimProbe",
+        "component": "UnityEngine.SpriteRenderer",
+        "properties": {
+          "sortingOrder": 7
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"sortingOrder\"",
+          "\"errors\": []"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimProbe/Visible Child",
+        "component": "Transform",
+        "properties": {
+          "name": "Renamed Child"
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"name\"",
+          "\"errors\": []"
+        ]
+      }
+    },
+    {
+      "command": "inspect_gameobject",
+      "params": {
+        "path": "/UimProbe/Renamed Child"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"name\": \"Renamed Child\""
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "UimProbe/Hidden Child (x)",
+        "component": "Transform",
+        "properties": {
+          "localPosition": {
+            "x": 5
+          }
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"localPosition\"",
+          "\"errors\": []"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var p = GameObject.Find(\"UimProbe\");\nvar sr = p.GetComponent<SpriteRenderer>();\nvar t = p.transform;\nvar renamed = p.transform.Find(\"Renamed Child\");\nvar hidden = p.transform.Find(\"Hidden Child (x)\");\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nreturn \"localPosition=\" + t.localPosition.x.ToString(ic) + \",\" + t.localPosition.y.ToString(ic) + \",\" + t.localPosition.z.ToString(ic)\n  + \" scale=\" + t.localScale.x.ToString(ic) + \",\" + t.localScale.y.ToString(ic) + \",\" + t.localScale.z.ToString(ic)\n  + \" rotZ=\" + System.Math.Round(t.localEulerAngles.z).ToString(ic)\n  + \" color=\" + sr.color.r.ToString(ic) + \",\" + sr.color.g.ToString(ic) + \",\" + sr.color.b.ToString(ic) + \",\" + sr.color.a.ToString(ic)\n  + \" sortingOrder=\" + sr.sortingOrder + \" enabled=\" + sr.enabled + \" flipX=\" + sr.flipX + \" shadows=\" + sr.shadowCastingMode\n  + \" size=\" + sr.size.x.ToString(ic) + \" sizeYKept=\" + (sr.size.y.ToString(ic) == (System.AppDomain.CurrentDomain.GetData(\"uimtest.sizey\") as string))\n  + \" renamed=\" + (renamed != null) + \" hiddenX=\" + (hidden == null ? \"none\" : hidden.localPosition.x.ToString(ic));"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "localPosition=110,210,0",
+          "scale=3,2,1",
+          "rotZ=90",
+          "color=0.25,0.75,0.25,1",
+          "sortingOrder=7",
+          "enabled=False",
+          "flipX=True",
+          "shadows=ShadowsOnly",
+          "size=2 sizeYKept=True",
+          "renamed=True",
+          "hiddenX=5"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimProbe",
+        "component": "SpriteRenderer",
+        "properties": {
+          "sortingOrder": null
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"sortingOrder\"",
+          "\"errors\": []"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimProbe",
+        "componentType": "SpriteRenderer",
+        "memberPath": "sortingOrder"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"value\": 0"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimProbe",
+        "component": "SpriteRenderer",
+        "properties": {
+          "sharedMaterial": "x"
+        }
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "\"reason\": \"error\"",
+          "sharedMaterial takes a Material, got \\\"x\\\""
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimProbe",
+        "component": "SpriteRenderer",
+        "properties": {
+          "sortingOrder": "abc"
+        }
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "\"reason\": \"error\""
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimProbe",
+        "component": "Transform",
+        "properties": {
+          "childCount": 5
+        }
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "\"reason\": \"read-only\"",
+          "Property Transform.childCount has no setter"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/PlayerPrefab(Clone) [local]",
+        "component": "Player",
+        "properties": {
+          "AFKTimeLimit": 5
+        }
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "\"reason\": \"read-only\"",
+          "is a constant"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/HeroContoller",
+        "component": "HeroController",
+        "properties": {
+          "mustShowHUD": true
+        }
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "\"reason\": \"not-found\"",
+          "\"mustShowHUDS\""
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimProbe",
+        "component": "Transform",
+        "properties": {
+          "localScale.xx": 1
+        }
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "\"reason\": \"not-found\"",
+          "\"localScale.x\""
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimProbe",
+        "component": "SpriteRenderer",
+        "properties": {
+          "material.color": {
+            "r": 1
+          }
+        }
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "would instantiate a copy of Renderer.material"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimProbe",
+        "component": "Rigidbody",
+        "properties": {
+          "mass": 1
+        }
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Component Rigidbody not found on GameObject UimProbe"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/NoSuchObject",
+        "component": "Transform",
+        "properties": {
+          "localPosition": {
+            "x": 1
+          }
+        }
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "GameObject not found: /NoSuchObject"
+        ]
+      }
+    },
+    {
+      "command": "query_gameobjects",
+      "params": {
+        "namePattern": "UimDup"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"count\": 2",
+          "\"totalFound\": 2",
+          "\"hasComponent\": false"
+        ]
+      }
+    },
+    {
+      "command": "query_gameobjects",
+      "params": {
+        "namePattern": "uimdup"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"totalFound\": 0"
+        ]
+      }
+    },
+    {
+      "command": "query_gameobjects",
+      "params": {
+        "namePattern": "UimDup",
+        "componentType": "SpriteRenderer"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"count\": 1",
+          "\"resolvedType\": \"UnityEngine.SpriteRenderer\"",
+          "\"hasComponent\": true"
+        ]
+      }
+    },
+    {
+      "command": "query_gameobjects",
+      "params": {
+        "namePattern": "UimProbe",
+        "componentType": "Renderer"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"count\": 1",
+          "\"resolvedType\": \"UnityEngine.Renderer\"",
+          "\"path\": \"/UimProbe\""
+        ]
+      }
+    },
+    {
+      "command": "query_gameobjects",
+      "params": {
+        "namePattern": "Uim",
+        "componentType": "NoSuchType"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "No component type named NoSuchType is loaded"
+        ]
+      }
+    },
+    {
+      "command": "query_gameobjects",
+      "params": {
+        "namePattern": "Uim",
+        "componentType": "Rigidbody"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resolvedType\": \"UnityEngine.Rigidbody\"",
+          "\"totalFound\": 0"
+        ]
+      }
+    },
+    {
+      "command": "query_gameobjects",
+      "params": {
+        "namePattern": "Hidden Child",
+        "includeInactive": false
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"totalFound\": 0"
+        ]
+      }
+    },
+    {
+      "command": "query_gameobjects",
+      "params": {
+        "namePattern": "Hidden Child",
+        "includeInactive": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"totalFound\": 1",
+          "\"isActive\": false"
+        ]
+      }
+    },
+    {
+      "command": "query_gameobjects",
+      "params": {
+        "namePattern": "Uim",
+        "maxResults": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"count\": 1",
+          "\"totalFound\": 4"
+        ]
+      }
+    },
+    {
+      "command": "query_gameobjects",
+      "params": {
+        "namePattern": "Uim",
+        "maxResults": 0
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "maxResults must be at least 1, got 0"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimProbe",
+        "componentType": "UnityEngine.SpriteRenderer",
+        "memberPath": "sortingOrder"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"memberPath\": \"sortingOrder\"",
+          "\"memberType\": \"Int32\"",
+          "\"fullType\": \"UnityEngine.SpriteRenderer\""
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimProbe",
+        "componentType": "SpriteRenderer"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"sortingOrder\": ",
+          "\"sharedMaterial\": {",
+          "\"color\": {",
+          "\"material\": \"<not read: may create instance of Material - read sharedMaterial instead>\""
+        ],
+        "notContains": [
+          "<error reading Material"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimInactive",
+        "component": "Transform",
+        "properties": {
+          "localPosition": {
+            "x": 5
+          }
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"localPosition\"",
+          "\"errors\": []",
+          "\"gameObject\": \"/UimInactive\""
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/ApplicationUtility/MonoBehaviourEventCatcher",
+        "component": "Transform",
+        "properties": {
+          "localScale": {
+            "x": 1,
+            "y": 1,
+            "z": 1
+          }
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"localScale\"",
+          "\"errors\": []",
+          "\"gameObject\": \"/ApplicationUtility/MonoBehaviourEventCatcher\""
+        ]
+      }
+    },
+    {
+      "command": "query_gameobjects",
+      "params": {
+        "namePattern": "UimDu*"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"totalFound\": 2",
+          "\"count\": 2",
+          "\"path\": \"/UimDup\""
+        ]
+      }
+    },
+    {
+      "command": "query_gameobjects",
+      "params": {
+        "namePattern": "Uim?up"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"totalFound\": 2",
+          "\"name\": \"UimDup\""
+        ]
+      }
+    },
+    {
+      "command": "query_gameobjects",
+      "params": {
+        "namePattern": "Dup*"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"totalFound\": 0"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var go = HeroController.players[0].character.gameObject;\nvar j = Newtonsoft.Json.Linq.JToken.FromObject(Unity_Inspector_Mod.GameObjectInspector.InspectGameObject(go, true));\nvar text = j.ToString(Newtonsoft.Json.Formatting.Indented);\nint cut = 0, counted = 0, total = 0;\nforeach (var c in (Newtonsoft.Json.Linq.JArray)j[\"components\"]) { total++; if (c[\"truncated\"] != null && (bool)c[\"truncated\"]) { cut++; if (c[\"omittedProperties\"] != null && c[\"omittedMethods\"] != null) counted++; } }\nreturn \"inspect_gameobject (detailed: true) reply on \" + go.name + \" is \" + text.Length + \" chars: \" + (text.Length <= 80000 ? \"within 80000 chars\" : \"over 80000 chars\") + \"; \" + (cut == 0 ? \"no component truncated\" : cut + \" of \" + total + \" components truncated, \" + (counted == cut ? \"each naming its omitted counts\" : (cut - counted) + \" without omitted counts\"));"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "within 80000 chars",
+          "components truncated, each naming its omitted counts"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var go = GameObject.Find(\"MapController\");\nvar j = Newtonsoft.Json.Linq.JToken.FromObject(Unity_Inspector_Mod.GameObjectInspector.InspectGameObject(go, false));\nvar text = j.ToString(Newtonsoft.Json.Formatting.Indented);\nvar kids = j[\"children\"] as Newtonsoft.Json.Linq.JArray;\nreturn \"inspect_gameobject (detailed: false) reply on \" + go.name + \" is \" + text.Length + \" chars: \" + (text.Length <= 80000 ? \"within 80000 chars\" : \"over 80000 chars\") + \"; children listed \" + (kids == null ? 0 : kids.Count) + \" of childCount \" + j[\"childCount\"] + \", childrenTruncated=\" + (j[\"childrenTruncated\"] == null ? \"absent\" : j[\"childrenTruncated\"].ToString());"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "within 80000 chars",
+          "children listed 100 of childCount ",
+          "childrenTruncated=True"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class UimBudgetProbe : MonoBehaviour\n{\n    public string F0 = new string('a', 9000), F1 = new string('b', 9000), F2 = new string('c', 9000), F3 = new string('d', 9000), F4 = new string('e', 9000), F5 = new string('f', 9000), F6 = new string('g', 9000), F7 = new string('h', 9000), F8 = new string('i', 9000), F9 = new string('j', 9000);\n}\nvar go = new GameObject(\"UimBudgetProbe\");\ngo.AddComponent<UimBudgetProbe>();\nfor (int i = 0; i < 105; i++) new GameObject(\"UimKid\" + i.ToString(\"000\")).transform.parent = go.transform;\nreturn \"probe with \" + go.transform.childCount + \" children\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "probe with 105 children"
+        ]
+      }
+    },
+    {
+      "command": "inspect_gameobject",
+      "params": {
+        "path": "/UimBudgetProbe",
+        "detailed": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"F0\": \"aaaaaaaaaa",
+          "\"omittedProperties\": 9",
+          "\"truncated\": true",
+          "\"childCount\": 105",
+          "\"UimKid099\"",
+          "\"childrenTruncated\": true"
+        ],
+        "notContains": [
+          "\"F1\"",
+          "\"UimKid100\""
+        ]
+      }
+    },
+    {
+      "command": "inspect_gameobject",
+      "params": {
+        "path": "/UimBudgetProbe"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"childCount\": 105",
+          "\"name\": \"UimKid099\"",
+          "\"childrenTruncated\": true"
+        ],
+        "notContains": [
+          "\"UimKid100\"",
+          "\"F0\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "UnityEngine.Object.DestroyImmediate(GameObject.Find(\"UimBudgetProbe\"));\nreturn GameObject.Find(\"UimBudgetProbe\") == null ? \"probe destroyed\" : \"probe left\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "probe destroyed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class UimBusyHold : MonoBehaviour\n{\n    public int Ms;\n\n    void Update()\n    {\n        int ms = Ms;\n        Ms = 0;\n        if (ms <= 0) return;\n        Destroy(gameObject);\n        System.Threading.Thread.Sleep(ms);\n    }\n}\nnew GameObject(\"UimBusyHold\").AddComponent<UimBusyHold>().Ms = 7000;\nreturn \"main thread held for 7000 ms from the next frame\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "main thread held for 7000 ms"
+        ]
+      },
+      "wait": 300
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/HeroContoller",
+        "componentType": "HeroController",
+        "memberPath": "mustShowHUDS"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Main thread action timed out after 5000ms",
+          "\"mainThreadAnswered\": false"
+        ],
+        "notContains": [
+          "Internal error",
+          "stackTrace"
+        ]
+      },
+      "wait": 2500
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/HeroContoller",
+        "componentType": "HeroController",
+        "memberPath": "mustShowHUDS"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"memberPath\": \"mustShowHUDS\"",
+          "\"memberType\": \"Boolean\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class UimPinnedBase : MonoBehaviour\n{\n    public int Item = 9;\n}\n\npublic class UimPinned : UimPinnedBase\n{\n    public int item_count = 3;\n    public GameObject gone;\n    public GameObject prefabRef;\n    public System.Collections.Generic.List<Vector2> points = new System.Collections.Generic.List<Vector2> { new Vector2(1f, 2f), new Vector2(3f, 4f) };\n    float clamped;\n    public float Clamped { get { return clamped; } set { clamped = Mathf.Min(value, 1f); } }\n    public int Throws { get { throw new System.InvalidOperationException(\"uim boom\"); } }\n    public int WriteOnly { set { } }\n    public static int StaticProp { get { return 5; } }\n    public int this[int i] { get { return i; } }\n\n    void Update()\n    {\n        transform.position = new Vector3(7f, 7f, 0f);\n    }\n}\nforeach (var n in new[] { \"UimPinned\", \"UimGone\" })\n{\n    var old = GameObject.Find(n);\n    if (old != null) UnityEngine.Object.DestroyImmediate(old);\n}\nvar pinned = new GameObject(\"UimPinned\").AddComponent<UimPinned>();\nvar gone = new GameObject(\"UimGone\");\npinned.gone = gone;\nUnityEngine.Object.DestroyImmediate(gone);\nforeach (var tr in Resources.FindObjectsOfTypeAll<Transform>())\n{\n    if (tr.parent == null && tr.name == \"PlasmaBullet\" && !tr.gameObject.scene.IsValid()) pinned.prefabRef = tr.gameObject;\n}\nreturn \"pinned probe created\" + (pinned.prefabRef != null ? \", holding the PlasmaBullet prefab\" : \", no PlasmaBullet prefab found\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "pinned probe created, holding the PlasmaBullet prefab"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimPinned",
+        "componentType": "UimPinned"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"Item\": 9",
+          "\"item_count\": 3",
+          "\"StaticProp\": \"<static property: read it with memberPath>\"",
+          "\"Throws\": \"<error reading Int32: InvalidOperationException: uim boom>\"",
+          "\"destroyed\": true",
+          "\"listType\": \"List<Vector2>\"",
+          "\"count\": 2"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimPinned",
+        "componentType": "UimPinned",
+        "memberPath": "Throws"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "InvalidOperationException: uim boom"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimPinned",
+        "componentType": "UimPinned",
+        "memberPath": "WriteOnly"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "is write-only"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimPinned",
+        "componentType": "UimPinned",
+        "memberPath": "StaticProp"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"value\": 5",
+          "\"isStatic\": true"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimPinned",
+        "componentType": "UimPinned",
+        "memberPath": "points.1"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"memberType\": \"Vector2\"",
+          "\"x\": 3",
+          "\"y\": 4"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimPinned",
+        "componentType": "UimPinned",
+        "memberPath": "points.5"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "\"reason\": \"not-found\"",
+          "Index 5 is out of range"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimPinned",
+        "componentType": "UimPinned",
+        "memberPath": "gone"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"destroyed\": true",
+          "\"type\": \"GameObject\""
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimPinned",
+        "component": "UimPinned",
+        "properties": {
+          "points.1.x": 30
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"points.1.x\"",
+          "\"errors\": []"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimPinned",
+        "componentType": "UimPinned",
+        "memberPath": "points.1"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"x\": 30",
+          "\"y\": 4"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimPinned",
+        "component": "Transform",
+        "properties": {
+          "position": {
+            "x": 50
+          }
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"reverted\"",
+          "\"property\": \"position\"",
+          "\"nextFrameChecked\": true",
+          "\"x\": 50",
+          "set it back by the next frame"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimPinned",
+        "component": "UimPinned",
+        "properties": {
+          "Clamped": 5
+        }
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "\"reason\": \"not-kept\"",
+          "\"value\": 1"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimPinned",
+        "component": "UimPinned",
+        "properties": {
+          "item_count": 2.5
+        }
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "takes a whole number"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimPinned",
+        "component": "UimPinned",
+        "properties": {
+          "item_count": "3"
+        }
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "item_count takes a Int32, got \\\"3\\\""
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimProbe",
+        "component": "Transform",
+        "properties": {
+          "localRotation": {
+            "z": 0
+          }
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"localRotation\"",
+          "\"errors\": []",
+          "\"w\": 1"
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimProbe",
+        "componentType": "Renderer",
+        "memberPath": "sortingOrder"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"type\": \"SpriteRenderer\""
+        ]
+      }
+    },
+    {
+      "command": "query_gameobjects",
+      "params": {
+        "namePattern": "PlasmaBulle?"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"totalFound\": 0"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/PlasmaBullet",
+        "component": "Transform",
+        "properties": {
+          "localScale": {
+            "x": 2
+          }
+        }
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "\"reason\": \"asset\"",
+          "prefab asset"
+        ]
+      }
+    },
+    {
+      "command": "take_screenshot",
+      "params": {
+        "highlight": "/PlasmaBullet"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "prefab asset"
+        ]
+      }
+    },
+    {
+      "command": "take_screenshot",
+      "params": {
+        "highlight": {
+          "x": null,
+          "y": 0,
+          "width": 1,
+          "height": 1
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "has no 'x'"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar reply = d.GetData(\"uimtest.highlightType\") as string;\nif (reply == null) {\n  d.SetData(\"uimtest.highlightType\", \"pending\");\n  new System.Threading.Thread(() => d.SetData(\"uimtest.highlightType\", new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"highlight-x\\\",\\\"method\\\":\\\"take_screenshot\\\",\\\"params\\\":{\\\"highlight\\\":{\\\"x\\\":\\\"a\\\",\\\"y\\\":0,\\\"width\\\":1,\\\"height\\\":1}}}\", null))).Start();\n  return \"pending\";\n}\nif (reply == \"pending\") return \"pending\";\nd.SetData(\"uimtest.highlightType\", null);\nreturn reply;"
+      },
+      "until": {
+        "timeout": 30,
+        "interval": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "highlight rectangle 'x' must be a finite number",
+          ".png"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "query_gameobjects",
+      "params": {
+        "namePattern": "*",
+        "maxResults": 100000
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"truncated\": true",
+          "\"truncatedBy\": \"size\""
+        ]
+      }
+    },
+    {
+      "command": "list_gameobjects",
+      "params": {
+        "includeInactive": true,
+        "maxResults": 100000
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"scene\": \"",
+          "\"instanceId\": ",
+          "\"activeInHierarchy\": "
+        ],
+        "notContains": [
+          "\"name\": \"PlasmaBullet\""
+        ]
+      }
+    },
+    {
+      "command": "query_gameobjects",
+      "params": {
+        "namePattern": "Hidden Child",
+        "includeInactive": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"activeInHierarchy\": false",
+          "\"instanceId\": "
+        ]
+      }
+    },
+    {
+      "command": "inspect_gameobject",
+      "params": {
+        "path": "/UimInactive/Rambro holder"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"isActive\": true",
+          "\"activeInHierarchy\": false"
+        ]
+      }
+    },
+    {
+      "command": "query_gameobjects",
+      "params": {
+        "componentType": "UimLateType"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "No component type named UimLateType is loaded"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "uim-late",
+        "source": "public class UimLateType : MonoBehaviour\n{\n}\n\npublic static class UimLateScript\n{\n    public static void Main()\n    {\n        var old = GameObject.Find(\"UimLateHolder\");\n        if (old != null) Object.DestroyImmediate(old);\n        new GameObject(\"UimLateHolder\").AddComponent<UimLateType>();\n    }\n}\n"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "query_gameobjects",
+      "params": {
+        "componentType": "UimLateType"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"totalFound\": 1",
+          "\"path\": \"/UimLateHolder\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "uim-stale",
+        "source": "public class UimStale : MonoBehaviour\n{\n    public int version = 1;\n}\n\npublic static class UimStaleScript\n{\n    public static void Main()\n    {\n        var old = GameObject.Find(\"UimStaleHolder\");\n        if (old != null) Object.DestroyImmediate(old);\n        new GameObject(\"UimStaleHolder\").AddComponent<UimStale>();\n    }\n}\n"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "uim-stale",
+        "source": "public class UimStale : MonoBehaviour\n{\n    public int version = 2;\n}\n\npublic static class UimStaleScript\n{\n    public static void Main()\n    {\n        var old = GameObject.Find(\"UimStaleHolder\");\n        if (old != null) Object.DestroyImmediate(old);\n        new GameObject(\"UimStaleHolder\").AddComponent<UimStale>();\n    }\n}\n"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "query_gameobjects",
+      "params": {
+        "componentType": "UimStale"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"totalFound\": 1",
+          "\"path\": \"/UimStaleHolder\""
+        ]
+      }
+    },
+    {
+      "command": "inspect_component",
+      "params": {
+        "path": "/UimStaleHolder",
+        "componentType": "UimStale",
+        "memberPath": "version"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"value\": 2"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "uim-stale"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var mod = (UnityModManagerNet.UnityModManager.ModEntry)typeof(Unity_Inspector_Mod.MessageHandler).Assembly.GetType(\"Unity_Inspector_Mod.Main\").GetField(\"mod\").GetValue(null);\nvar dir = System.IO.Path.Combine(mod.Path, \"Screenshots\");\nif (System.IO.Directory.Exists(dir)) System.IO.Directory.Delete(dir, true);\nreturn System.IO.Directory.Exists(dir) ? \"folder still there\" : \"folder removed\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "folder removed"
+        ]
+      }
+    },
+    {
+      "command": "take_screenshot",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"path\": \"",
+          "screenshot_"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var mod = (UnityModManagerNet.UnityModManager.ModEntry)typeof(Unity_Inspector_Mod.MessageHandler).Assembly.GetType(\"Unity_Inspector_Mod.Main\").GetField(\"mod\").GetValue(null);\nvar dir = System.IO.Path.Combine(mod.Path, \"Screenshots\");\nfor (int i = 0; i < 60; i++)\n{\n    var f = System.IO.Path.Combine(dir, \"screenshot_20000101_000000_uim\" + i.ToString(\"D5\") + \".png\");\n    System.IO.File.WriteAllBytes(f, new byte[0]);\n    System.IO.File.SetLastWriteTimeUtc(f, new System.DateTime(2000, 1, 1).AddMinutes(i));\n}\nreturn \"screenshots before the capture: \" + System.IO.Directory.GetFiles(dir, \"screenshot_*.png\").Length;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "screenshots before the capture: 61"
+        ]
+      }
+    },
+    {
+      "command": "take_screenshot",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"path\": \""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var mod = (UnityModManagerNet.UnityModManager.ModEntry)typeof(Unity_Inspector_Mod.MessageHandler).Assembly.GetType(\"Unity_Inspector_Mod.Main\").GetField(\"mod\").GetValue(null);\nvar dir = System.IO.Path.Combine(mod.Path, \"Screenshots\");\nvar files = new System.IO.DirectoryInfo(dir).GetFiles(\"screenshot_*.png\");\nSystem.IO.FileInfo newest = null;\nforeach (var f in files) if (newest == null || f.LastWriteTimeUtc > newest.LastWriteTimeUtc) newest = f;\nvar b = System.IO.File.ReadAllBytes(newest.FullName);\nbool iend = b.Length > 12 && b[b.Length - 8] == 0x49 && b[b.Length - 7] == 0x45 && b[b.Length - 6] == 0x4E && b[b.Length - 5] == 0x44;\nreturn \"kept \" + files.Length + (iend ? \", newest complete\" : \", newest truncated\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "kept 50, newest complete"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "new GameObject(\"UimBusyHold\").AddComponent<UimBusyHold>().Ms = 8000;\nreturn \"main thread held for 8000 ms from the next frame\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "main thread held for 8000 ms"
+        ]
+      },
+      "wait": 300
+    },
+    {
+      "command": "ping",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"mainThreadAnswered\": false",
+          "\"frame\": null"
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"mainThreadAnswered\": false",
+          "main thread did not answer"
+        ],
+        "notContains": [
+          "\"success\": false"
+        ]
+      }
+    },
+    {
+      "command": "ping",
+      "params": {},
+      "until": {
+        "timeout": 20,
+        "interval": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"mainThreadAnswered\": true"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimPinned",
+        "component": "UimPinned",
+        "properties": {
+          "prefabRef.layer": 3
+        }
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "\"reason\": \"asset\"",
+          "prefabRef.layer reaches /PlasmaBullet, a prefab asset"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimProbe",
+        "component": "Transform",
+        "properties": {
+          "localEulerAngles": {
+            "z": -90
+          }
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"localEulerAngles\"",
+          "\"errors\": []"
+        ]
+      }
+    },
+    {
+      "command": "modify_component",
+      "params": {
+        "path": "/UimProbe",
+        "component": "SpriteRenderer",
+        "properties": {
+          "size": {
+            "width": 2,
+            "height": 1
+          }
+        }
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "size takes the keys x, y; got width, height"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "foreach (var n in new[] { \"UimPinned\", \"UimLateHolder\", \"UimStaleHolder\" })\n{\n    var go = GameObject.Find(n);\n    if (go != null) UnityEngine.Object.DestroyImmediate(go);\n}\nreturn \"pinned, late and stale probes destroyed\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "probes destroyed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "GameObject second = null;\nforeach (var tr in Resources.FindObjectsOfTypeAll<Transform>())\n{\n    if (tr.parent == null && tr.name == \"UimDup\" && tr.gameObject.scene.IsValid() && tr.position.x == 2f) second = tr.gameObject;\n}\nvar probe = GameObject.Find(\"UimProbe\");\nvar byGameObject = Unity_Inspector_Mod.GameObjectInspector.Resolve(null, second.GetInstanceID());\nvar byComponent = Unity_Inspector_Mod.GameObjectInspector.Resolve(null, probe.GetComponent<SpriteRenderer>().GetInstanceID());\nstring missing;\ntry\n{\n    Unity_Inspector_Mod.GameObjectInspector.Resolve(null, int.MinValue + 7);\n    missing = \"an unused id resolved\";\n}\ncatch (System.ArgumentException ex)\n{\n    missing = ex.Message;\n}\nreturn \"by GameObject id: \" + (byGameObject.GameObject == second ? \"the second UimDup\" : byGameObject.GameObject.name)\n    + \"; by component id: \" + byComponent.GameObject.name\n    + \"; unused id: \" + missing;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "by GameObject id: the second UimDup",
+          "by component id: UimProbe",
+          "unused id: No GameObject or component has instanceId"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nd.SetData(\"uimtest.shot\", null);\nvar componentId = GameObject.Find(\"UimProbe\").GetComponent<SpriteRenderer>().GetInstanceID();\nGameObject inactive = null;\nforeach (var tr in Resources.FindObjectsOfTypeAll<Transform>())\n{\n    if (tr.parent == null && tr.name == \"UimInactive\" && tr.gameObject.scene.IsValid()) inactive = tr.gameObject;\n}\nvar byComponent = Newtonsoft.Json.Linq.JToken.Parse(\"{\\\"instanceId\\\": \" + componentId + \"}\");\nvar byGameObject = Newtonsoft.Json.Linq.JToken.Parse(\"{\\\"instanceId\\\": \" + inactive.GetInstanceID() + \"}\");\nvar worker = new System.Threading.Thread(() =>\n{\n    string outcome;\n    try\n    {\n        var first = Unity_Inspector_Mod.ScreenshotCapture.TakeScreenshot(byComponent);\n        var second = Unity_Inspector_Mod.ScreenshotCapture.TakeScreenshot(byGameObject);\n        outcome = \"component: \" + (first.HighlightError ?? \"outlined\") + \" | gameObject: \" + (second.HighlightError ?? \"outlined\");\n    }\n    catch (System.Exception ex)\n    {\n        outcome = \"threw \" + ex.Message;\n    }\n    d.SetData(\"uimtest.shot\", outcome);\n});\nworker.IsBackground = true;\nworker.Start();\nreturn \"highlights by instanceId started off the main thread\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "highlights by instanceId started"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var s = System.AppDomain.CurrentDomain.GetData(\"uimtest.shot\") as string;\nreturn s ?? \"still capturing\";"
+      },
+      "until": {
+        "timeout": 20,
+        "interval": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "component: 'UimProbe'",
+          "gameObject: 'UimInactive' is inactive"
+        ],
+        "notContains": [
+          "still capturing",
+          "threw"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "escape"
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 1000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nstring log = \"\";\ntry { if (PauseController.pauseStatus != PauseStatus.UnPaused) { PauseController.SetPause(PauseStatus.UnPaused); log += \"unpaused \"; } } catch (System.Exception ex) { log += \"unpause failed: \" + ex.Message + \" \"; }\nif (UnityEngine.Time.timeScale != 1f) { UnityEngine.Time.timeScale = 1f; log += \"speed1 \"; }\ntry { if (d.GetData(\"uimtest.joined\") != null && HeroController.IsPlaying(1)) { HeroController.Dropout(1, false); log += \"dropped1 \"; } } catch (System.Exception ex) { log += \"dropout failed: \" + ex.Message + \" \"; }\nd.SetData(\"uimtest.joined\", null);\nvar hc = d.GetData(\"uimtest.ironbro\") as string;\nd.SetData(\"uimtest.ironbro\", null);\ntry {\n  var save = GameState.Instance.currentWorldmapSave;\n  if (hc != null && save != null) {\n    var parts = hc.Split(':');\n    save.worldMapIsHardcoreCampaign = parts[0] == \"1\";\n    save.hardcoreLives = int.Parse(parts[1]);\n    save.hardcoreModeAvailableBros.Clear();\n    foreach (var n in parts[2].Split(',')) if (n.Length > 0) save.hardcoreModeAvailableBros.Add((HeroType)System.Enum.Parse(typeof(HeroType), n));\n    log += \"ironbro-restored \";\n  }\n} catch (System.Exception ex) { log += \"ironbro restore failed: \" + ex.Message + \" \"; }\nvar lk = d.GetData(\"uimtest.lock\") as string;\nd.SetData(\"uimtest.lock\", null);\ntry {\n  if (lk != null) {\n    var fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\n    var t = System.Type.GetType(\"BroMakerLib.Unlocks.BroUnlockManager, BroMakerLib\");\n    var pd = t.GetField(\"progressData\", fl).GetValue(null);\n    var states = pd.GetType().GetProperty(\"BroStates\").GetValue(pd, null) as System.Collections.IDictionary;\n    var st = states[lk];\n    st.GetType().GetProperty(\"IsUnlocked\").SetValue(st, true, null);\n    st.GetType().GetProperty(\"UnlockedDate\").SetValue(st, d.GetData(\"uimtest.lock.date\"), null);\n    var names = t.GetProperty(\"UnlockedBroNames\", fl).GetValue(null, null) as System.Collections.Generic.List<string>;\n    var bros = t.GetProperty(\"UnlockedBros\", fl).GetValue(null, null) as System.Collections.IList;\n    int ni = (int)d.GetData(\"uimtest.lock.ni\"); if (ni < 0 || ni > names.Count) ni = names.Count;\n    if (!names.Contains(lk)) names.Insert(ni, lk);\n    var hero = d.GetData(\"uimtest.lock.hero\");\n    int hi = (int)d.GetData(\"uimtest.lock.hi\"); if (hi < 0 || hi > bros.Count) hi = bros.Count;\n    if (hero != null && !bros.Contains(hero)) bros.Insert(hi, hero);\n    typeof(BroMakerLib.Storages.BroSpawnManager).GetMethod(\"BroStatusChanged\", fl).Invoke(null, null);\n    log += \"unlocked \" + lk + \" \";\n  }\n} catch (System.Exception ex) { log += \"unlock failed: \" + ex.Message + \" \"; }\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); set.selGridInt[i] = ix < 0 ? 0 : ix; }\n    log += \"swap-settings-restored \";\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nvar fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\nstring log = \"\";\nvar ums = d.GetData(\"uimtest.u3.ums\") as string;\nd.SetData(\"uimtest.u3.ums\", null);\ntry {\n  if (ums != null) {\nSystem.Type um = null;\nforeach (var a in System.AppDomain.CurrentDomain.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\nvar umEnabled = um.GetField(\"enabled\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);\nvar umSettings = um.GetField(\"settings\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null);\nvar umDisable = umSettings.GetType().GetField(\"disableEnemySpawn\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\n    var p = ums.Split('|');\n    umEnabled.SetValue(null, p[0] == \"True\");\n    umDisable.SetValue(umSettings, p[1] == \"True\");\n    log += \"utility-mod-restored \";\n  }\n} catch (System.Exception ex) { log += \"utility mod restore failed: \" + ex.Message + \" \"; }\nvar hcs = d.GetData(\"uimtest.u3.hc\") as string;\nd.SetData(\"uimtest.u3.hc\", null);\ntry {\n  if (hcs != null) {\n    var p = hcs.Split('|');\n    HeroController.mustShowHUDS = p[0] == \"True\";\n    typeof(HeroController).GetField(\"doubleBroSevenAvatarCount\", fl).SetValue(null, int.Parse(p[1], ic));\n    var hc = UnityEngine.Object.FindObjectOfType<HeroController>();\n    if (hc != null) {\n      var ifl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance;\n      typeof(HeroController).GetField(\"explosivesCounter\", ifl).SetValue(hc, float.Parse(p[2], ic));\n      var c = p[3].Split(',');\n      hc.infoBarColor = new Color(float.Parse(c[0], ic), float.Parse(c[1], ic), float.Parse(c[2], ic), float.Parse(c[3], ic));\n      var ds = p[4].Split(',');\n      var arr = new float[ds.Length];\n      for (int i = 0; i < ds.Length; i++) arr[i] = float.Parse(ds[i], ic);\n      typeof(HeroController).GetField(\"suicideBroSpawnDelay\", ifl).SetValue(hc, arr);\n    }\n    log += \"hero-controller-restored \";\n  }\n} catch (System.Exception ex) { log += \"hero controller restore failed: \" + ex.Message + \" \"; }\ntry {\n  string dropped = \"\";\n  for (int i = 1; i < 4; i++) if (HeroController.IsPlaying(i)) { HeroController.Dropout(i, false); dropped += i; }\n  if (dropped.Length > 0) log += \"dropped-in-players-removed=\" + dropped + \" \";\n} catch (System.Exception ex) { log += \"drop-in removal failed: \" + ex.Message + \" \"; }\ntry {\n  string[] probes = { \"UimProbe\", \"UimDup\", \"UimInactive\", \"UimConstHolder\", \"UimShotProbe\", \"UimFarProbe\", \"UimBareProbe\", \"UimHiddenProbe\" };\n  int gone = 0;\n  foreach (var tr in Resources.FindObjectsOfTypeAll<Transform>()) {\n    if (tr == null || tr.parent != null || !tr.gameObject.scene.IsValid()) continue;\n    if (System.Array.IndexOf(probes, tr.name) < 0) continue;\n    UnityEngine.Object.DestroyImmediate(tr.gameObject);\n    gone++;\n  }\n  if (gone > 0) log += \"probes-destroyed=\" + gone + \" \";\n} catch (System.Exception ex) { log += \"probe cleanup failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar rec = (d.GetData(\"uimtest.level\") as string) ?? \"0|1\";\nd.SetData(\"uimtest.level\", null);\nvar p = rec.Split('|');\nvar r = Unity_Inspector_Mod.StateModifier.GoToLevel(int.Parse(p[0]), int.Parse(p[1]));\nvar j = Newtonsoft.Json.Linq.JToken.FromObject(r);\nreturn \"loading recorded level \" + rec + \": success=\" + j[\"success\"] + \" \" + j.ToString(Newtonsoft.Json.Formatting.None);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "success=True"
+        ]
+      },
+      "wait": 6000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar f = d.GetData(\"uimtest.found\") as string;\nvar set = Swap_Bros_Mod.Main.settings;\nSwap_Bros_Mod.API.EnsureBroListUpdated();\nvar l = Swap_Bros_Mod.Main.currentBroList;\nstring now = set.alwaysChosen + \"|\" + set.ignoreCurrentUnlocked;\nfor (int i = 0; i < 4; i++) now += \"|\" + l[set.selGridInt[i]];\nd.SetData(\"uimtest.found\", null);\nvar c = HeroController.players[0] == null ? null : HeroController.players[0].character;\nreturn \"settings \" + (now == f ? \"match\" : \"differ: found \" + f + \" now \" + now) + \" speed=\" + UnityEngine.Time.timeScale + \" pause=\" + PauseController.pauseStatus + \" p1=\" + HeroController.IsPlaying(1) + \" hc=\" + GameModeController.IsHardcoreMode + \" locked=\" + !BroMakerLib.Storages.BroSpawnManager.IsBroUnlocked(\"Cobro\") + \" scene=\" + UnityEngine.SceneManagement.SceneManager.GetActiveScene().name + \" level=\" + LevelSelectionController.CurrentLevelNum + \" bro=\" + (c == null ? \"none\" : c.name);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "settings match",
+          "speed=1 ",
+          "pause=UnPaused",
+          "p1=False",
+          "hc=False",
+          "locked=False",
+          "scene=Test Evan2"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var ic = System.Globalization.CultureInfo.InvariantCulture;\nvar hc = UnityEngine.Object.FindObjectOfType<HeroController>();\nvar ifl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance;\nvar col = hc.infoBarColor;\nvar delays = (float[])typeof(HeroController).GetField(\"suicideBroSpawnDelay\", ifl).GetValue(hc);\nstring ds = \"\";\nfor (int i = 0; i < delays.Length; i++) ds += (i > 0 ? \",\" : \"\") + delays[i].ToString(\"R\", ic);\nstring snap = HeroController.mustShowHUDS + \"|\" + ((int)typeof(HeroController).GetField(\"doubleBroSevenAvatarCount\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null)).ToString(ic) + \"|\" + ((float)typeof(HeroController).GetField(\"explosivesCounter\", ifl).GetValue(hc)).ToString(\"R\", ic) + \"|\" + col.r.ToString(\"R\", ic) + \",\" + col.g.ToString(\"R\", ic) + \",\" + col.b.ToString(\"R\", ic) + \",\" + col.a.ToString(\"R\", ic) + \"|\" + ds;\nvar d = System.AppDomain.CurrentDomain;\nvar f = d.GetData(\"uimtest.u3.hc.found\") as string;\nd.SetData(\"uimtest.u3.hc.found\", null);\nint probes = 0;\nforeach (var tr in Resources.FindObjectsOfTypeAll<Transform>()) if (tr != null && tr.parent == null && tr.gameObject.scene.IsValid() && tr.name.StartsWith(\"Uim\")) probes++;\nreturn \"hero controller \" + (f == null || f.Split('|')[0] + \"|\" + f.Split('|')[1] == snap.Split('|')[0] + \"|\" + snap.Split('|')[1] ? \"statics match\" : \"statics differ: found \" + f + \" now \" + snap) + \" probes=\" + probes;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "statics match",
+          "probes=0"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var h = (System.Collections.Generic.List<string>)typeof(UnityModManagerNet.UnityModManager.Logger).GetField(\"history\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).GetValue(null);\nint hits = 0;\nforeach (var l in h) if (l.Contains(\"Error handling message\") && l.Contains(\"GameObject not found: /NoSuchObject\")) hits++;\nreturn \"caller-error log lines=\" + hits;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "caller-error log lines=0"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "new GameObject(\"UimBusyHold\").AddComponent<UimBusyHold>().Ms = 8000;\nreturn \"main thread held for 8000 ms from the next frame\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "main thread held for 8000 ms"
+        ]
+      },
+      "wait": 300
+    },
+    {
+      "command": "list_gameobjects",
+      "params": {
+        "maxResults": 1
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Main thread action timed out after 5000ms",
+          "\"mainThreadAnswered\": false"
+        ],
+        "notContains": [
+          "Internal error",
+          "stackTrace"
+        ]
+      }
+    },
+    {
+      "command": "ping",
+      "params": {},
+      "until": {
+        "timeout": 20,
+        "interval": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"mainThreadAnswered\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "new GameObject(\"UimBusyHold\").AddComponent<UimBusyHold>().Ms = 8000;\nreturn \"main thread held for 8000 ms from the next frame\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "main thread held for 8000 ms"
+        ]
+      },
+      "wait": 300
+    },
+    {
+      "command": "inspect_player",
+      "params": {},
+      "expect": {
+        "success": false,
+        "contains": [
+          "Main thread action timed out after 5000ms",
+          "\"mainThreadAnswered\": false"
+        ],
+        "notContains": [
+          "Internal error",
+          "stackTrace"
+        ]
+      }
+    },
+    {
+      "command": "ping",
+      "params": {},
+      "until": {
+        "timeout": 20,
+        "interval": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"mainThreadAnswered\": true"
+        ]
+      }
+    },
+    {
+      "command": "list_gameobjects",
+      "params": {
+        "maxResults": -5
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "maxResults must be at least 1, got -5"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "query_gameobjects",
+      "params": {
+        "namePattern": "Uim",
+        "maxResults": -5
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "maxResults must be at least 1, got -5"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    }
+  ],
+  "cleanup": [
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nd.SetData(\"uimtest.found\", null);\nd.SetData(\"uimtest.level\", null);\nd.SetData(\"uimtest.u3.hc.found\", null);\nstring log = \"\";\ntry { if (PauseController.pauseStatus != PauseStatus.UnPaused) { PauseController.SetPause(PauseStatus.UnPaused); log += \"unpaused \"; } } catch (System.Exception ex) { log += \"unpause failed: \" + ex.Message + \" \"; }\nif (UnityEngine.Time.timeScale != 1f) { UnityEngine.Time.timeScale = 1f; log += \"speed1 \"; }\ntry { if (d.GetData(\"uimtest.joined\") != null && HeroController.IsPlaying(1)) { HeroController.Dropout(1, false); log += \"dropped1 \"; } } catch (System.Exception ex) { log += \"dropout failed: \" + ex.Message + \" \"; }\nd.SetData(\"uimtest.joined\", null);\nvar hc = d.GetData(\"uimtest.ironbro\") as string;\nd.SetData(\"uimtest.ironbro\", null);\ntry {\n  var save = GameState.Instance.currentWorldmapSave;\n  if (hc != null && save != null) {\n    var parts = hc.Split(':');\n    save.worldMapIsHardcoreCampaign = parts[0] == \"1\";\n    save.hardcoreLives = int.Parse(parts[1]);\n    save.hardcoreModeAvailableBros.Clear();\n    foreach (var n in parts[2].Split(',')) if (n.Length > 0) save.hardcoreModeAvailableBros.Add((HeroType)System.Enum.Parse(typeof(HeroType), n));\n    log += \"ironbro-restored \";\n  }\n} catch (System.Exception ex) { log += \"ironbro restore failed: \" + ex.Message + \" \"; }\nvar lk = d.GetData(\"uimtest.lock\") as string;\nd.SetData(\"uimtest.lock\", null);\ntry {\n  if (lk != null) {\n    var fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\n    var t = System.Type.GetType(\"BroMakerLib.Unlocks.BroUnlockManager, BroMakerLib\");\n    var pd = t.GetField(\"progressData\", fl).GetValue(null);\n    var states = pd.GetType().GetProperty(\"BroStates\").GetValue(pd, null) as System.Collections.IDictionary;\n    var st = states[lk];\n    st.GetType().GetProperty(\"IsUnlocked\").SetValue(st, true, null);\n    st.GetType().GetProperty(\"UnlockedDate\").SetValue(st, d.GetData(\"uimtest.lock.date\"), null);\n    var names = t.GetProperty(\"UnlockedBroNames\", fl).GetValue(null, null) as System.Collections.Generic.List<string>;\n    var bros = t.GetProperty(\"UnlockedBros\", fl).GetValue(null, null) as System.Collections.IList;\n    int ni = (int)d.GetData(\"uimtest.lock.ni\"); if (ni < 0 || ni > names.Count) ni = names.Count;\n    if (!names.Contains(lk)) names.Insert(ni, lk);\n    var hero = d.GetData(\"uimtest.lock.hero\");\n    int hi = (int)d.GetData(\"uimtest.lock.hi\"); if (hi < 0 || hi > bros.Count) hi = bros.Count;\n    if (hero != null && !bros.Contains(hero)) bros.Insert(hi, hero);\n    typeof(BroMakerLib.Storages.BroSpawnManager).GetMethod(\"BroStatusChanged\", fl).Invoke(null, null);\n    log += \"unlocked \" + lk + \" \";\n  }\n} catch (System.Exception ex) { log += \"unlock failed: \" + ex.Message + \" \"; }\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); set.selGridInt[i] = ix < 0 ? 0 : ix; }\n    log += \"swap-settings-restored \";\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nvar fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\nstring log = \"\";\nvar ums = d.GetData(\"uimtest.u3.ums\") as string;\nd.SetData(\"uimtest.u3.ums\", null);\ntry {\n  if (ums != null) {\nSystem.Type um = null;\nforeach (var a in System.AppDomain.CurrentDomain.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\nvar umEnabled = um.GetField(\"enabled\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);\nvar umSettings = um.GetField(\"settings\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null);\nvar umDisable = umSettings.GetType().GetField(\"disableEnemySpawn\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\n    var p = ums.Split('|');\n    umEnabled.SetValue(null, p[0] == \"True\");\n    umDisable.SetValue(umSettings, p[1] == \"True\");\n    log += \"utility-mod-restored \";\n  }\n} catch (System.Exception ex) { log += \"utility mod restore failed: \" + ex.Message + \" \"; }\nvar hcs = d.GetData(\"uimtest.u3.hc\") as string;\nd.SetData(\"uimtest.u3.hc\", null);\ntry {\n  if (hcs != null) {\n    var p = hcs.Split('|');\n    HeroController.mustShowHUDS = p[0] == \"True\";\n    typeof(HeroController).GetField(\"doubleBroSevenAvatarCount\", fl).SetValue(null, int.Parse(p[1], ic));\n    var hc = UnityEngine.Object.FindObjectOfType<HeroController>();\n    if (hc != null) {\n      var ifl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance;\n      typeof(HeroController).GetField(\"explosivesCounter\", ifl).SetValue(hc, float.Parse(p[2], ic));\n      var c = p[3].Split(',');\n      hc.infoBarColor = new Color(float.Parse(c[0], ic), float.Parse(c[1], ic), float.Parse(c[2], ic), float.Parse(c[3], ic));\n      var ds = p[4].Split(',');\n      var arr = new float[ds.Length];\n      for (int i = 0; i < ds.Length; i++) arr[i] = float.Parse(ds[i], ic);\n      typeof(HeroController).GetField(\"suicideBroSpawnDelay\", ifl).SetValue(hc, arr);\n    }\n    log += \"hero-controller-restored \";\n  }\n} catch (System.Exception ex) { log += \"hero controller restore failed: \" + ex.Message + \" \"; }\ntry {\n  string dropped = \"\";\n  for (int i = 1; i < 4; i++) if (HeroController.IsPlaying(i)) { HeroController.Dropout(i, false); dropped += i; }\n  if (dropped.Length > 0) log += \"dropped-in-players-removed=\" + dropped + \" \";\n} catch (System.Exception ex) { log += \"drop-in removal failed: \" + ex.Message + \" \"; }\ntry {\n  string[] probes = { \"UimProbe\", \"UimDup\", \"UimInactive\", \"UimConstHolder\", \"UimShotProbe\", \"UimFarProbe\", \"UimBareProbe\", \"UimHiddenProbe\" };\n  int gone = 0;\n  foreach (var tr in Resources.FindObjectsOfTypeAll<Transform>()) {\n    if (tr == null || tr.parent != null || !tr.gameObject.scene.IsValid()) continue;\n    if (System.Array.IndexOf(probes, tr.name) < 0) continue;\n    UnityEngine.Object.DestroyImmediate(tr.gameObject);\n    gone++;\n  }\n  if (gone > 0) log += \"probes-destroyed=\" + gone + \" \";\n} catch (System.Exception ex) { log += \"probe cleanup failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "uim-late",
+        "source": "public static class UimLateEmpty\n{\n    public static void Main()\n    {\n    }\n}\n"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "uim-late"
+      },
+      "expect": {
+        "success": true
+      }
+    }
+  ]
+}

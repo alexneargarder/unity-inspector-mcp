@@ -270,13 +270,21 @@ public static class DiffComponent
         if (go != null)
             return go;
 
+        string rooted = path.StartsWith("/") ? path : "/" + path;
+        GameObject asset = null;
         foreach (Transform transform in Resources.FindObjectsOfTypeAll<Transform>())
         {
-            if (transform != null && transform.gameObject != null && HierarchyPath(transform.gameObject) == path)
+            if (transform == null || transform.gameObject == null || HierarchyPath(transform.gameObject) != rooted)
+                continue;
+            if (transform.gameObject.scene.IsValid())
                 return transform.gameObject;
+            if (asset == null)
+                asset = transform.gameObject;
         }
 
-        return null;
+        if (asset != null)
+            ScriptContext.Logger(path + " matches no object in a loaded scene; using the prefab asset at that path.");
+        return asset;
     }
 
     private static Component FindComponent(GameObject go, string typeName)

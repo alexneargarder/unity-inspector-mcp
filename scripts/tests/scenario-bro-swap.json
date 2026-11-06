@@ -1,6 +1,6 @@
 {
   "name": "Scenario: bro swap mid-level",
-  "description": "While the level-run driver drives player 1, swaps to a vanilla bro and to an unlocked custom bro, then locks that custom bro in memory with BroMakerLib's saves blocked: a plain swap to it must be refused as unreachable and an ignoreUnlocks swap must land. After every swap the driver must steer the new bro before it dies. Each swap to the custom bro is made with rescues held off, and the driver then holds that bro until fire was pressed for it and its own UseSpecial and StartMelee ran: the report's customBroUsedKit and lockedCustomBroUsedKit checks. Needs Swap Bros Mod with BroMaker bros enabled, and BroMakerLib. Cleanup unlocks the bro and unloads both scripts.",
+  "description": "While the level-run driver drives player 1, swaps to a vanilla bro and to an unlocked custom bro, then locks that custom bro in memory with BroMakerLib's saves blocked: a plain swap to it must be refused as unreachable and an ignoreUnlocks swap must land. After every swap the driver must steer the new bro before it dies. Every swap is made with rescues held off, from just before it until the next kit hold ends, so a rescue cannot replace the swapped bro, and the driver then holds that bro until fire was pressed for it and it ran its special and its melee, seen through its own UseSpecial and StartMelee, its BroMaker special ability's UseSpecial, a drop in its special ammo and the game's doingMelee: the report's customBroUsedKit and lockedCustomBroUsedKit checks. Needs Swap Bros Mod with BroMaker bros enabled, and BroMakerLib. Cleanup unlocks the bro and unloads both scripts.",
   "args": {
     "campaign": { "default": 0, "description": "Campaign index, as go_to_level takes it" },
     "level": { "default": 0, "description": "Level index within the campaign" },
@@ -11,6 +11,39 @@
     "lives": { "default": 5, "description": "Lives set when driving starts, so a death cannot end the level" }
   },
   "steps": [
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar sc = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;\nvar camp = LevelSelectionController.currentCampaign;\nstring key = sc + \"|\" + (camp == null ? \"\" : camp.name) + \"|\" + LevelSelectionController.CurrentLevelNum;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nfloat now = UnityEngine.Time.realtimeSinceStartup;\nvar last = d.GetData(\"uimtest.settle\") as string;\nint cut = last == null ? -1 : last.LastIndexOf('|');\nif (last == null || last.Substring(0, cut) != key) {\n  d.SetData(\"uimtest.settle\", key + \"|\" + now.ToString(ic));\n  return \"waiting: \" + sc + \" just came up\";\n}\nfloat since = now - float.Parse(last.Substring(cut + 1), ic);\nif (sc == \"LoadingScreen\") return \"waiting: loading\";\nif (LevelSelectionController.IsCampaignScene) {\n  if (HeroController.Instance == null || Map.Instance == null || GameModeController.Instance == null) return \"waiting: the level is still being built\";\n  var wt = typeof(GameModeController).GetField(\"winTimer\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\n  if (GameModeController.IsLevelFinished() && (float)wt.GetValue(GameModeController.Instance) < 999999f) return \"waiting: the level finished and is moving on\";\n}\nif (since < 4f) return \"waiting: \" + sc + \" unchanged for \" + since.ToString(\"0.0\", ic) + \" s\";\nreturn \"settled in \" + sc;"
+      },
+      "until": {
+        "timeout": 90,
+        "interval": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "settled in"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nstring lv = \"0|1\";\nif (LevelSelectionController.IsCampaignScene && LevelSelectionController.currentCampaign != null) {\n  var all = typeof(Unity_Inspector_Mod.StateModifier).GetField(\"CampaignNames\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null) as string[];\n  for (int i = 0; i < all.Length; i++) if (string.Equals(all[i], LevelSelectionController.currentCampaign.name, System.StringComparison.OrdinalIgnoreCase)) lv = i + \"|\" + LevelSelectionController.CurrentLevelNum;\n}\nd.SetData(\"uimtest.level\", lv);\nd.SetData(\"uimtest.settle\", null);\nreturn \"recorded level=\" + lv;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "recorded level="
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": { "code": "var d = System.AppDomain.CurrentDomain;\nvar set = Swap_Bros_Mod.Main.settings;\nSwap_Bros_Mod.API.EnsureBroListUpdated();\nvar l = Swap_Bros_Mod.Main.currentBroList;\nstring sw = set.alwaysChosen + \"|\" + set.ignoreCurrentUnlocked;\nfor (int i = 0; i < 4; i++) sw += \"|\" + l[set.selGridInt[i]];\nd.SetData(\"uimtest.swap\", sw);\nreturn \"recorded swap=\" + sw;" },
+      "expect": { "success": true, "contains": ["recorded swap="] }
+    },
     {
       "command": "execute_script",
       "params": {
@@ -26,6 +59,11 @@
       "until": { "timeout": 120, "interval": 1 },
       "expect": { "contains": ["\"driving\""] }
     },
+    {
+      "command": "execute_code",
+      "params": { "code": "return ScenarioLevelRun.HoldRescues(0);" },
+      "expect": { "contains": ["\"rescues held"] }
+    },
     { "command": "swap_bro", "params": { "broName": "{{vanillaBro}}" }, "expect": { "success": true } },
     {
       "command": "execute_code",
@@ -34,11 +72,6 @@
       },
       "until": { "timeout": 10, "interval": 0.25 },
       "expect": { "contains": ["driven True"] }
-    },
-    {
-      "command": "execute_code",
-      "params": { "code": "return ScenarioLevelRun.HoldRescues(0);" },
-      "expect": { "contains": ["\"rescues held"] }
     },
     { "command": "swap_bro", "params": { "broName": "{{customBro}}" }, "expect": { "success": true } },
     {
@@ -70,6 +103,11 @@
       "params": { "code": "return ScenarioBroLock.Status;" },
       "expect": { "contains": ["\"result\": \"locked\""] }
     },
+    {
+      "command": "execute_code",
+      "params": { "code": "return ScenarioLevelRun.HoldRescues(0);" },
+      "expect": { "contains": ["\"rescues held"] }
+    },
     { "command": "swap_bro", "params": { "broName": "{{vanillaBro}}" }, "expect": { "success": true } },
     {
       "command": "execute_code",
@@ -83,11 +121,6 @@
       "command": "swap_bro",
       "params": { "broName": "{{customBro}}" },
       "expect": { "success": false, "contains": ["\"reason\": \"unreachable\""] }
-    },
-    {
-      "command": "execute_code",
-      "params": { "code": "return ScenarioLevelRun.HoldRescues(0);" },
-      "expect": { "contains": ["\"rescues held"] }
     },
     {
       "command": "swap_bro",
@@ -120,10 +153,57 @@
       "expect": { "contains": ["\"result\": true"] }
     },
     { "command": "execute_code", "params": { "code": "return ScenarioLevelRun.ReportJson;" }, "report": true },
-    { "command": "execute_code", "params": { "code": "return ScenarioBroLock.Unlock();" }, "report": true }
+    { "command": "execute_code", "params": { "code": "return ScenarioBroLock.Unlock();" }, "report": true },
+    {
+      "command": "execute_code",
+      "params": { "code": "var d = System.AppDomain.CurrentDomain;\nstring log = \"\";\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); set.selGridInt[i] = ix < 0 ? 0 : ix; }\n    log += \"swap-settings-restored \";\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;" },
+      "expect": { "success": true, "contains": ["swap-settings-restored"], "notContains": ["failed"] }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar rec = (d.GetData(\"uimtest.level\") as string) ?? \"0|1\";\nd.SetData(\"uimtest.level\", null);\nvar p = rec.Split('|');\nvar r = Unity_Inspector_Mod.StateModifier.GoToLevel(int.Parse(p[0]), int.Parse(p[1]));\nvar j = Newtonsoft.Json.Linq.JToken.FromObject(r);\nreturn \"loading recorded level \" + rec + \": success=\" + j[\"success\"] + \" \" + j.ToString(Newtonsoft.Json.Formatting.None);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "success=True"
+        ]
+      },
+      "wait": 6000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    }
   ],
   "cleanup": [
+    {
+      "command": "execute_code",
+      "params": { "code": "var d = System.AppDomain.CurrentDomain;\nstring log = \"\";\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); set.selGridInt[i] = ix < 0 ? 0 : ix; }\n    log += \"swap-settings-restored \";\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;" },
+      "expect": { "notContains": ["failed"] }
+    },
     { "command": "unload_script", "params": { "name": "scenario-bro-lock" } },
-    { "command": "unload_script", "params": { "name": "scenario-level-run" } }
+    { "command": "unload_script", "params": { "name": "scenario-level-run" } },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar rec = d.GetData(\"uimtest.level\") as string;\nd.SetData(\"uimtest.level\", null);\nif (rec == null) return \"no level recorded\";\nvar p = rec.Split('|');\nvar r = Unity_Inspector_Mod.StateModifier.GoToLevel(int.Parse(p[0]), int.Parse(p[1]));\nvar j = Newtonsoft.Json.Linq.JToken.FromObject(r);\nreturn \"loading recorded level \" + rec + \": success=\" + j[\"success\"] + \" \" + j.ToString(Newtonsoft.Json.Formatting.None);"
+      },
+      "expect": {
+        "notContains": [
+          "failed"
+        ]
+      },
+      "wait": 6000
+    }
   ]
 }

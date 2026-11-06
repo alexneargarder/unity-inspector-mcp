@@ -6,7 +6,9 @@
 // #args player: Player index whose character is captured (default 0)
 // #args box: World-unit half-size of the crop box; each strip cell is 2*box pixels (default 24)
 // #args suppress: "false" to let the swept animations fire their real specials and attacks (default true)
+// #args claim: The token of the claim capture_animations took for this run, which Main() may replace (default none)
 
+using System.Globalization;
 using System.IO;
 using Newtonsoft.Json.Linq;
 
@@ -16,10 +18,10 @@ public class AnimationCapture : MonoBehaviour
     private const string ErrorFile = "error";
     private const string CaptureFile = "capture.json";
     private const string NoPixelFailure = "the character's renderers contributed no pixel to the crop";
-
-    // A failure inside Main() can happen before outDir is usable, so there is no sentinel file to
-    // poll for. This goes to the UMM log, which the driver tails when its wait times out.
     private const string StartupFailure = "animation-capture startup failed: ";
+    // Every compile is its own assembly with its own statics
+    private const string LiveSlot = "UnityInspector.AnimationCapture.Live";
+    private const int MaxChangeFrameDepth = 16;
 
     // ScriptContext.Logger only carries the [Script:name] prefix while Main()/Unload() is running
     private static Action<string> cachedLogger;
@@ -31,12 +33,49 @@ public class AnimationCapture : MonoBehaviour
     private string respawnError;
     private int playerIndex;
     private JArray states;
+    private JObject sweepParams;
     private float box;
     private int cellPx;
+    private JObject broDescription;
+    private bool captureWriteLogged;
 
     private readonly JArray stateRecords = new JArray();
     private readonly List<Texture2D> cells = new List<Texture2D>();
-    private readonly Dictionary<string, object> snapshot = new Dictionary<string, object>();
+
+    private class BroField
+    {
+        public MonoBehaviour Owner;
+        public FieldInfo Field;
+        public object Value;
+    }
+
+    private class BroPart
+    {
+        public Transform Transform;
+        public bool Active;
+        public int Layer;
+        public Vector3 LocalPosition;
+        public Quaternion LocalRotation;
+        public Vector3 LocalScale;
+        public Renderer Renderer;
+        public bool RendererEnabled;
+        public Material Material;
+        public Material MaterialCopy;
+        public SpriteSM Sprite;
+        public Vector2 Cell;
+        public Vector2 CellSize;
+        public Vector3 Offset;
+        public Color Tint;
+        public bool SpriteChanged;
+    }
+
+    private readonly List<BroField> broFields = new List<BroField>();
+    private readonly List<BroPart> broParts = new List<BroPart>();
+    private readonly HashSet<int> broTransforms = new HashSet<int>();
+    private readonly List<string> stateNonFinite = new List<string>();
+    private bool stateDeltaRepaired;
+    private int changeFrameDepth;
+    private bool stateRecursed;
 
     private JArray currentFrames;
     private JObject currentSetup;
@@ -44,10 +83,28 @@ public class AnimationCapture : MonoBehaviour
     private string currentStepField;
     private string currentName;
     private JArray cropCenter;
+    private JObject currentStepBefore;
+    private JObject currentStepAfter;
+
+    private class Call
+    {
+        public MethodInfo Method;
+        public object[] Args;
+    }
 
     private readonly List<MethodInfo> currentBefore = new List<MethodInfo>();
     private readonly List<MethodInfo> currentAfter = new List<MethodInfo>();
+    private readonly List<Call> currentCalls = new List<Call>();
     private bool afterPending;
+
+    private GameObject providedObject;
+    private ZipLine providedZipline;
+
+    private SpriteSM trackedBody;
+    private SpriteSM trackedGun;
+    private string writePhase;
+    private string bodyWrite;
+    private string gunWrite;
 
     private readonly List<GameObject> hiddenOverlays = new List<GameObject>();
     private readonly List<ReactionBubble> heldBubbles = new List<ReactionBubble>();
@@ -61,6 +118,12 @@ public class AnimationCapture : MonoBehaviour
     private bool timeScaleHeld;
     private TestVanDammeAnim facingHeldOn;
     private float savedFacing;
+    private readonly List<BoondockBro> heldCompanions = new List<BoondockBro>();
+    private readonly List<float> savedCompanionFacings = new List<float>();
+    private float? clockDisturbance;
+    private int sweepScene;
+    private Map sweepMap;
+    private string sceneError;
 
     private int stateIndex = -1;
     private int frameIndex;
@@ -72,8 +135,11 @@ public class AnimationCapture : MonoBehaviour
     private int stateOnscreenCells;
     private int stateContributedCells;
     private int stateEmptyCells;
-    private readonly List<string> stateContributionFailures = new List<string>();
+    private readonly List<string> failureReasons = new List<string>();
+    private readonly Dictionary<string, List<int>> failureFrames = new Dictionary<string, List<int>>();
     private readonly Dictionary<string, int> opaqueByCell = new Dictionary<string, int>();
+    private readonly List<string> stateCellProblems = new List<string>();
+    private string frameCellProblem;
     private bool sheetReadLogged;
     private bool blankLogged;
     private bool noCameraLogged;
@@ -84,6 +150,7 @@ public class AnimationCapture : MonoBehaviour
     private readonly Dictionary<int, string> spawnedBy = new Dictionary<int, string>();
     private readonly List<string> stateLeaks = new List<string>();
     private readonly List<Effects.IPoolableEffect> requestedEffects = new List<Effects.IPoolableEffect>();
+    private readonly List<int> requestedSteps = new List<int>();
     private bool retirePending;
     private JObject retireRecord;
     private bool stateBaselined;
@@ -94,12 +161,64 @@ public class AnimationCapture : MonoBehaviour
     private bool lastCropKnown;
     private Vector3 lastCropCenter;
 
+    private class BlockState
+    {
+        public int Id;
+        public string Name;
+        public int Health;
+        public bool Destroyed;
+        public bool Collapsed;
+        public bool Disturbed;
+    }
+
+    private class ObjectState
+    {
+        public string Name;
+        public int Health;
+        public bool Dead;
+        public bool Collapsed;
+        public BroforceObject Ref;
+    }
+
+    private BlockState[,] foreBlocks;
+    private BlockState[,] backBlocks;
+    private Dictionary<int, ObjectState> unitStates;
+    private Dictionary<int, ObjectState> doodadStates;
+    private readonly HashSet<int> sweptIds = new HashSet<int>();
+
+    private readonly List<string> suppressedOrder = new List<string>();
+    private readonly Dictionary<string, int> suppressedCalls = new Dictionary<string, int>();
+    private readonly List<string> damageOrder = new List<string>();
+    private readonly Dictionary<string, int[]> damageCalls = new Dictionary<string, int[]>();
+
     private RenderTexture captureTexture;
     private RenderTexture contributionTexture;
 
     private static void Log(string message)
     {
         if (cachedLogger != null) cachedLogger(message);
+    }
+
+    private static string Describe(string context, Exception ex)
+    {
+        Log(context + " threw " + ex);
+        string method = ThrowingMethod(ex);
+        return context + ": " + ex.Message + (method == null ? "" : " at " + method);
+    }
+
+    private static string ThrowingMethod(Exception ex)
+    {
+        string trace = ex.StackTrace;
+        if (string.IsNullOrEmpty(trace)) return null;
+
+        // A frame reads "at void Type.Method(args)" under Harmony's trace format, "at Type.Method (args) [0x0] in <file>:0" under Mono's own, and "at (wrapper kind) Type.Method (args)" for a runtime wrapper
+        string line = trace.TrimStart().Split('\n')[0].Trim();
+        if (line.StartsWith("at ")) line = line.Substring(3);
+        int wrapper = line.StartsWith("(wrapper ") ? line.IndexOf(") ") : -1;
+        if (wrapper >= 0) line = line.Substring(wrapper + 2);
+        int args = line.IndexOf('(');
+        if (args > 0) line = line.Substring(0, args).TrimEnd();
+        return line.Substring(line.LastIndexOf(' ') + 1);
     }
 
     #region Entry points
@@ -113,34 +232,40 @@ public class AnimationCapture : MonoBehaviour
         int player = ParseInt(ScriptContext.GetArg("player", "0"), 0);
         float boxSize = ParseFloat(ScriptContext.GetArg("box", "24"), 24f);
         bool suppress = ScriptContext.GetArg("suppress", "true") != "false";
-
-        if (string.IsNullOrEmpty(outDir))
-        {
-            Log(StartupFailure + "outDir is required");
-            return;
-        }
-
-        try
-        {
-            Directory.CreateDirectory(outDir);
-            Discard(Path.Combine(outDir, DoneFile));
-            Discard(Path.Combine(outDir, ErrorFile));
-        }
-        catch (Exception ex)
-        {
-            Log(StartupFailure + "could not prepare " + outDir + ": " + ex.Message);
-            return;
-        }
+        string claim = ScriptContext.GetArg("claim", "");
 
         AnimationCapture created = null;
         try
         {
+            string running = LiveSweep(claim);
+            if (running != null) throw new Exception("another animation-capture sweep, into " + running + ", is running in this game: wait for it to finish");
+            if (string.IsNullOrEmpty(outDir)) throw new Exception("outDir is required");
+
+            try
+            {
+                Directory.CreateDirectory(outDir);
+                Discard(Path.Combine(outDir, DoneFile));
+                Discard(Path.Combine(outDir, ErrorFile));
+            }
+            catch (Exception ex)
+            {
+                throw new Exception("could not prepare " + outDir + ": " + ex.Message);
+            }
+
             if (string.IsNullOrEmpty(statesFile)) throw new Exception("statesFile is required");
             if (player < 0 || player > 3) throw new Exception("player must be 0-3, got " + player);
             if (boxSize < 1f) throw new Exception("box must be at least 1, got " + boxSize);
 
-            JArray stateList = ReadStates(statesFile);
+            JObject parameters;
+            JArray stateList = ReadStates(statesFile, out parameters);
+            int cellSize = Mathf.Max(1, Mathf.RoundToInt(boxSize * 2f));
+            CheckStripSize(stateList, cellSize, boxSize);
+
             TestVanDammeAnim hero = ResolveCharacter(player);
+            string unsweepable = Unsweepable(hero, player);
+            if (unsweepable != null) throw new Exception(unsweepable);
+            string otherBro = OtherBro(hero, player, parameters == null ? null : StringOf(parameters["bro"]));
+            if (otherBro != null) throw new Exception(otherBro);
 
             GameObject go = new GameObject("AnimationCapture");
             UnityEngine.Object.DontDestroyOnLoad(go);
@@ -150,14 +275,26 @@ public class AnimationCapture : MonoBehaviour
             created = instance;
             instance.character = hero;
             instance.sweptName = hero.gameObject.name;
+            instance.sweptIds.Add(hero.GetInstanceID());
             instance.playerIndex = player;
             instance.states = stateList;
             instance.box = boxSize;
-            instance.cellPx = Mathf.Max(1, Mathf.RoundToInt(boxSize * 2f));
+            instance.cellPx = cellSize;
+            instance.sweepParams = parameters ?? new JObject();
+            instance.sweepParams["allowSideEffects"] = !suppress;
+            instance.sweepParams["box"] = boxSize;
+            AppDomain.CurrentDomain.SetData(LiveSlot, new object[] { go, outDir });
+
             SuppressBubbles();
             TrackEffectRequests();
+            TrackCellWrites();
+            GuardFrozenClock(hero);
             if (suppress) SuppressSideEffects(hero);
-            else Log("Side-effect suppression is off: the swept animations will fire for real");
+            else
+            {
+                RecordSideEffects();
+                Log("Side-effect suppression is off: the swept animations will fire for real");
+            }
             instance.Begin();
 
             Log("Capturing " + stateList.Count + " states from " + hero.GetType().Name + " into " + outDir);
@@ -167,7 +304,68 @@ public class AnimationCapture : MonoBehaviour
             if (created != null) created.Abort();
             Log(StartupFailure + ex.Message);
             WriteError(ex.Message);
+            throw new Exception(StartupFailure + ex.Message);
         }
+    }
+
+    private static string LiveSweep(string ownClaim)
+    {
+        object[] live = AppDomain.CurrentDomain.GetData(LiveSlot) as object[];
+        string held = null;
+        if (live != null && live.Length == 2 && (live[0] as GameObject) != null) held = "" + live[1];
+        if (live != null && live.Length == 3 && live[0] is string && live[2] is float && (string)live[0] != ownClaim
+            && (float)live[2] > Time.realtimeSinceStartup) held = "" + live[1];
+        return held;
+    }
+
+    private static string OtherBro(TestVanDammeAnim hero, int player, string requested)
+    {
+        if (string.IsNullOrEmpty(requested)) return null;
+        string current = SwapBrosIntegration.GetLiveBroName(hero);
+        if (current != null && string.Equals(current.Trim(), requested.Trim(), StringComparison.OrdinalIgnoreCase)) return null;
+        return "player " + player + " holds '" + current + "', not the requested '" + requested + "', so nothing was swept";
+    }
+
+    private void ReleaseLiveSlot()
+    {
+        object[] live = AppDomain.CurrentDomain.GetData(LiveSlot) as object[];
+        if (live != null && live.Length == 2 && live[0] as GameObject == gameObject)
+        {
+            AppDomain.CurrentDomain.SetData(LiveSlot, null);
+        }
+    }
+
+    private static void CheckStripSize(JArray stateList, int cellSize, float boxSize)
+    {
+        int frames = 1;
+        foreach (JToken token in stateList)
+        {
+            JObject state = token as JObject;
+            JObject step = state == null ? null : state["step"] as JObject;
+            JArray values = step == null ? null : step["values"] as JArray;
+            if (values != null && values.Count > frames) frames = values.Count;
+        }
+
+        int width = frames * (cellSize + 1) - 1;
+        int limit = SystemInfo.maxTextureSize;
+        if (width > limit || cellSize > limit)
+        {
+            throw new Exception("box " + boxSize + " makes a " + frames + "-frame strip " + width + " px wide, over this GPU's "
+                + limit + " px texture limit: use a smaller box");
+        }
+    }
+
+    private static string Unsweepable(TestVanDammeAnim hero, int player)
+    {
+        if (PauseController.pauseStatus != PauseStatus.UnPaused) return "the game is paused (" + PauseController.pauseStatus + ")";
+        if (CutsceneController.InCutscene) return "a cutscene is playing";
+        if (!hero.IsAlive()) return "player " + player + "'s bro is dead";
+        if (hero.pilottedUnit != null) return "player " + player + " is piloting " + hero.pilottedUnit.name;
+        if (hero.isOnHelicopter || !hero.enabled || !hero.gameObject.activeInHierarchy)
+        {
+            return "player " + player + "'s bro has not been released into the level yet (still on the level-start transport): raise settle";
+        }
+        return null;
     }
 
     private void Abort()
@@ -177,18 +375,13 @@ public class AnimationCapture : MonoBehaviour
         ReleaseFacing();
         RestoreOverlays();
         ReleaseBubbles();
+        ReleaseLiveSlot();
     }
 
-    // Several states walk frames that fire the real thing: AnimateSpecial calls UseSpecial, the
-    // pocketted special calls UsePockettedSpecial, and knife melee swings at whatever is nearby.
-    // Skipping them keeps the frames identical and the level intact. ScriptContext.Harmony is only
-    // live inside Main(), and its patches come off automatically on unload.
-    // ReactionBubble rewrites its own transform every frame — LateUpdate calls CheckScale and the
-    // non-animated arm of Update reassigns localScale outright — so a scale or position hold only
-    // lasts until the next frame unless both are skipped for the duration of the sweep.
     private static void SuppressBubbles()
     {
         MethodInfo skip = AccessTools.Method(typeof(AnimationCapture), "SkipDuringSweep");
+        // ReactionBubble's LateUpdate (CheckScale) and Update rewrite its transform every frame
         Patch(AccessTools.DeclaredMethod(typeof(ReactionBubble), "Update"), skip, "ReactionBubble.Update");
         Patch(AccessTools.DeclaredMethod(typeof(ReactionBubble), "LateUpdate"), skip, "ReactionBubble.LateUpdate");
     }
@@ -201,7 +394,8 @@ public class AnimationCapture : MonoBehaviour
         "StunUnits", "StunMooks", "BlindUnits", "TearGasUnits", "FreezeUnits", "PanicUnits", "BurnUnitsAround_Local",
         "CrushUnitsAgainstWalls", "CrushUnitsAgainstWallsHorizontal", "CrushUnitsAgainstWallsVertical",
         "RollOntoUnits", "HurtWildLife", "BurnBlocksAround", "BurnDamageBlock", "BurnLargeObjects",
-        "DamageBackground", "DamageDoodads", "DamageStaticDoodads", "DamageDoodadByTag", "DisturbAlienEggs"
+        "DamageBackground", "DamageDoodads", "DamageStaticDoodads", "DamageDoodadByTag", "DisturbAlienEggs",
+        "DeflectProjectiles"
     };
 
     private static readonly string[] MapControllerHarm =
@@ -221,22 +415,95 @@ public class AnimationCapture : MonoBehaviour
     {
         if (!SweepLive()) return;
         Effects.IPoolableEffect effect = __result as Effects.IPoolableEffect;
-        if (effect != null) instance.requestedEffects.Add(effect);
+        if (effect == null) return;
+        instance.requestedEffects.Add(effect);
+        instance.requestedSteps.Add(instance.inState ? instance.frameIndex : -1);
+    }
+
+    private static void TrackCellWrites()
+    {
+        HarmonyMethod note = new HarmonyMethod(AccessTools.Method(typeof(AnimationCapture), "NoteCellWrite"));
+        // SpriteSM.SetLowerLeftPixel is the one call that moves a sprite to a sheet cell
+        Patch(AccessTools.Method(typeof(SpriteSM), "SetLowerLeftPixel", new Type[] { typeof(Vector2) }), null, note,
+            "SpriteSM.SetLowerLeftPixel(Vector2)");
+        Patch(AccessTools.Method(typeof(SpriteSM), "SetLowerLeftPixel", new Type[] { typeof(float), typeof(float) }), null, note,
+            "SpriteSM.SetLowerLeftPixel(float, float)");
+    }
+
+    private static void NoteCellWrite(SpriteSM __instance)
+    {
+        if (!SweepLive() || instance.writePhase == null) return;
+        if (object.ReferenceEquals(__instance, instance.trackedBody)) instance.bodyWrite = instance.writePhase;
+        if (object.ReferenceEquals(__instance, instance.trackedGun)) instance.gunWrite = instance.writePhase;
+    }
+
+    private static void GuardFrozenClock(TestVanDammeAnim hero)
+    {
+        HarmonyMethod keepFinite = new HarmonyMethod(AccessTools.Method(typeof(AnimationCapture), "KeepDeltaFinite"));
+        Type type = hero.GetType();
+        Patch(Declared(AccessTools.Method(type, "SetDeltaTime", Type.EmptyTypes), Type.EmptyTypes), null, keepFinite, "SetDeltaTime");
+        Patch(Declared(AccessTools.Method(type, "SetHighFiveBoostDeltaTime", Type.EmptyTypes), Type.EmptyTypes), null, keepFinite, "SetHighFiveBoostDeltaTime");
+        Patch(Declared(AccessTools.Method(type, "ChangeFrame", Type.EmptyTypes), Type.EmptyTypes),
+            new HarmonyMethod(AccessTools.Method(typeof(AnimationCapture), "EnterChangeFrame")),
+            new HarmonyMethod(AccessTools.Method(typeof(AnimationCapture), "LeaveChangeFrame")), "ChangeFrame");
+    }
+
+    private static bool EnterChangeFrame(TestVanDammeAnim __instance, out bool __state)
+    {
+        __state = false;
+        if (!SweepLive() || !object.ReferenceEquals(__instance, instance.character)) return true;
+        // An Animate method that re-enters ChangeFrame without clearing a flag the state pins never returns, and the stack overflow kills the game
+        if (instance.changeFrameDepth >= MaxChangeFrameDepth)
+        {
+            instance.NoteRecursion();
+            return false;
+        }
+        instance.changeFrameDepth++;
+        __state = true;
+        return true;
+    }
+
+    private static void LeaveChangeFrame(bool __state)
+    {
+        if (__state && instance != null) instance.changeFrameDepth--;
+    }
+
+    private void NoteRecursion()
+    {
+        if (!inState || stateRecursed) return;
+        stateRecursed = true;
+        AddStateError("state '" + currentName + "': ChangeFrame re-entered itself " + MaxChangeFrameDepth
+            + " levels deep and would have overflowed the stack, so it was cut short and the state stopped at this frame");
+    }
+
+    private static void KeepDeltaFinite(TestVanDammeAnim __instance)
+    {
+        if (!SweepLive() || !object.ReferenceEquals(__instance, instance.character) || Finite(__instance.t)) return;
+        // A custom bro's SetDeltaTime dividing by the stopped clock makes t NaN
+        __instance.t = 0f;
+        instance.stateDeltaRepaired = true;
     }
 
     private static void SuppressSideEffects(TestVanDammeAnim hero)
     {
-        MethodInfo skip = AccessTools.Method(typeof(AnimationCapture), "SkipDuringSweep");
+        HarmonyMethod mine = new HarmonyMethod(AccessTools.Method(typeof(AnimationCapture), "SkipForCharacter"));
+        HarmonyMethod harm = new HarmonyMethod(AccessTools.Method(typeof(AnimationCapture), "SkipHarm"));
         Type type = hero.GetType();
         Type[] twoBools = new Type[] { typeof(bool), typeof(bool) };
+        Type[] fourFloats = new Type[] { typeof(float), typeof(float), typeof(float), typeof(float) };
 
-        Patch(Declared(AccessTools.Method(type, "UseSpecial", Type.EmptyTypes), Type.EmptyTypes), skip, "UseSpecial");
-        Patch(Declared(AccessTools.Method(type, "UsePockettedSpecial", Type.EmptyTypes), Type.EmptyTypes), skip, "UsePockettedSpecial");
-        Patch(Declared(AccessTools.Method(type, "PerformKnifeMeleeAttack", twoBools), twoBools), skip, "PerformKnifeMeleeAttack");
-        Patch(Declared(AccessTools.Method(type, "PerformPunchAttack", twoBools), twoBools), skip, "PerformPunchAttack");
+        PatchMine(type, "UseSpecial", Type.EmptyTypes, mine);
+        PatchMine(type, "UsePockettedSpecial", Type.EmptyTypes, mine);
+        PatchMine(type, "PerformKnifeMeleeAttack", twoBools, mine);
+        PatchMine(type, "PerformPunchAttack", twoBools, mine);
+        // A pinned airborne state lands every step, stepping on sand and falling blocks underfoot
+        PatchMine(type, "Land", Type.EmptyTypes, mine);
+        PatchMine(type, "TriggerFlexEvent", Type.EmptyTypes, mine);
+        PatchMine(type, "FireWeapon", fourFloats, mine);
+        PatchMine(type, "ReleaseHeldObject", new Type[] { typeof(bool) }, mine);
 
-        for (int i = 0; i < MapHarm.Length; i++) PatchOverloads(typeof(Map), MapHarm[i], skip);
-        for (int i = 0; i < MapControllerHarm.Length; i++) PatchOverloads(typeof(MapController), MapControllerHarm[i], skip);
+        for (int i = 0; i < MapHarm.Length; i++) PatchOverloads(typeof(Map), MapHarm[i], harm, null);
+        for (int i = 0; i < MapControllerHarm.Length; i++) PatchOverloads(typeof(MapController), MapControllerHarm[i], harm, null);
 
         // Land dereferences the returned wave, so CreateShockWave cannot be skipped and the wave is retired instead
         Type[] threeFloats = new Type[] { typeof(float), typeof(float), typeof(float) };
@@ -245,13 +512,26 @@ public class AnimationCapture : MonoBehaviour
             "EffectsController.CreateShockWave");
     }
 
+    private static void RecordSideEffects()
+    {
+        HarmonyMethod voids = new HarmonyMethod(AccessTools.Method(typeof(AnimationCapture), "NoteDamageCall"));
+        HarmonyMethod results = new HarmonyMethod(AccessTools.Method(typeof(AnimationCapture), "NoteDamageResult"));
+        for (int i = 0; i < MapHarm.Length; i++) PatchOverloads(typeof(Map), MapHarm[i], null, new HarmonyMethod[] { voids, results });
+        for (int i = 0; i < MapControllerHarm.Length; i++) PatchOverloads(typeof(MapController), MapControllerHarm[i], null, new HarmonyMethod[] { voids, results });
+    }
+
+    private static void PatchMine(Type type, string name, Type[] parameters, HarmonyMethod prefix)
+    {
+        Patch(Declared(AccessTools.Method(type, name, parameters), parameters), prefix, null, name);
+    }
+
     private static void RetireDuringSweep(ExplosionGroundWave __result)
     {
         if (__result == null || !SweepLive()) return;
         __result.EffectDie();
     }
 
-    private static void PatchOverloads(Type type, string name, MethodInfo prefix)
+    private static void PatchOverloads(Type type, string name, HarmonyMethod prefix, HarmonyMethod[] postfixes)
     {
         MethodInfo[] methods = type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static
                                                | BindingFlags.Instance | BindingFlags.DeclaredOnly);
@@ -261,7 +541,8 @@ public class AnimationCapture : MonoBehaviour
         {
             if (methods[i].Name != name || methods[i].IsGenericMethodDefinition) continue;
             found++;
-            Patch(methods[i], prefix, type.Name + "." + name + "/" + methods[i].GetParameters().Length);
+            HarmonyMethod postfix = postfixes == null ? null : postfixes[methods[i].ReturnType == typeof(void) ? 0 : 1];
+            Patch(methods[i], prefix, postfix, type.Name + "." + name + "/" + methods[i].GetParameters().Length);
         }
 
         if (found == 0) Log("Not suppressing " + type.Name + "." + name + ": no such method on this build");
@@ -284,7 +565,7 @@ public class AnimationCapture : MonoBehaviour
     {
         if (target == null)
         {
-            Log("Not suppressing " + label + ": no such method on this build");
+            Log("Not patching " + label + ": no such method on this build");
             return;
         }
 
@@ -294,15 +575,69 @@ public class AnimationCapture : MonoBehaviour
         }
         catch (Exception ex)
         {
-            Log("Could not suppress " + label + ": " + ex.Message);
+            Log("Could not patch " + label + ": " + ex.Message);
         }
     }
 
-    // Harmony reads a prefix's return value as "run the original", so this runs the original only
-    // once the sweep is over or gone: while it is live, the call is skipped.
     private static bool SkipDuringSweep()
     {
+        // Harmony reads a prefix's return value as "run the original"
         return !SweepLive();
+    }
+
+    private static bool SkipHarm(MethodBase __originalMethod)
+    {
+        if (!SweepLive()) return true;
+        instance.NoteSuppressed(__originalMethod);
+        return false;
+    }
+
+    private static bool SkipForCharacter(object __instance, MethodBase __originalMethod)
+    {
+        if (!SweepLive() || !object.ReferenceEquals(__instance, instance.character)) return true;
+        instance.NoteSuppressed(__originalMethod);
+        return false;
+    }
+
+    private static void NoteDamageCall(MethodBase __originalMethod)
+    {
+        if (SweepLive()) instance.NoteDamage(__originalMethod, null);
+    }
+
+    private static void NoteDamageResult(MethodBase __originalMethod, object __result)
+    {
+        if (SweepLive()) instance.NoteDamage(__originalMethod, __result);
+    }
+
+    private static string MethodLabel(MethodBase method)
+    {
+        return method.DeclaringType.Name + "." + method.Name;
+    }
+
+    private void NoteSuppressed(MethodBase method)
+    {
+        string key = MethodLabel(method);
+        int count;
+        if (!suppressedCalls.TryGetValue(key, out count)) suppressedOrder.Add(key);
+        suppressedCalls[key] = count + 1;
+    }
+
+    private void NoteDamage(MethodBase method, object result)
+    {
+        string key = MethodLabel(method);
+        int[] tally;
+        if (!damageCalls.TryGetValue(key, out tally))
+        {
+            tally = new int[] { 0, 0, 0 };
+            damageCalls[key] = tally;
+            damageOrder.Add(key);
+        }
+        tally[0]++;
+        if (result is bool)
+        {
+            tally[2] = 1;
+            if ((bool)result) tally[1]++;
+        }
     }
 
     private static bool SweepLive()
@@ -314,15 +649,20 @@ public class AnimationCapture : MonoBehaviour
     {
         if (instance == null) return;
 
+        bool interrupted = !instance.finished;
         instance.finished = true;
         instance.ReleaseTimeScale();
-        instance.ReleaseFacing();
-        instance.RestoreSnapshot();
+        if (interrupted) instance.RestoreBro();
         instance.RunAfter(null);
+        instance.DestroyProvided();
+        if (interrupted) instance.RestoreBro();
+        instance.ReleaseFacing();
         instance.RestoreOverlays();
         instance.ReleaseBubbles();
         instance.DisposeCells();
         instance.ReleaseCaptureTexture();
+        instance.ReleaseLiveSlot();
+        if (interrupted) instance.WriteCapture(false);
         instance = null;
     }
 
@@ -339,9 +679,12 @@ public class AnimationCapture : MonoBehaviour
         savedTimeScale = Time.timeScale > 0f ? Time.timeScale : 1f;
         timeScaleHeld = true;
         Time.timeScale = 0f;
+        sweepScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().GetHashCode();
+        sweepMap = Map.Instance;
         HideOverlays();
         HoldBubbles();
         HoldFacing();
+        SnapshotBro();
 
         SpriteSM body = GetSprite();
         Vector3 center = CropCenterOf(body);
@@ -349,19 +692,16 @@ public class AnimationCapture : MonoBehaviour
         string intruder = ProbeOverlaps(body, center);
         if (intruder != null)
         {
-            throw new Exception("another hero '" + intruder + "' that no player slot holds is drawn in the capture "
-                + "crop and the sweep would strip it: raise swapSettle or wait for the old character to be destroyed");
+            throw new Exception("the previous bro '" + intruder + "', recalled by the swap, is still drawn in the capture "
+                + "crop and the sweep would strip it: raise swapSettle or wait for it to be destroyed");
         }
 
         RecordObjects(sweepStartObjects);
+        SnapshotLevel(out foreBlocks, out backBlocks, out unitStates, out doodadStates);
+        broDescription = DescribeBro();
+        WriteCapture(false);
     }
 
-    // The player-number bubble (Rambo(Clone)/Player1Bubble) hangs 16 units above the bro, inside the
-    // crop, and the game puts back both its GameObject and its renderer within a frame. A zero
-    // localScale is the one hold nothing undoes: ReactionBubble.CheckScale only ever flips the sign
-    // of the scale it finds, so zero stays zero even if the object is re-activated mid-sweep.
-    // Every bubble in the scene is held, not just this bro's: another unit's bubble drifts into the
-    // crop just as easily.
     private void HoldBubbles()
     {
         try
@@ -375,6 +715,8 @@ public class AnimationCapture : MonoBehaviour
 
                 heldBubbles.Add(bubble);
                 heldBubbleScales.Add(bubble.transform.localScale);
+                // The game puts a bubble's GameObject and renderer back within a frame
+                // A zero localScale is the one hold nothing undoes: ReactionBubble.CheckScale only ever flips the sign of the x scale it finds
                 bubble.transform.localScale = Vector3.zero;
             }
         }
@@ -447,7 +789,7 @@ public class AnimationCapture : MonoBehaviour
                 if (Mathf.Abs(bounds.center.x - center.x) > box + bounds.extents.x) continue;
                 if (Mathf.Abs(bounds.center.y - center.y) > box + bounds.extents.y) continue;
 
-                if (intruder == null) intruder = OtherCharacterOf(r);
+                if (intruder == null) intruder = RecalledRigOf(r);
                 if (overlapProbe.Count >= 24) continue;
 
                 JObject entry = new JObject();
@@ -465,7 +807,7 @@ public class AnimationCapture : MonoBehaviour
         return intruder;
     }
 
-    private string OtherCharacterOf(Renderer r)
+    private string RecalledRigOf(Renderer r)
     {
         Vector3 scale = r.transform.lossyScale;
         if (scale.x == 0f || scale.y == 0f) return null;
@@ -474,32 +816,15 @@ public class AnimationCapture : MonoBehaviour
         {
             TestVanDammeAnim rig = t.GetComponent<TestVanDammeAnim>();
             if (rig == null) continue;
-            // IsEnemy is false only for heroes and rescue bros, and a RescueBro is a caged one the level owns
-            if (rig == character || rig.IsEnemy || rig is RescueBro || HeldBySlot(rig) || IsCompanion(rig)) return null;
-            return rig.gameObject.name;
+            if (rig == character) return null;
+
+            FieldInfo recalling = AccessTools.Field(typeof(TestVanDammeAnim), "recalling");
+            // The rig a swap leaves behind is the recalled one (TestVanDammeAnim.RecallBro)
+            bool recalled = rig.actionState == ActionState.Recalling
+                || (recalling != null && (bool)recalling.GetValue(rig));
+            return recalled ? rig.gameObject.name : null;
         }
         return null;
-    }
-
-    private static bool HeldBySlot(TestVanDammeAnim rig)
-    {
-        if (HeroController.players == null) return false;
-
-        for (int i = 0; i < HeroController.players.Length; i++)
-        {
-            Player slot = HeroController.players[i];
-            if (slot != null && slot.character == rig) return true;
-        }
-        return false;
-    }
-
-    private bool IsCompanion(TestVanDammeAnim rig)
-    {
-        // Boondock Bros' trailing bro is a separate root that points back at its lead through leadingBro
-        FieldInfo lead = AccessTools.Field(rig.GetType(), "leadingBro");
-        if (lead == null) return false;
-        TestVanDammeAnim leader = lead.GetValue(rig) as TestVanDammeAnim;
-        return leader != null && leader == character;
     }
 
     private static string PathOf(Transform transform)
@@ -525,9 +850,38 @@ public class AnimationCapture : MonoBehaviour
         return names;
     }
 
+    private void CheckClock()
+    {
+        // Game code sets the clock too: a time-stop ramping back, a pause toggle, a cutscene
+        if (!timeScaleHeld || Time.timeScale == 0f) return;
+
+        float seen = Time.timeScale;
+        Time.timeScale = 0f;
+        if (!clockDisturbance.HasValue)
+        {
+            clockDisturbance = seen;
+            Log("The game set the clock to " + seen.ToString(CultureInfo.InvariantCulture) + " during the sweep; it was put back to 0");
+        }
+    }
+
+    private void CheckScene()
+    {
+        if (sceneError != null) return;
+        if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().GetHashCode() == sweepScene && Map.Instance == sweepMap) return;
+
+        sceneError = "the scene changed during the sweep (a level load or restart), so the remaining states were not swept";
+        Log(sceneError);
+        if (inState && stateError == null) stateError = "state '" + currentName + "': " + sceneError;
+    }
+
     private void Update()
     {
-        if (finished || awaitingCapture) return;
+        if (finished) return;
+        CheckClock();
+        CheckScene();
+        RepairNonFinite();
+        changeFrameDepth = 0;
+        if (awaitingCapture) return;
 
         if (!inState)
         {
@@ -597,22 +951,42 @@ public class AnimationCapture : MonoBehaviour
     // OnGUI — driving a render from inside IMGUI's repaint is the one place Unity refuses it.
     private void LateUpdate()
     {
+        if (finished)
+        {
+            awaitingCapture = false;
+            return;
+        }
+        CheckClock();
+        RepairNonFinite();
         if (!awaitingCapture) return;
 
         awaitingCapture = false;
+        TurnCompanions();
         RecordStep(frameIndex);
         frameIndex++;
     }
 
-    // A lethal state kills the player and the game replaces the character object, so the stored
-    // reference is a destroyed Unity object by the time the next state starts.
+    private void OnDestroy()
+    {
+        ReleaseCaptureTexture();
+        DisposeCells();
+        DestroyProvided();
+        ReleaseBroSnapshot();
+    }
+
     private bool RefreshCharacter()
     {
+        if (sceneError != null)
+        {
+            stateError = "state '" + NameOf(states[stateIndex] as JObject) + "': " + sceneError;
+            return false;
+        }
         if (respawnError != null)
         {
             stateError = respawnError;
             return false;
         }
+        // A destroyed Unity object compares equal to null: a swap mid-sweep (HeroController.ChangeBro) destroys the character and spawns his replacement in the same call
         if (character != null) return true;
 
         try
@@ -629,12 +1003,14 @@ public class AnimationCapture : MonoBehaviour
             }
 
             character = resolved;
+            SnapshotBro();
+            sweptIds.Add(resolved.GetInstanceID());
             Log("Re-resolved the character after it was destroyed");
             return true;
         }
         catch (Exception ex)
         {
-            stateError = "no character for player " + playerIndex + ": " + ex.Message;
+            stateError = Describe("no character for player " + playerIndex, ex);
             return false;
         }
     }
@@ -652,12 +1028,14 @@ public class AnimationCapture : MonoBehaviour
             currentName = "<unnamed>";
             currentFrames = new JArray();
             cells.Clear();
-            snapshot.Clear();
+            stateRecursed = false;
             stateSawWritten = false;
             stateOnscreenCells = 0;
             stateContributedCells = 0;
             stateEmptyCells = 0;
-            stateContributionFailures.Clear();
+            failureReasons.Clear();
+            failureFrames.Clear();
+            stateCellProblems.Clear();
 
             if (state == null) throw new Exception("state list holds a non-object entry");
 
@@ -689,27 +1067,75 @@ public class AnimationCapture : MonoBehaviour
             if (currentValues == null || currentValues.Count == 0)
                 throw new Exception("state '" + currentName + "' has no step values");
 
+            currentStepBefore = step["before"] as JObject;
+            currentStepAfter = step["after"] as JObject;
+
+            Provide(StringOf(state["provide"]));
+
             // Resolved before anything is pinned, so a state that names a method the character does
             // not have errors without having touched the bro
             currentBefore.Clear();
             currentAfter.Clear();
+            currentCalls.Clear();
             afterPending = false;
             ResolveMethods(state["before"], "before", currentBefore);
             ResolveMethods(state["after"], "after", currentAfter);
+            ResolveCalls(step["call"]);
 
-            Remember(currentStepField);
-            if (currentSetup != null)
-            {
-                foreach (JProperty prop in currentSetup.Properties()) Remember(prop.Name);
-            }
+            RequireField(currentStepField);
+            RequireFields(currentSetup);
+            RequireFields(currentStepBefore);
+            RequireFields(currentStepAfter);
 
             return true;
         }
         catch (Exception ex)
         {
-            stateError = "state '" + currentName + "': " + ex.Message;
+            stateError = Describe("state '" + currentName + "'", ex);
             return false;
         }
+    }
+
+    private void Provide(string kind)
+    {
+        if (string.IsNullOrEmpty(kind)) return;
+
+        Vector3 at = character.transform.position;
+        if (kind == "zipline")
+        {
+            GameObject go = new GameObject("AnimationCapture ZipLine");
+            // An inactive ZipLine never runs its Start or Update
+            go.SetActive(false);
+            providedObject = go;
+            ZipLine zipline = go.AddComponent<ZipLine>();
+            zipline.fromAnchorPoint = at + new Vector3(-64f, 24f, 0f);
+            zipline.toAnchorPoint = at + new Vector3(64f, 24f, 0f);
+            zipline.attachedUnits = new List<Unit>();
+            zipline.ziplineProgress = new List<float>();
+            zipline.ziplineDirection = new List<float>();
+            zipline.hangingObjects = new WashingLineHangingItem[0];
+            providedZipline = zipline;
+            return;
+        }
+        if (kind == "ladder")
+        {
+            // IsNearbyLadder probes a 4-unit sphere at (X ± 6, Y + 22) on the Ladders layer; the box starts 16 units up, above the downward ground and ladder-top rays cast from Y + 5 and Y + 14
+            GameObject go = new GameObject("AnimationCapture Ladder");
+            go.layer = LayerMask.NameToLayer("Ladders");
+            go.transform.position = at + new Vector3(0f, 28f, 0f);
+            providedObject = go;
+            BoxCollider collider = go.AddComponent<BoxCollider>();
+            collider.size = new Vector3(24f, 24f, 16f);
+            return;
+        }
+        throw new Exception("provide names '" + kind + "', not zipline or ladder");
+    }
+
+    private void DestroyProvided()
+    {
+        if (providedObject != null) UnityEngine.Object.Destroy(providedObject);
+        providedObject = null;
+        providedZipline = null;
     }
 
     // Some states are only reachable by calling a method on the character, because the method swaps
@@ -725,7 +1151,7 @@ public class AnimationCapture : MonoBehaviour
         {
             // Nothing has been called yet, so there is nothing for after to undo: running it here
             // would hand a reverse method a character its forward method never touched
-            stateError = "state '" + currentName + "' setup: " + ex.Message;
+            stateError = Describe("state '" + currentName + "' setup", ex);
             return;
         }
 
@@ -735,7 +1161,7 @@ public class AnimationCapture : MonoBehaviour
 
         for (int i = 0; i < currentBefore.Count; i++)
         {
-            string problem = CallOnCharacter(currentBefore[i], "before");
+            string problem = CallOnCharacter(currentBefore[i], null, "before");
             if (problem == null) continue;
 
             // The state has errored and the rest of the list would run on a half-entered character
@@ -756,36 +1182,31 @@ public class AnimationCapture : MonoBehaviour
         string problems = null;
         for (int i = 0; i < currentAfter.Count; i++)
         {
-            string problem = CallOnCharacter(currentAfter[i], "after");
+            string problem = CallOnCharacter(currentAfter[i], null, "after");
             if (problem == null) continue;
             problems = problems == null ? problem : problems + "; " + problem;
         }
 
         if (problems == null) return;
-        // Logged as well as recorded: on the Unload path there is no record and no capture.json, so
-        // the log line the driver's timeout tail prints is the only place this can surface
-        Log(problems);
         if (record != null) record["afterError"] = problems;
         errors.Add(problems);
     }
 
     // Returns the failure message, or null: the caller decides where it belongs. Not named Invoke,
     // which would hide MonoBehaviour's own Invoke overloads.
-    private string CallOnCharacter(MethodInfo method, string phase)
+    private string CallOnCharacter(MethodInfo method, object[] args, string phase)
     {
         try
         {
-            method.Invoke(character, null);
+            method.Invoke(character, args);
             return null;
         }
         catch (Exception ex)
         {
-            // Reflection wraps whatever the method threw; the message is the useful half, and
-            // reading StackTrace off a dynamically compiled frame crashes the game
             Exception cause = ex is TargetInvocationException && ex.InnerException != null
                 ? ex.InnerException
                 : ex;
-            return "state '" + currentName + "' " + phase + " " + method.Name + ": " + cause.Message;
+            return Describe("state '" + currentName + "' " + phase + " " + method.Name, cause);
         }
     }
 
@@ -800,14 +1221,37 @@ public class AnimationCapture : MonoBehaviour
     {
         try
         {
+            trackedBody = GetSprite();
+            trackedGun = character.gunSprite;
+            bodyWrite = null;
+            gunWrite = null;
+            writePhase = "capture";
+
             ApplySetup();
             SetField(currentStepField, currentValues[index]);
             character.ForceChangeFrame();
+
+            if (currentCalls.Count > 0)
+            {
+                ApplyPins(currentStepBefore);
+                for (int i = 0; i < currentCalls.Count; i++)
+                {
+                    string problem = CallOnCharacter(currentCalls[i].Method, currentCalls[i].Args, "step call");
+                    if (problem == null) continue;
+                    writePhase = null;
+                    stateError = "state '" + currentName + "' step " + index + ": " + problem;
+                    return false;
+                }
+                ApplyPins(currentStepAfter);
+            }
+
+            writePhase = "game";
             return true;
         }
         catch (Exception ex)
         {
-            stateError = "state '" + currentName + "' step " + index + ": " + ex.Message;
+            writePhase = null;
+            stateError = Describe("state '" + currentName + "' step " + index, ex);
             return false;
         }
     }
@@ -834,9 +1278,12 @@ public class AnimationCapture : MonoBehaviour
             else stateOnscreenCells++;
 
             SpriteSM body = GetSprite();
-            frame["body"] = CellOf(body, body == null ? null : MaterialOf(body));
+            JObject bodyCell = CellOf(body, body == null ? null : MaterialOf(body));
+            if (body != null) bodyCell["written"] = bodyWrite ?? "carried";
+            frame["body"] = bodyCell;
 
             SpriteSM gun = character.gunSprite;
+            bool gunActive = gun != null && gun.gameObject.activeInHierarchy;
             if (gun == null)
             {
                 frame["gun"] = JValue.CreateNull();
@@ -844,11 +1291,23 @@ public class AnimationCapture : MonoBehaviour
             else
             {
                 JObject gunCell = CellOf(gun, MaterialOf(gun));
-                gunCell["enabled"] = gun.gameObject.activeInHierarchy;
+                gunCell["enabled"] = gunActive;
+                gunCell["written"] = gunWrite ?? "carried";
                 frame["gun"] = gunCell;
             }
 
-            if (!offscreen) RecordContribution(frame, index, contributionFailure, body, gun);
+            FieldInfo gunFrame = ResolveField("gunFrame");
+            if (gunFrame != null) frame["gunFrame"] = JToken.FromObject(gunFrame.GetValue(character));
+
+            if (!offscreen)
+            {
+                frameCellProblem = null;
+                bool? bodyEmpty = CellEmpty(body);
+                bool? gunEmpty = gunActive ? CellEmpty(gun) : null;
+                if (bodyEmpty.HasValue) frame["bodyCellEmpty"] = bodyEmpty.Value;
+                if (gunEmpty.HasValue) frame["gunCellEmpty"] = gunEmpty.Value;
+                RecordContribution(frame, index, contributionFailure, bodyEmpty, gunActive ? gunEmpty : (bool?)true);
+            }
 
             frame["scaleX"] = character.transform.localScale.x;
 
@@ -863,12 +1322,16 @@ public class AnimationCapture : MonoBehaviour
         }
         catch (Exception ex)
         {
-            stateError = "state '" + currentName + "' frame " + index + ": " + ex.Message;
+            stateError = Describe("state '" + currentName + "' frame " + index, ex);
             return false;
+        }
+        finally
+        {
+            writePhase = null;
         }
     }
 
-    private void RecordContribution(JObject frame, int index, string failure, SpriteSM body, SpriteSM gun)
+    private void RecordContribution(JObject frame, int index, string failure, bool? bodyEmpty, bool? gunEmpty)
     {
         frame["contributed"] = failure == null;
         if (failure == null)
@@ -877,38 +1340,46 @@ public class AnimationCapture : MonoBehaviour
             return;
         }
 
-        if (failure == NoPixelFailure)
+        if (failure == NoPixelFailure && bodyEmpty.HasValue && gunEmpty.HasValue)
         {
-            bool? empty = AddressedCellsEmpty(body, gun);
-            if (empty.HasValue) frame["cellEmpty"] = empty.Value;
-            if (empty.HasValue && empty.Value)
+            bool empty = bodyEmpty.Value && gunEmpty.Value;
+            frame["cellEmpty"] = empty;
+            if (empty)
             {
                 stateEmptyCells++;
                 return;
             }
         }
 
-        string message = "state '" + currentName + "' frame " + index + ": " + failure;
-        stateContributionFailures.Add(message);
-        Log(message);
+        List<int> frames;
+        if (!failureFrames.TryGetValue(failure, out frames))
+        {
+            frames = new List<int>();
+            failureFrames[failure] = frames;
+            failureReasons.Add(failure);
+        }
+        frames.Add(index);
+        if (failure == NoPixelFailure && frameCellProblem != null && !stateCellProblems.Contains(frameCellProblem))
+        {
+            stateCellProblems.Add(frameCellProblem);
+        }
     }
 
-    private bool? AddressedCellsEmpty(SpriteSM body, SpriteSM gun)
+    private bool? CellEmpty(SpriteSM sprite)
     {
-        if (body == null) return null;
+        if (sprite == null) return null;
 
         try
         {
-            if (OpaqueInCell(body) > 0) return false;
-            if (gun != null && gun.gameObject.activeInHierarchy && OpaqueInCell(gun) > 0) return false;
-            return true;
+            return OpaqueInCell(sprite) == 0;
         }
         catch (Exception ex)
         {
+            frameCellProblem = frameCellProblem ?? ex.Message;
             if (!sheetReadLogged)
             {
                 sheetReadLogged = true;
-                Log("Could not read a sprite sheet to classify an uncontributed frame: " + ex.Message);
+                Log("Could not read a sprite sheet to classify a frame's cell: " + ex.Message);
             }
             return null;
         }
@@ -936,7 +1407,7 @@ public class AnimationCapture : MonoBehaviour
         int height = Mathf.Clamp(y + h, 0, texture.height) - bottom;
         if (width <= 0 || height <= 0)
         {
-            throw new Exception("cell " + w + "x" + h + " at " + x + "," + y + " lies outside the "
+            throw new Exception("cell " + w + "x" + h + " at " + x + "," + Mathf.RoundToInt(sprite.lowerLeftPixel.y) + " lies outside the "
                 + texture.width + "x" + texture.height + " sheet '" + texture.name + "'");
         }
 
@@ -975,8 +1446,7 @@ public class AnimationCapture : MonoBehaviour
             NoteBlankCapture();
             NoteContribution();
             for (int i = 0; i < stateLeaks.Count; i++) AddStateError(stateLeaks[i]);
-            RestoreSnapshot();
-            if (character != null) character.ForceChangeFrame();
+            RestoreBro();
 
             // Recorded before the strip is written: a failed PNG write must still leave the state
             // in the report, carrying the error, rather than dropping it entirely
@@ -990,7 +1460,8 @@ public class AnimationCapture : MonoBehaviour
         }
         catch (Exception ex)
         {
-            if (stateError == null) stateError = "state '" + currentName + "' teardown: " + ex.Message;
+            string failure = Describe("state '" + currentName + "' teardown", ex);
+            if (stateError == null) stateError = failure;
             if (record != null) record["skipped"] = new JValue("error: " + stateError);
         }
         finally
@@ -1002,6 +1473,8 @@ public class AnimationCapture : MonoBehaviour
         // Last, on the filed record: a reverse method that throws is a teardown problem, not a
         // reason to unmake a state whose frames are already captured and compared
         RunAfter(record);
+        DestroyProvided();
+        RestoreBro();
 
         retirePending = true;
         retireRecord = record;
@@ -1033,14 +1506,26 @@ public class AnimationCapture : MonoBehaviour
             Log("state '" + currentName + "': " + stateEmptyCells + " frames address empty sheet cells");
         }
         if (!stateSawWritten) return;
-        for (int i = 0; i < stateContributionFailures.Count; i++) AddStateError(stateContributionFailures[i]);
+        for (int i = 0; i < failureReasons.Count; i++)
+        {
+            List<int> frames = failureFrames[failureReasons[i]];
+            string message = "state '" + currentName + "': " + failureReasons[i] + " on " + frames.Count + "/"
+                + stateOnscreenCells + " on-screen frames (frames " + Ranges(frames) + ")";
+            if (failureReasons[i] == NoPixelFailure && stateCellProblems.Count > 0)
+            {
+                message += ": " + stateCellProblems[0] + (stateCellProblems.Count > 1 ? " (and " + (stateCellProblems.Count - 1) + " more)" : "");
+            }
+            Log(message);
+            AddStateError(message);
+        }
     }
 
     // BeginState failed before the frame loop: keep its snapshot restored and log the state as errored
     private void FinishFailedState()
     {
-        RestoreSnapshot();
+        RestoreBro();
         DisposeCells();
+        DestroyProvided();
 
         JObject record = new JObject();
         record["name"] = currentName;
@@ -1048,6 +1533,7 @@ public class AnimationCapture : MonoBehaviour
         record["frames"] = currentFrames;
         stateRecords.Add(record);
         errors.Add(stateError);
+        AttachLevelState(record, true);
     }
 
     private void Skip(string reason)
@@ -1057,6 +1543,7 @@ public class AnimationCapture : MonoBehaviour
         record["skipped"] = reason;
         record["frames"] = new JArray();
         stateRecords.Add(record);
+        AttachLevelState(record, true);
     }
 
     private void Finish()
@@ -1068,19 +1555,9 @@ public class AnimationCapture : MonoBehaviour
         RestoreOverlays();
         ReleaseBubbles();
         ReleaseCaptureTexture();
+        ReleaseLiveSlot();
 
-        try
-        {
-            JObject doc = new JObject();
-            doc["bro"] = DescribeBro();
-            doc["states"] = stateRecords;
-            doc["errors"] = errors;
-            File.WriteAllText(Path.Combine(outDir, CaptureFile), doc.ToString());
-        }
-        catch (Exception ex)
-        {
-            fatal = "writing " + CaptureFile + ": " + ex.Message;
-        }
+        if (!WriteCapture(true)) fatal = fatal ?? "writing " + CaptureFile + " failed";
 
         if (fatal != null)
         {
@@ -1096,6 +1573,341 @@ public class AnimationCapture : MonoBehaviour
         catch (Exception ex)
         {
             Log("Could not write the done sentinel: " + ex.Message);
+        }
+    }
+
+    private bool WriteCapture(bool complete)
+    {
+        try
+        {
+            JObject doc = new JObject();
+            doc["params"] = sweepParams;
+            doc["complete"] = complete;
+            doc["bro"] = broDescription;
+            doc["states"] = stateRecords;
+            doc["errors"] = errors;
+            File.WriteAllText(Path.Combine(outDir, CaptureFile), doc.ToString());
+            return true;
+        }
+        catch (Exception ex)
+        {
+            if (complete) fatal = "writing " + CaptureFile + ": " + ex.Message;
+            if (!captureWriteLogged)
+            {
+                captureWriteLogged = true;
+                Log("Could not write " + CaptureFile + ": " + ex.Message);
+            }
+            return false;
+        }
+    }
+
+    private void AttachLevelState(JObject record, bool write)
+    {
+        if (sceneError != null)
+        {
+            record["levelChanges"] = EmptyChanges();
+            record["sceneChanged"] = true;
+        }
+        else
+        {
+            record["levelChanges"] = DiffLevel();
+        }
+
+        record["suppressed"] = CallList(suppressedOrder, suppressedCalls, null);
+        record["damageCalls"] = CallList(damageOrder, null, damageCalls);
+        suppressedOrder.Clear();
+        suppressedCalls.Clear();
+        damageOrder.Clear();
+        damageCalls.Clear();
+
+        if (clockDisturbance.HasValue)
+        {
+            float seen = clockDisturbance.Value;
+            clockDisturbance = null;
+            record["clockDisturbed"] = seen;
+            string message = "state '" + StringOf(record["name"]) + "': the game set the clock to "
+                + seen.ToString(CultureInfo.InvariantCulture) + " while it ran, so the game moved between its frames";
+            errors.Add(message);
+        }
+
+        if (stateDeltaRepaired)
+        {
+            stateDeltaRepaired = false;
+            record["deltaRepaired"] = true;
+        }
+
+        if (stateNonFinite.Count > 0)
+        {
+            JArray names = new JArray();
+            for (int i = 0; i < stateNonFinite.Count; i++) names.Add(stateNonFinite[i]);
+            record["nonFinite"] = names;
+            string message = "state '" + StringOf(record["name"]) + "': " + string.Join(", ", stateNonFinite.ToArray())
+                + " went non-finite on the frozen clock and " + (stateNonFinite.Count == 1 ? "was" : "were")
+                + " put back, so this state's frames are not to be trusted";
+            Log(message);
+            errors.Add(message);
+            stateNonFinite.Clear();
+        }
+
+        if (write) WriteCapture(false);
+    }
+
+    private static JArray CallList(List<string> order, Dictionary<string, int> counts, Dictionary<string, int[]> tallies)
+    {
+        JArray list = new JArray();
+        for (int i = 0; i < order.Count; i++)
+        {
+            JObject entry = new JObject();
+            entry["method"] = order[i];
+            if (counts != null)
+            {
+                entry["calls"] = counts[order[i]];
+            }
+            else
+            {
+                int[] tally = tallies[order[i]];
+                entry["calls"] = tally[0];
+                entry["hits"] = tally[2] == 1 ? (JToken)tally[1] : JValue.CreateNull();
+            }
+            list.Add(entry);
+        }
+        return list;
+    }
+
+    #endregion
+
+    #region Level state
+
+    private static JObject EmptyChanges()
+    {
+        JObject changes = new JObject();
+        changes["blocks"] = new JArray();
+        changes["units"] = new JArray();
+        changes["doodads"] = new JArray();
+        return changes;
+    }
+
+    private void SnapshotLevel(out BlockState[,] fore, out BlockState[,] back,
+        out Dictionary<int, ObjectState> units, out Dictionary<int, ObjectState> doodads)
+    {
+        fore = SnapshotBlocks(Map.blocks);
+        back = SnapshotBlocks(Map.backGroundBlocks);
+        units = new Dictionary<int, ObjectState>();
+        doodads = new Dictionary<int, ObjectState>();
+
+        if (Map.units != null)
+        {
+            for (int i = 0; i < Map.units.Count; i++)
+            {
+                Unit unit = Map.units[i];
+                if (unit == null) continue;
+                int id = unit.GetInstanceID();
+                if (sweptIds.Contains(id) || units.ContainsKey(id)) continue;
+
+                ObjectState state = new ObjectState();
+                state.Name = unit.gameObject.name;
+                state.Health = unit.health;
+                state.Dead = Died(unit);
+                state.Ref = unit;
+                units[id] = state;
+            }
+        }
+
+        AddDoodads(Map.destroyableDoodads, doodads);
+        AddDoodads(Map.staticDoodads, doodads);
+    }
+
+    private static BlockState[,] SnapshotBlocks(Block[,] grid)
+    {
+        if (grid == null) return new BlockState[0, 0];
+
+        int cols = grid.GetLength(0);
+        int rows = grid.GetLength(1);
+        BlockState[,] states = new BlockState[cols, rows];
+        for (int c = 0; c < cols; c++)
+        {
+            for (int r = 0; r < rows; r++)
+            {
+                Block block = grid[c, r];
+                if (block == null) continue;
+
+                BlockState state = new BlockState();
+                state.Id = block.GetInstanceID();
+                state.Name = block.gameObject.name;
+                state.Health = block.health;
+                state.Destroyed = block.destroyed;
+                state.Collapsed = block.collapsed;
+                state.Disturbed = block.disturbed;
+                states[c, r] = state;
+            }
+        }
+        return states;
+    }
+
+    private static void AddDoodads(List<Doodad> list, Dictionary<int, ObjectState> into)
+    {
+        if (list == null) return;
+        for (int i = 0; i < list.Count; i++)
+        {
+            Doodad doodad = list[i];
+            if (doodad == null) continue;
+            int id = doodad.GetInstanceID();
+            if (into.ContainsKey(id)) continue;
+
+            ObjectState state = new ObjectState();
+            state.Name = doodad.gameObject.name;
+            state.Health = doodad.health;
+            state.Dead = doodad.isDead;
+            state.Collapsed = doodad.collapsed;
+            state.Ref = doodad;
+            into[id] = state;
+        }
+    }
+
+    private JObject DiffLevel()
+    {
+        BlockState[,] fore;
+        BlockState[,] back;
+        Dictionary<int, ObjectState> units;
+        Dictionary<int, ObjectState> doodads;
+        JObject changes = EmptyChanges();
+
+        try
+        {
+            SnapshotLevel(out fore, out back, out units, out doodads);
+        }
+        catch (Exception ex)
+        {
+            Log("Could not read the level for state '" + currentName + "': " + ex.Message);
+            return changes;
+        }
+
+        JArray blocks = (JArray)changes["blocks"];
+        DiffBlocks("foreground", foreBlocks, fore, blocks);
+        DiffBlocks("background", backBlocks, back, blocks);
+        DiffUnits(unitStates, units, (JArray)changes["units"]);
+        DiffDoodads(doodadStates, doodads, (JArray)changes["doodads"]);
+
+        foreBlocks = fore;
+        backBlocks = back;
+        unitStates = units;
+        doodadStates = doodads;
+        return changes;
+    }
+
+    private static JArray Health(int? before, int? after)
+    {
+        JArray pair = new JArray();
+        pair.Add(before.HasValue ? (JToken)before.Value : JValue.CreateNull());
+        pair.Add(after.HasValue ? (JToken)after.Value : JValue.CreateNull());
+        return pair;
+    }
+
+    private static void DiffBlocks(string layer, BlockState[,] before, BlockState[,] after, JArray into)
+    {
+        int cols = Mathf.Max(before.GetLength(0), after.GetLength(0));
+        int rows = Mathf.Max(before.GetLength(1), after.GetLength(1));
+        for (int c = 0; c < cols; c++)
+        {
+            for (int r = 0; r < rows; r++)
+            {
+                BlockState b = c < before.GetLength(0) && r < before.GetLength(1) ? before[c, r] : null;
+                BlockState a = c < after.GetLength(0) && r < after.GetLength(1) ? after[c, r] : null;
+                if (b == null && a == null) continue;
+
+                if (b != null && (a == null || a.Id != b.Id))
+                {
+                    if (!b.Destroyed) into.Add(BlockChange(layer, c, r, b.Name, "destroyed", b.Health, null));
+                    if (a != null) into.Add(BlockChange(layer, c, r, a.Name, "added", null, a.Health));
+                    continue;
+                }
+                if (b == null)
+                {
+                    into.Add(BlockChange(layer, c, r, a.Name, "added", null, a.Health));
+                    continue;
+                }
+
+                string change = null;
+                if (!b.Destroyed && a.Destroyed) change = "destroyed";
+                else if (!b.Collapsed && a.Collapsed) change = "collapsed";
+                else if (a.Health < b.Health) change = "damaged";
+                else if (!b.Disturbed && a.Disturbed) change = "disturbed";
+                if (change != null) into.Add(BlockChange(layer, c, r, a.Name, change, b.Health, a.Health));
+            }
+        }
+    }
+
+    private static JObject BlockChange(string layer, int col, int row, string name, string change, int? before, int? after)
+    {
+        JObject entry = new JObject();
+        entry["layer"] = layer;
+        entry["col"] = col;
+        entry["row"] = row;
+        entry["name"] = name;
+        entry["change"] = change;
+        entry["health"] = Health(before, after);
+        return entry;
+    }
+
+    private static JObject ObjectChange(int id, string name, string change, int? before, int? after)
+    {
+        JObject entry = new JObject();
+        entry["id"] = id;
+        entry["name"] = name;
+        entry["change"] = change;
+        entry["health"] = Health(before, after);
+        return entry;
+    }
+
+    private static bool Died(Unit unit)
+    {
+        return unit.destroyed || unit.actionState == ActionState.Dead || unit.health <= 0;
+    }
+
+    private static void DiffUnits(Dictionary<int, ObjectState> before, Dictionary<int, ObjectState> after, JArray into)
+    {
+        foreach (KeyValuePair<int, ObjectState> pair in before)
+        {
+            ObjectState b = pair.Value;
+            ObjectState a;
+            if (after.TryGetValue(pair.Key, out a))
+            {
+                if (a.Dead && !b.Dead) into.Add(ObjectChange(pair.Key, a.Name, "killed", b.Health, a.Health));
+                else if (a.Health < b.Health) into.Add(ObjectChange(pair.Key, a.Name, "damaged", b.Health, a.Health));
+                continue;
+            }
+
+            // A gibbed unit is destroyed before the diff: Unity's == null is true for it, its managed fields still read
+            Unit unit = b.Ref as Unit;
+            bool died = (object)unit != null && Died(unit);
+            into.Add(ObjectChange(pair.Key, b.Name, died && !b.Dead ? "killed" : "removed", b.Health, unit == null ? null : (int?)unit.health));
+        }
+        foreach (KeyValuePair<int, ObjectState> pair in after)
+        {
+            if (!before.ContainsKey(pair.Key)) into.Add(ObjectChange(pair.Key, pair.Value.Name, "added", null, pair.Value.Health));
+        }
+    }
+
+    private static void DiffDoodads(Dictionary<int, ObjectState> before, Dictionary<int, ObjectState> after, JArray into)
+    {
+        foreach (KeyValuePair<int, ObjectState> pair in before)
+        {
+            ObjectState b = pair.Value;
+            ObjectState a;
+            if (after.TryGetValue(pair.Key, out a))
+            {
+                if ((a.Dead && !b.Dead) || (a.Collapsed && !b.Collapsed)) into.Add(ObjectChange(pair.Key, a.Name, "destroyed", b.Health, a.Health));
+                else if (a.Health < b.Health) into.Add(ObjectChange(pair.Key, a.Name, "damaged", b.Health, a.Health));
+                continue;
+            }
+
+            Doodad doodad = b.Ref as Doodad;
+            bool died = (object)doodad != null && ((doodad.isDead && !b.Dead) || (doodad.collapsed && !b.Collapsed) || (doodad.health <= 0 && b.Health > 0));
+            into.Add(ObjectChange(pair.Key, b.Name, died ? "destroyed" : "removed", b.Health, doodad == null ? null : (int?)doodad.health));
+        }
+        foreach (KeyValuePair<int, ObjectState> pair in after)
+        {
+            if (!before.ContainsKey(pair.Key)) into.Add(ObjectChange(pair.Key, pair.Value.Name, "added", null, pair.Value.Health));
         }
     }
 
@@ -1156,6 +1968,8 @@ public class AnimationCapture : MonoBehaviour
 
     private void CheckLeaks(Vector3 center)
     {
+        if (sceneError != null) return;
+
         try
         {
             HashSet<int> seen = new HashSet<int>();
@@ -1184,37 +1998,34 @@ public class AnimationCapture : MonoBehaviour
         }
     }
 
+    private class RetiredEntry
+    {
+        public string Name;
+        public string Source;
+        public bool Pooled;
+        public int Count;
+        public JArray Types;
+        public int FirstSeenStep = -1;
+    }
+
     private void RetireStateObjects(JObject record)
     {
-        List<string> names = new List<string>();
-        Dictionary<string, int> counts = new Dictionary<string, int>();
+        if (record != null) AttachLevelState(record, false);
+        if (sceneError != null)
+        {
+            requestedEffects.Clear();
+            requestedSteps.Clear();
+            WriteCapture(false);
+            return;
+        }
+
+        List<RetiredEntry> entries = new List<RetiredEntry>();
         HashSet<int> handled = new HashSet<int>();
         int pooled = 0;
         int deactivated = 0;
 
-        try
-        {
-            for (int i = 0; i < requestedEffects.Count; i++)
-            {
-                Effects.IPoolableEffect effect = requestedEffects[i];
-                Component component = effect as Component;
-                if (component == null) continue;
-
-                GameObject go = component.gameObject;
-                if (!go.activeSelf || effect.ParentPool == null || effect.PoolIndex == -1) continue;
-                if (IsKept(go.transform) || !handled.Add(go.GetInstanceID())) continue;
-
-                string name = go.name;
-                if (Retire(go, effect)) pooled++;
-                else deactivated++;
-                CountRetired(name, names, counts);
-            }
-        }
-        catch (Exception ex)
-        {
-            Log("Could not retire the effects state '" + currentName + "' requested: " + ex.Message);
-        }
-        requestedEffects.Clear();
+        RetireRequested(entries, handled, ref pooled, ref deactivated);
+        RetireSpawnedChildren(entries, handled, ref pooled, ref deactivated);
 
         Vector2 min;
         Vector2 max;
@@ -1237,10 +2048,7 @@ public class AnimationCapture : MonoBehaviour
                     GameObject target = RetireTargetOf(r.transform, out effect);
                     if (!handled.Add(target.GetInstanceID())) continue;
 
-                    string name = target.name;
-                    if (Retire(target, effect)) pooled++;
-                    else deactivated++;
-                    CountRetired(name, names, counts);
+                    RetireAndCount(entries, target, effect, "crop", -1, ref pooled, ref deactivated);
                 }
             }
             catch (Exception ex)
@@ -1249,22 +2057,93 @@ public class AnimationCapture : MonoBehaviour
             }
         }
 
-        if (names.Count == 0) return;
+        // An object deactivated above can spawn more in its OnDisable: a real spear makes its death effects there
+        RetireRequested(entries, handled, ref pooled, ref deactivated);
+
+        if (entries.Count == 0)
+        {
+            WriteCapture(false);
+            return;
+        }
 
         JArray retired = new JArray();
         string listed = "";
-        for (int i = 0; i < names.Count; i++)
+        for (int i = 0; i < entries.Count; i++)
         {
+            RetiredEntry e = entries[i];
             JObject entry = new JObject();
-            entry["name"] = names[i];
-            entry["count"] = counts[names[i]];
+            entry["name"] = e.Name;
+            entry["count"] = e.Count;
+            entry["source"] = e.Source;
+            entry["pooled"] = e.Pooled;
+            entry["types"] = e.Types;
+            entry["firstSeenStep"] = e.FirstSeenStep >= 0 ? (JToken)e.FirstSeenStep : JValue.CreateNull();
             retired.Add(entry);
-            listed += (i == 0 ? "" : ", ") + names[i] + " x" + counts[names[i]];
+            listed += (i == 0 ? "" : ", ") + e.Name + " x" + e.Count;
         }
         if (record != null) record["retired"] = retired;
+        WriteCapture(false);
 
         Log("state '" + currentName + "': retired " + (pooled + deactivated) + " objects ("
             + pooled + " to their pools, " + deactivated + " deactivated): " + listed);
+    }
+
+    private void RetireRequested(List<RetiredEntry> entries, HashSet<int> handled, ref int pooled, ref int deactivated)
+    {
+        try
+        {
+            for (int i = 0; i < requestedEffects.Count; i++)
+            {
+                Effects.IPoolableEffect effect = requestedEffects[i];
+                Component component = effect as Component;
+                if (component == null) continue;
+
+                GameObject go = component.gameObject;
+                if (!go.activeSelf || effect.ParentPool == null || effect.PoolIndex == -1) continue;
+                if (IsKept(go.transform) || !handled.Add(go.GetInstanceID())) continue;
+
+                RetireAndCount(entries, go, effect, "requested", requestedSteps[i], ref pooled, ref deactivated);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log("Could not retire the effects state '" + currentName + "' requested: " + ex.Message);
+        }
+        requestedEffects.Clear();
+        requestedSteps.Clear();
+    }
+
+    private void RetireSpawnedChildren(List<RetiredEntry> entries, HashSet<int> handled, ref int pooled, ref int deactivated)
+    {
+        if (character == null) return;
+
+        try
+        {
+            Transform[] under = character.GetComponentsInChildren<Transform>(true);
+            for (int i = 0; i < under.Length; i++)
+            {
+                Transform t = under[i];
+                if (t == null || t.parent == null || broTransforms.Contains(t.GetInstanceID()) || !broTransforms.Contains(t.parent.GetInstanceID())) continue;
+
+                GameObject go = t.gameObject;
+                if (!go.activeSelf || IsKept(t) || !handled.Add(go.GetInstanceID())) continue;
+                RetireAndCount(entries, go, EffectOn(t), "child", -1, ref pooled, ref deactivated);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log("Could not retire what state '" + currentName + "' left under the bro: " + ex.Message);
+        }
+    }
+
+    private static void RetireAndCount(List<RetiredEntry> entries, GameObject target, Effects.IPoolableEffect effect, string source, int step, ref int pooled, ref int deactivated)
+    {
+        string name = target.name;
+        JArray types = ComponentsOf(target);
+        bool toPool = Retire(target, effect);
+        if (toPool) pooled++;
+        else deactivated++;
+        CountRetired(entries, name, source, toPool, types, step);
     }
 
     private bool CropRegion(out Vector2 min, out Vector2 max)
@@ -1288,27 +2167,38 @@ public class AnimationCapture : MonoBehaviour
         return true;
     }
 
-    private static void CountRetired(string name, List<string> names, Dictionary<string, int> counts)
+    private static void CountRetired(List<RetiredEntry> entries, string name, string source, bool pooled, JArray types, int step)
     {
-        int count;
-        if (counts.TryGetValue(name, out count))
+        for (int i = 0; i < entries.Count; i++)
         {
-            counts[name] = count + 1;
+            RetiredEntry e = entries[i];
+            if (e.Name != name || e.Source != source || e.Pooled != pooled) continue;
+            e.Count++;
+            if (step >= 0 && (e.FirstSeenStep < 0 || step < e.FirstSeenStep)) e.FirstSeenStep = step;
             return;
         }
-        counts[name] = 1;
-        names.Add(name);
+
+        RetiredEntry entry = new RetiredEntry();
+        entry.Name = name;
+        entry.Source = source;
+        entry.Pooled = pooled;
+        entry.Count = 1;
+        entry.Types = types;
+        entry.FirstSeenStep = step;
+        entries.Add(entry);
     }
 
-    private static bool IsKept(Transform t)
+    private bool IsKept(Transform t)
     {
         for (Transform node = t; node != null; node = node.parent)
         {
-            if (node.GetComponent<NetworkedUnit>() != null || node.GetComponent<Camera>() != null
-                || node.GetComponent<ReactionBubble>() != null || node.GetComponent<AnimationCapture>() != null)
+            if (node.GetComponent<Camera>() != null || node.GetComponent<ReactionBubble>() != null
+                || node.GetComponent<AnimationCapture>() != null)
             {
                 return true;
             }
+            if (character != null && node == character.transform) return broTransforms.Contains(t.GetInstanceID());
+            if (node.GetComponent<NetworkedUnit>() != null) return true;
         }
         return false;
     }
@@ -1330,15 +2220,22 @@ public class AnimationCapture : MonoBehaviour
     {
         for (Transform node = t; node != null; node = node.parent)
         {
-            MonoBehaviour[] behaviours = node.GetComponents<MonoBehaviour>();
-            for (int i = 0; i < behaviours.Length; i++)
-            {
-                effect = behaviours[i] as Effects.IPoolableEffect;
-                if (effect != null) return node.gameObject;
-            }
+            effect = EffectOn(node);
+            if (effect != null) return node.gameObject;
         }
         effect = null;
         return t.gameObject;
+    }
+
+    private static Effects.IPoolableEffect EffectOn(Transform t)
+    {
+        MonoBehaviour[] behaviours = t.GetComponents<MonoBehaviour>();
+        for (int i = 0; i < behaviours.Length; i++)
+        {
+            Effects.IPoolableEffect effect = behaviours[i] as Effects.IPoolableEffect;
+            if (effect != null) return effect;
+        }
+        return null;
     }
 
     private static bool Retire(GameObject target, Effects.IPoolableEffect effect)
@@ -1361,37 +2258,203 @@ public class AnimationCapture : MonoBehaviour
 
     #region Field pinning
 
-    private void Remember(string name)
+    private void RequireField(string name)
     {
-        if (snapshot.ContainsKey(name)) return;
-        FieldInfo field = ResolveField(name);
-        if (field == null) throw new Exception("unknown field '" + name + "'");
-        snapshot[name] = field.GetValue(character);
+        if (ResolveField(name) == null) throw new Exception("unknown field '" + name + "'");
     }
 
-    private void RestoreSnapshot()
+    private void RequireFields(JObject pins)
+    {
+        if (pins == null) return;
+        foreach (JProperty prop in pins.Properties()) RequireField(prop.Name);
+    }
+
+    private void SnapshotBro()
+    {
+        ReleaseBroSnapshot();
+
+        BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
+        MonoBehaviour[] behaviours = character.GetComponentsInChildren<MonoBehaviour>(true);
+        for (int b = 0; b < behaviours.Length; b++)
+        {
+            if (behaviours[b] == null) continue;
+            for (Type type = behaviours[b].GetType(); type != null && type != typeof(MonoBehaviour); type = type.BaseType)
+            {
+                FieldInfo[] fields = type.GetFields(flags);
+                for (int i = 0; i < fields.Length; i++)
+                {
+                    if (fields[i].IsLiteral || fields[i].IsInitOnly) continue;
+                    BroField entry = new BroField();
+                    entry.Owner = behaviours[b];
+                    entry.Field = fields[i];
+                    entry.Value = fields[i].GetValue(behaviours[b]);
+                    broFields.Add(entry);
+                }
+            }
+        }
+
+        Transform[] transforms = character.GetComponentsInChildren<Transform>(true);
+        for (int i = 0; i < transforms.Length; i++)
+        {
+            Transform t = transforms[i];
+            broTransforms.Add(t.GetInstanceID());
+            BroPart part = new BroPart();
+            part.Transform = t;
+            part.Active = t.gameObject.activeSelf;
+            part.Layer = t.gameObject.layer;
+            part.LocalPosition = t.localPosition;
+            part.LocalRotation = t.localRotation;
+            part.LocalScale = t.localScale;
+            part.Renderer = t.GetComponent<Renderer>();
+            if (part.Renderer != null)
+            {
+                part.RendererEnabled = part.Renderer.enabled;
+                part.Material = part.Renderer.sharedMaterial;
+                if (part.Material != null) part.MaterialCopy = new Material(part.Material);
+            }
+            part.Sprite = t.GetComponent<SpriteSM>();
+            if (part.Sprite != null)
+            {
+                part.Cell = part.Sprite.lowerLeftPixel;
+                part.CellSize = part.Sprite.pixelDimensions;
+                part.Offset = part.Sprite.offset;
+                part.Tint = part.Sprite.color;
+            }
+            broParts.Add(part);
+        }
+    }
+
+    private void RestoreBro()
     {
         if (character == null) return;
 
-        foreach (KeyValuePair<string, object> entry in snapshot)
+        for (int i = 0; i < broParts.Count; i++)
         {
+            BroPart part = broParts[i];
+            part.SpriteChanged = part.Sprite != null && (part.Sprite.lowerLeftPixel != part.Cell || part.Sprite.pixelDimensions != part.CellSize
+                || part.Sprite.offset != part.Offset || part.Sprite.color != part.Tint);
+        }
+
+        int ammo = character._specialAmmo;
+        for (int i = 0; i < broFields.Count; i++)
+        {
+            BroField entry = broFields[i];
+            if (entry.Owner == null) continue;
+
             try
             {
-                FieldInfo field = ResolveField(entry.Key);
-                if (field != null) field.SetValue(character, entry.Value);
+                if (!object.Equals(entry.Field.GetValue(entry.Owner), entry.Value)) entry.Field.SetValue(entry.Owner, entry.Value);
             }
             catch (Exception ex)
             {
-                Log("Could not restore " + entry.Key + ": " + ex.Message);
+                Log("Could not restore " + entry.Field.Name + ": " + ex.Message);
             }
         }
-        snapshot.Clear();
+        if (character._specialAmmo != ammo) character.SetSpecialAmmoRPC(character._specialAmmo);
+
+        for (int i = 0; i < broParts.Count; i++)
+        {
+            BroPart part = broParts[i];
+            if (part.Transform == null) continue;
+
+            if (part.Transform != character.transform && part.Transform.gameObject.activeSelf != part.Active) part.Transform.gameObject.SetActive(part.Active);
+            part.Transform.gameObject.layer = part.Layer;
+            RestoreTransform(part);
+            if (part.Renderer != null)
+            {
+                part.Renderer.enabled = part.RendererEnabled;
+                part.Renderer.sharedMaterial = part.Material;
+                // A bro can change the material itself, as a sheet swap through mainTexture does
+                if (part.MaterialCopy != null) part.Material.CopyPropertiesFromMaterial(part.MaterialCopy);
+            }
+            if (part.Sprite != null && part.SpriteChanged)
+            {
+                part.Sprite.SetPixelDimensions(part.CellSize);
+                part.Sprite.SetLowerLeftPixel(part.Cell);
+                part.Sprite.SetOffset(part.Offset);
+                part.Sprite.SetColor(part.Tint);
+            }
+        }
+    }
+
+    private void ReleaseBroSnapshot()
+    {
+        for (int i = 0; i < broParts.Count; i++)
+        {
+            if (broParts[i].MaterialCopy != null) UnityEngine.Object.Destroy(broParts[i].MaterialCopy);
+        }
+        broParts.Clear();
+        broTransforms.Clear();
+        broFields.Clear();
+    }
+
+    private static void RestoreTransform(BroPart part)
+    {
+        part.Transform.localPosition = part.LocalPosition;
+        part.Transform.localRotation = part.LocalRotation;
+        part.Transform.localScale = part.LocalScale;
+    }
+
+    private void RepairNonFinite()
+    {
+        if (character == null) return;
+
+        for (int i = 0; i < broFields.Count; i++)
+        {
+            BroField entry = broFields[i];
+            Type type = entry.Field.FieldType;
+            if (type != typeof(float) && type != typeof(double) && type != typeof(Vector2) && type != typeof(Vector3)) continue;
+            // The game keeps Infinity in some fields as a sentinel
+            if (entry.Owner == null || Finite(entry.Field.GetValue(entry.Owner)) || !Finite(entry.Value)) continue;
+
+            entry.Field.SetValue(entry.Owner, entry.Value);
+            NoteNonFinite(entry.Owner == character ? entry.Field.Name : entry.Owner.name + "." + entry.Field.Name);
+        }
+
+        for (int i = 0; i < broParts.Count; i++)
+        {
+            Transform t = broParts[i].Transform;
+            if (t == null) continue;
+
+            Vector3 p = t.localPosition;
+            Quaternion r = t.localRotation;
+            Vector3 s = t.localScale;
+            if (Finite(p.x + p.y + p.z) && Finite(r.x + r.y + r.z + r.w) && Finite(s.x + s.y + s.z)) continue;
+
+            RestoreTransform(broParts[i]);
+            NoteNonFinite(t.name + " transform");
+        }
+    }
+
+    private void NoteNonFinite(string name)
+    {
+        if (!stateNonFinite.Contains(name)) stateNonFinite.Add(name);
+    }
+
+    private static bool Finite(float value)
+    {
+        return value - value == 0f;
+    }
+
+    private static bool Finite(object value)
+    {
+        if (value is float) return Finite((float)value);
+        if (value is double) return (double)value - (double)value == 0d;
+        if (value is Vector2) return Finite(((Vector2)value).x + ((Vector2)value).y);
+        if (value is Vector3) return Finite(((Vector3)value).x + ((Vector3)value).y + ((Vector3)value).z);
+        return true;
     }
 
     private void ApplySetup()
     {
-        if (currentSetup == null) return;
-        foreach (JProperty prop in currentSetup.Properties()) SetField(prop.Name, prop.Value);
+        ApplyPins(currentSetup);
+        if (providedZipline != null) ResolveField("attachedToZipline").SetValue(character, providedZipline);
+    }
+
+    private void ApplyPins(JObject pins)
+    {
+        if (pins == null) return;
+        foreach (JProperty prop in pins.Properties()) SetField(prop.Name, prop.Value);
     }
 
     private void ResolveMethods(JToken token, string phase, List<MethodInfo> into)
@@ -1405,18 +2468,35 @@ public class AnimationCapture : MonoBehaviour
         {
             string name = StringOf(entry);
             if (string.IsNullOrEmpty(name)) throw new Exception(phase + " holds an empty method name");
-            into.Add(ResolveMethod(name));
+            into.Add(ResolveMethod(name, null));
         }
     }
 
-    // Walks the character's type and its bases the way the field lookup does, at any visibility. Only
-    // a parameterless instance method can be invoked with no arguments, so anything else is the
-    // state's error, reported like an unknown setup field.
-    private MethodInfo ResolveMethod(string name)
+    private void ResolveCalls(JToken token)
+    {
+        if (token == null || token.Type == JTokenType.Null) return;
+
+        JArray names = token as JArray;
+        if (names == null) throw new Exception("step.call must be a list of method names");
+
+        foreach (JToken entry in names)
+        {
+            string name = StringOf(entry);
+            if (string.IsNullOrEmpty(name)) throw new Exception("step.call holds an empty method name");
+
+            Call call = new Call();
+            call.Method = ResolveMethod(name, providedZipline == null ? null : typeof(ZipLine));
+            call.Args = call.Method.GetParameters().Length == 0 ? null : new object[] { providedZipline };
+            currentCalls.Add(call);
+        }
+    }
+
+    private MethodInfo ResolveMethod(string name, Type provided)
     {
         BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic
                              | BindingFlags.DeclaredOnly;
         bool named = false;
+        MethodInfo withProvided = null;
 
         for (Type type = character.GetType(); type != null; type = type.BaseType)
         {
@@ -1424,13 +2504,20 @@ public class AnimationCapture : MonoBehaviour
             for (int i = 0; i < methods.Length; i++)
             {
                 MethodInfo method = methods[i];
-                if (method.Name != name) continue;
+                if (method.Name != name || method.IsGenericMethodDefinition) continue;
 
                 named = true;
-                if (method.GetParameters().Length == 0 && !method.IsGenericMethodDefinition) return method;
+                ParameterInfo[] parameters = method.GetParameters();
+                if (parameters.Length == 0) return method;
+                if (withProvided == null && provided != null && parameters.Length == 1
+                    && parameters[0].ParameterType.IsAssignableFrom(provided))
+                {
+                    withProvided = method;
+                }
             }
         }
 
+        if (withProvided != null) return withProvided;
         if (named) throw new Exception("method '" + name + "' has no parameterless overload");
         throw new Exception("unknown method '" + name + "'");
     }
@@ -1575,7 +2662,7 @@ public class AnimationCapture : MonoBehaviour
             for (int i = 0; i < renderers.Length; i++)
             {
                 Renderer r = renderers[i];
-                if (r == null || !r.enabled) continue;
+                if (r == null || !r.enabled || !broTransforms.Contains(r.transform.GetInstanceID())) continue;
                 Vector3 scale = r.transform.lossyScale;
                 if (scale.x == 0f || scale.y == 0f) continue;
                 r.enabled = false;
@@ -1789,12 +2876,8 @@ public class AnimationCapture : MonoBehaviour
         return field == null ? null : field.GetValue(character) as SpriteSM;
     }
 
-    // A lethal run can end with the character destroyed; the sweep's records matter more than the
-    // description of who walked them, so a failure here costs a few fields, not capture.json.
     private JObject DescribeBro()
     {
-        RefreshCharacter();
-
         try
         {
             return DescribeResolvedBro();
@@ -1861,14 +2944,19 @@ public class AnimationCapture : MonoBehaviour
 
     #region Helpers
 
-    private static JArray ReadStates(string path)
+    private static JArray ReadStates(string path, out JObject parameters)
     {
+        parameters = null;
         if (!File.Exists(path)) throw new Exception("state file not found: " + path);
 
         JToken root = JToken.Parse(File.ReadAllText(path));
         JArray states = root as JArray;
         JObject wrapper = root as JObject;
-        if (states == null && wrapper != null) states = wrapper["states"] as JArray;
+        if (states == null && wrapper != null)
+        {
+            states = wrapper["states"] as JArray;
+            parameters = wrapper["params"] as JObject;
+        }
         if (states == null) throw new Exception("state file is neither an array nor an object with a states array");
         return states;
     }
@@ -1892,10 +2980,40 @@ public class AnimationCapture : MonoBehaviour
         // The game turns the bro only from xI and left/right input, so it keeps this facing until a state pins one
         scale.x = Mathf.Abs(scale.x);
         character.transform.localScale = scale;
+
+        foreach (BoondockBro companion in UnityEngine.Object.FindObjectsOfType<BoondockBro>())
+        {
+            if (companion == character || companion.leadingBro != character) continue;
+            heldCompanions.Add(companion);
+            savedCompanionFacings.Add(companion.transform.localScale.x);
+        }
+        TurnCompanions();
+    }
+
+    private void TurnCompanions()
+    {
+        foreach (BoondockBro companion in heldCompanions)
+        {
+            if (companion == null) continue;
+            Vector3 scale = companion.transform.localScale;
+            // A companion's own Update turns it back from an xI or left kept from before the clock froze
+            scale.x = Mathf.Abs(scale.x);
+            companion.transform.localScale = scale;
+        }
     }
 
     private void ReleaseFacing()
     {
+        for (int i = 0; i < heldCompanions.Count; i++)
+        {
+            if (heldCompanions[i] == null) continue;
+            Vector3 companionScale = heldCompanions[i].transform.localScale;
+            companionScale.x = savedCompanionFacings[i];
+            heldCompanions[i].transform.localScale = companionScale;
+        }
+        heldCompanions.Clear();
+        savedCompanionFacings.Clear();
+
         if (facingHeldOn != null)
         {
             Vector3 scale = facingHeldOn.transform.localScale;
@@ -1963,13 +3081,25 @@ public class AnimationCapture : MonoBehaviour
     private static int ParseInt(string raw, int fallback)
     {
         int value;
-        return int.TryParse(raw, out value) ? value : fallback;
+        return int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out value) ? value : fallback;
     }
 
     private static float ParseFloat(string raw, float fallback)
     {
         float value;
-        return float.TryParse(raw, out value) ? value : fallback;
+        return float.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out value) ? value : fallback;
+    }
+
+    private static string Ranges(List<int> values)
+    {
+        string text = "";
+        for (int i = 0; i < values.Count; i++)
+        {
+            int start = values[i];
+            while (i + 1 < values.Count && values[i + 1] == values[i] + 1) i++;
+            text += (text == "" ? "" : ",") + (values[i] == start ? start.ToString() : start + "-" + values[i]);
+        }
+        return text;
     }
 
     #endregion

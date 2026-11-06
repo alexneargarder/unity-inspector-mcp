@@ -42,8 +42,36 @@ export function answerHello(request, socket, mode) {
 export function serveConnection(socket, state, onLine) {
   let buffer = '';
   let greeted = null;
-  socket.on('data', (chunk) => {
-    buffer += chunk.toString();
+  const waiting = [];
+  let busy = false;
+
+  const next = () => {
+    if (busy || waiting.length === 0 || socket.destroyed) return;
+    busy = true;
+    onLine(waiting.shift(), served);
+  };
+  const answered = () => {
+    if (!busy) return;
+    busy = false;
+    setImmediate(next);
+  };
+  const served = new Proxy(socket, {
+    get(target, prop) {
+      if (prop === 'write' || prop === 'end') {
+        return (...args) => {
+          const written = target[prop](...args);
+          answered();
+          return written;
+        };
+      }
+      const value = Reflect.get(target, prop, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+
+  socket.setEncoding('utf8');
+  socket.on('data', (text) => {
+    buffer += text;
     let index;
     while ((index = buffer.indexOf('\n')) !== -1) {
       const line = buffer.slice(0, index).trim();
@@ -56,15 +84,19 @@ export function serveConnection(socket, state, onLine) {
         greeted = answerHello(request, socket, state.hello);
         continue;
       }
-      if (greeted) onLine(request, socket);
+      if (greeted) {
+        (state.lines ??= []).push(request);
+        waiting.push(request);
+        next();
+      }
     }
   });
 }
 
-export function startStubServer(onRequest, { hello = 'accept' } = {}) {
+export function startStubServer(onRequest, { hello = 'accept', host = '127.0.0.1' } = {}) {
   return new Promise((resolve) => {
     const sockets = new Set();
-    const state = { connectionCount: 0, hello, hellos: [], firstLines: [] };
+    const state = { connectionCount: 0, hello, hellos: [], firstLines: [], lines: [] };
 
     const server = net.createServer((socket) => {
       sockets.add(socket);
@@ -74,7 +106,7 @@ export function startStubServer(onRequest, { hello = 'accept' } = {}) {
       serveConnection(socket, state, onRequest);
     });
 
-    server.listen(0, '127.0.0.1', () => {
+    server.listen(0, host, () => {
       resolve({
         port: server.address().port,
         get connectionCount() { return state.connectionCount; },
@@ -82,6 +114,7 @@ export function startStubServer(onRequest, { hello = 'accept' } = {}) {
         set hello(mode) { state.hello = mode; },
         hellos: state.hellos,
         firstLines: state.firstLines,
+        lines: state.lines,
         close: () => new Promise((done) => {
           for (const socket of sockets) socket.destroy();
           server.close(() => done());

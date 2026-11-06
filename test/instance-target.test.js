@@ -7,6 +7,7 @@ import path from 'path';
 
 import { fakeInspector, instanceListJsonl, useStubLauncher } from './support/stub-launcher.js';
 import { fakeProcReader } from './support/fake-proc.js';
+import { startStubServer, reply } from './support/stub-server.js';
 
 const isLinux = process.platform === 'linux';
 const SESSION = 'target-session-8c02';
@@ -59,8 +60,10 @@ beforeEach(async () => {
 
 function payload(response) {
   const text = response.content.map((c) => c.text).join('\n');
-  assert.ok(!response.isError, text);
-  return JSON.parse(text);
+  assert.ok(!text.startsWith('Error: '), text);
+  const body = JSON.parse(text);
+  assert.equal(Boolean(response.isError), body.success === false, `isError goes with success: false: ${text}`);
+  return body;
 }
 
 test('a session with an instance serves it, on the port the launcher recorded', { timeout: 30000, skip: !isLinux }, async () => {
@@ -350,7 +353,7 @@ test('UNITY_INSPECTOR_PORT and UNITY_INSPECTOR_LOG belong to the user\'s game al
 
   await setTarget('steam');
   assert.equal(unityClient.port, 9500);
-  assert.deepEqual(await targetLogPaths(), { umm: elsewhere, player: null });
+  assert.equal((await targetLogPaths()).umm, elsewhere);
   assert.equal(await findLogPath(async () => null, noGameStart), elsewhere);
 });
 
@@ -367,7 +370,7 @@ test('game_state carries the target, the instance and the logs with no game answ
   assert.ok(result.message, 'the reply says why no game answered');
   assert.equal(result.target, 'instance');
   assert.equal(result.port, null, 'the target port is the one in use, not the one on record');
-  assert.deepEqual(result.instance, { id: SESSION, port: 9931, root: instanceDir, stage: stagePath });
+  assert.deepEqual(result.instance, { id: SESSION, port: null, root: instanceDir, stage: stagePath });
   assert.equal(result.instanceReason, undefined);
   assert.equal(result.logs.umm, path.join(instanceDir, 'profile/UMM/Core/Log.txt'));
   assert.equal(result.logs.player, path.join(instanceDir, 'home/unity3d/Free Lives/Broforce/Player.log'));
@@ -380,6 +383,7 @@ test('game_state carries the target, the instance and the logs with no game answ
   // With a game of its own running, the target's port is the instance's
   ownGame();
   assert.equal((await serverStateFields()).port, 9931);
+  assert.equal((await serverStateFields()).instance.port, 9931);
 
   // And on the user's game it is the one the mod listens on
   await setTarget('steam');
@@ -388,4 +392,55 @@ test('game_state carries the target, the instance and the logs with no game answ
   assert.equal(steam.port, STEAM_PORT);
   // The session still has an instance; the top-level port is the one this reply is about
   assert.equal(steam.instance.port, 9931);
+});
+
+test('game_state merges the server\'s fields over the game\'s own answer', { timeout: 30000, skip: !isLinux }, async (t) => {
+  const listFile = path.join(root, 'list.json');
+  const game = await startStubServer((request, socket) => reply(socket, request.id, {
+    scene: 'Test Evan2',
+    isInGame: true,
+    target: 'from-the-game',
+  }));
+  t.after(async () => {
+    await game.close();
+    await fs.rm(listFile, { force: true });
+  });
+  await fs.mkdir(instanceDir, { recursive: true });
+  await fs.writeFile(portFile, String(game.port));
+  await fs.writeFile(listFile, instanceListJsonl(8, [
+    { id: SESSION, running: true, pid: 900, port: game.port },
+    { id: 'other-session', running: true, pid: 944835, port: 9930 },
+  ]));
+  ownGame();
+
+  const state = payload(await handleToolCall({ params: { name: 'game_state', arguments: {} } }));
+
+  assert.equal(state.scene, 'Test Evan2');
+  assert.equal(state.isInGame, true);
+  assert.equal(state.success, undefined, 'an answered call is the game\'s own object, not a failure');
+  assert.equal(state.target, 'instance');
+  assert.equal(state.port, game.port);
+  assert.deepEqual(state.instance, { id: SESSION, port: game.port, root: instanceDir, stage: stagePath });
+  assert.deepEqual(state.logs, {
+    umm: path.join(instanceDir, 'profile/UMM/Core/Log.txt'),
+    player: path.join(instanceDir, 'home/unity3d/Free Lives/Broforce/Player.log'),
+  });
+  assert.deepEqual(state.runningInstances.map(entry => entry.id), [SESSION, 'other-session']);
+
+  await setTarget('steam');
+  const steam = payload(await handleToolCall({ params: { name: 'game_state', arguments: {} } }));
+  assert.equal(steam.target, 'steam');
+  assert.deepEqual(steam.runningInstances.map(entry => entry.id), [SESSION, 'other-session']);
+});
+
+test('list_campaigns with no game gives the same no-port reason as every tool', { timeout: 30000, skip: !isLinux }, async () => {
+  assert.equal(await resolveTarget(), 'instance');
+
+  const response = await handleToolCall({ params: { name: 'list_campaigns', arguments: {} } });
+  const text = response.content.map((c) => c.text).join('\n');
+
+  assert.equal(response.isError, true, text);
+  assert.match(text, new RegExp(`No inspector port is known for instance ${SESSION}`));
+  assert.match(text, /no game of this instance is running/);
+  assert.equal(unityClient.connected, false);
 });

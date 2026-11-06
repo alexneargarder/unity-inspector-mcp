@@ -91,3 +91,37 @@ test('launch_game finding the game already running keeps the live socket', { tim
   assert.equal(payload.alreadyRunning, true, payload.message);
   assert.equal(stub.connectionCount, connectionsBefore, 'launch_game reconnected instead of pinging over the live socket');
 });
+
+test('a game whose main thread does not answer is main-thread-hung, not ready', { timeout: 30000 }, async () => {
+  onPing = (request, socket) => reply(socket, request.id, { message: 'pong', mainThreadAnswered: false, frame: 120 });
+
+  const { payload } = await waitForGame({ timeout: 0.3, interval: 0.05 });
+
+  assert.equal(payload.success, false);
+  assert.equal(payload.state, 'main-thread-hung', payload.message);
+  assert.match(payload.message, /main thread is not running frames/);
+  assert.match(payload.lastError, /main thread did not answer/);
+
+  let pings = 0;
+  onPing = (request, socket) => reply(socket, request.id, { message: 'pong', mainThreadAnswered: ++pings > 2, frame: 121 });
+  const recovered = (await waitForGame({ timeout: 30, interval: 0.05 })).payload;
+  assert.equal(recovered.success, true, recovered.message);
+  assert.equal(pings, 3, 'a hung main thread is polled again');
+});
+
+test('a cancelled wait_for_game stops polling and frees the connection for the next call', { timeout: 30000 }, async () => {
+  onPing = () => {};
+  const controller = new AbortController();
+  const started = Date.now();
+  const waiting = handleToolCall({ params: { name: 'wait_for_game', arguments: { timeout: 30, interval: 0.05 } } }, { signal: controller.signal });
+  setTimeout(() => controller.abort(), 300);
+
+  const response = await waiting;
+  assert.equal(response.isError, true);
+  assert.match(textOf(response), /wait for the game was cancelled/);
+  assert.ok(Date.now() - started < 3000, 'the wait ran on after its cancellation');
+
+  onPing = (request, socket) => reply(socket, request.id, { message: 'pong' });
+  const ping = await handleToolCall({ params: { name: 'ping', arguments: {} } });
+  assert.match(textOf(ping), /pong/, 'the cancelled ping no longer holds the connection');
+});

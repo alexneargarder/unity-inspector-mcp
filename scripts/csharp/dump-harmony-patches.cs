@@ -44,28 +44,36 @@ public static class DumpHarmonyPatches
             return;
         }
 
-        var methods = type.GetMethods(BindingFlags.Instance | BindingFlags.Static |
-                                       BindingFlags.Public | BindingFlags.NonPublic |
-                                       BindingFlags.DeclaredOnly)
+        const BindingFlags any = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+        var methods = type.GetMethods(any | BindingFlags.DeclaredOnly)
             .Where(m => m.Name == methodName)
             .ToList();
 
         if (methods.Count == 0)
         {
-            ScriptContext.Logger("Method not found: " + typeName + "." + methodName);
-            return;
+            methods = type.GetMethods(any).Where(m => m.Name == methodName).Select(m => AccessTools.GetDeclaredMember(m)).ToList();
+            if (methods.Count == 0)
+            {
+                ScriptContext.Logger("Method not found: " + typeName + "." + methodName);
+                return;
+            }
+            ScriptContext.Logger(typeName + " does not declare " + methodName + "; it is inherited from " +
+                string.Join(", ", methods.Select(m => m.DeclaringType.Name).Distinct().ToArray()) +
+                ", where a patch applies to every subclass:");
         }
 
         foreach (var method in methods)
         {
+            var label = method.DeclaringType.Name + "." + method.Name + "(" +
+                string.Join(", ", method.GetParameters().Select(p => p.ParameterType.Name).ToArray()) + ")";
             var patches = Harmony.GetPatchInfo(method);
             if (patches == null)
             {
-                ScriptContext.Logger(typeName + "." + methodName + ": No patches");
+                ScriptContext.Logger(label + ": No patches");
                 continue;
             }
 
-            ScriptContext.Logger(typeName + "." + methodName + ":");
+            ScriptContext.Logger(label + ":");
             LogPatches("  Prefixes", patches.Prefixes);
             LogPatches("  Postfixes", patches.Postfixes);
             LogPatches("  Transpilers", patches.Transpilers);

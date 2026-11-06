@@ -1,0 +1,1675 @@
+{
+  "name": "simulate_input forms and set_game_speed values",
+  "description": "Covers simulate_input single presses, holds (with their effect on the bro), a 5 second hold, count and interval repeats, sequences and wait-only sequences, menu buttons, bro actions, unknown actions, the 60 second limits, negative values, malformed sequences, and the frames that read each press, the warning when no bro can act on read input (paused), the note when the bro took it at game speed 0, and the failure when no frame read it (a player who is not playing, an input block, players held still), a held start toggling the pause once, fire joining no player in a level, escape backing out of the Offline/Online choice at the main menu and fire opening it again, mod key bindings pressed through binding (Furibrosa's Switch Weapon, alone and as a sequence step, and Utility Mod's Pause/Unpause Game pausing and resuming the game) with player 1's Pause/Unpause, which Utility Mod never reads, failing unread, and unknown bindings and mixed forms refused; and set_game_speed at 0, fractional, above 1, the 10 limit, and the refused range (negative, above 10), with bare NaN and Infinity literals sent to the mod's message handler directly, since JSON as the server sends it carries neither. Plays campaign 0 level 2. It changes one Utility Mod setting itself where the build has it, the isGamePaused flag its Pause/Unpause binding toggles, from the step that records it until it is put back, with whether that binding is polled, before the level is reloaded; its restore otherwise only puts back what a failed spawning.json run recorded, so a settings save outside those steps writes the user's values. Its first steps undo whatever an earlier run left changed; its last steps restore the speed and the pause and reload the level it started in. Its cleanup runs the restore again whatever ended the steps: pause, speed, the Utility Mod pause, the second player, IronBro, the lock, the Swap Bros selection, and the Utility Mod settings and HeroController values that a failed spawning or inspection run recorded.",
+  "steps": [
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "escape"
+      },
+      "until": {
+        "timeout": 90,
+        "interval": 1
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 1000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nstring log = \"\";\ntry { if (PauseController.pauseStatus != PauseStatus.UnPaused) { PauseController.SetPause(PauseStatus.UnPaused); log += \"unpaused \"; } } catch (System.Exception ex) { log += \"unpause failed: \" + ex.Message + \" \"; }\nif (UnityEngine.Time.timeScale != 1f) { UnityEngine.Time.timeScale = 1f; log += \"speed1 \"; }\ntry { if (d.GetData(\"uimtest.joined\") != null && HeroController.IsPlaying(1)) { HeroController.Dropout(1, false); log += \"dropped1 \"; } } catch (System.Exception ex) { log += \"dropout failed: \" + ex.Message + \" \"; }\nd.SetData(\"uimtest.joined\", null);\nvar hc = d.GetData(\"uimtest.ironbro\") as string;\nd.SetData(\"uimtest.ironbro\", null);\ntry {\n  var save = GameState.Instance.currentWorldmapSave;\n  if (hc != null && save != null) {\n    var parts = hc.Split(':');\n    save.worldMapIsHardcoreCampaign = parts[0] == \"1\";\n    save.hardcoreLives = int.Parse(parts[1]);\n    save.hardcoreModeAvailableBros.Clear();\n    foreach (var n in parts[2].Split(',')) if (n.Length > 0) save.hardcoreModeAvailableBros.Add((HeroType)System.Enum.Parse(typeof(HeroType), n));\n    log += \"ironbro-restored \";\n  }\n} catch (System.Exception ex) { log += \"ironbro restore failed: \" + ex.Message + \" \"; }\nvar lk = d.GetData(\"uimtest.lock\") as string;\nd.SetData(\"uimtest.lock\", null);\ntry {\n  if (lk != null) {\n    var fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\n    var t = System.Type.GetType(\"BroMakerLib.Unlocks.BroUnlockManager, BroMakerLib\");\n    var pd = t.GetField(\"progressData\", fl).GetValue(null);\n    var states = pd.GetType().GetProperty(\"BroStates\").GetValue(pd, null) as System.Collections.IDictionary;\n    var st = states[lk];\n    st.GetType().GetProperty(\"IsUnlocked\").SetValue(st, true, null);\n    st.GetType().GetProperty(\"UnlockedDate\").SetValue(st, d.GetData(\"uimtest.lock.date\"), null);\n    var names = t.GetProperty(\"UnlockedBroNames\", fl).GetValue(null, null) as System.Collections.Generic.List<string>;\n    var bros = t.GetProperty(\"UnlockedBros\", fl).GetValue(null, null) as System.Collections.IList;\n    int ni = (int)d.GetData(\"uimtest.lock.ni\"); if (ni < 0 || ni > names.Count) ni = names.Count;\n    if (!names.Contains(lk)) names.Insert(ni, lk);\n    var hero = d.GetData(\"uimtest.lock.hero\");\n    int hi = (int)d.GetData(\"uimtest.lock.hi\"); if (hi < 0 || hi > bros.Count) hi = bros.Count;\n    if (hero != null && !bros.Contains(hero)) bros.Insert(hi, hero);\n    typeof(BroMakerLib.Storages.BroSpawnManager).GetMethod(\"BroStatusChanged\", fl).Invoke(null, null);\n    log += \"unlocked \" + lk + \" \";\n  }\n} catch (System.Exception ex) { log += \"unlock failed: \" + ex.Message + \" \"; }\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); set.selGridInt[i] = ix < 0 ? 0 : ix; }\n    log += \"swap-settings-restored \";\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nvar fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\nstring log = \"\";\nvar ums = d.GetData(\"uimtest.u3.ums\") as string;\nd.SetData(\"uimtest.u3.ums\", null);\ntry {\n  if (ums != null) {\nSystem.Type um = null;\nforeach (var a in System.AppDomain.CurrentDomain.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\nvar umEnabled = um.GetField(\"enabled\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);\nvar umSettings = um.GetField(\"settings\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null);\nvar umDisable = umSettings.GetType().GetField(\"disableEnemySpawn\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\n    var p = ums.Split('|');\n    umEnabled.SetValue(null, p[0] == \"True\");\n    umDisable.SetValue(umSettings, p[1] == \"True\");\n    log += \"utility-mod-restored \";\n  }\n} catch (System.Exception ex) { log += \"utility mod restore failed: \" + ex.Message + \" \"; }\nvar hcs = d.GetData(\"uimtest.u3.hc\") as string;\nd.SetData(\"uimtest.u3.hc\", null);\ntry {\n  if (hcs != null) {\n    var p = hcs.Split('|');\n    HeroController.mustShowHUDS = p[0] == \"True\";\n    typeof(HeroController).GetField(\"doubleBroSevenAvatarCount\", fl).SetValue(null, int.Parse(p[1], ic));\n    var hc = UnityEngine.Object.FindObjectOfType<HeroController>();\n    if (hc != null) {\n      var ifl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance;\n      typeof(HeroController).GetField(\"explosivesCounter\", ifl).SetValue(hc, float.Parse(p[2], ic));\n      var c = p[3].Split(',');\n      hc.infoBarColor = new Color(float.Parse(c[0], ic), float.Parse(c[1], ic), float.Parse(c[2], ic), float.Parse(c[3], ic));\n      var ds = p[4].Split(',');\n      var arr = new float[ds.Length];\n      for (int i = 0; i < ds.Length; i++) arr[i] = float.Parse(ds[i], ic);\n      typeof(HeroController).GetField(\"suicideBroSpawnDelay\", ifl).SetValue(hc, arr);\n    }\n    log += \"hero-controller-restored \";\n  }\n} catch (System.Exception ex) { log += \"hero controller restore failed: \" + ex.Message + \" \"; }\ntry {\n  string dropped = \"\";\n  for (int i = 1; i < 4; i++) if (HeroController.IsPlaying(i)) { HeroController.Dropout(i, false); dropped += i; }\n  if (dropped.Length > 0) log += \"dropped-in-players-removed=\" + dropped + \" \";\n} catch (System.Exception ex) { log += \"drop-in removal failed: \" + ex.Message + \" \"; }\ntry {\n  string[] probes = { \"UimProbe\", \"UimDup\", \"UimInactive\", \"UimConstHolder\", \"UimShotProbe\", \"UimFarProbe\", \"UimBareProbe\", \"UimHiddenProbe\" };\n  int gone = 0;\n  foreach (var tr in Resources.FindObjectsOfTypeAll<Transform>()) {\n    if (tr == null || tr.parent != null || !tr.gameObject.scene.IsValid()) continue;\n    if (System.Array.IndexOf(probes, tr.name) < 0) continue;\n    UnityEngine.Object.DestroyImmediate(tr.gameObject);\n    gone++;\n  }\n  if (gone > 0) log += \"probes-destroyed=\" + gone + \" \";\n} catch (System.Exception ex) { log += \"probe cleanup failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar sc = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;\nvar camp = LevelSelectionController.currentCampaign;\nstring key = sc + \"|\" + (camp == null ? \"\" : camp.name) + \"|\" + LevelSelectionController.CurrentLevelNum;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nfloat now = UnityEngine.Time.realtimeSinceStartup;\nvar last = d.GetData(\"uimtest.settle\") as string;\nint cut = last == null ? -1 : last.LastIndexOf('|');\nif (last == null || last.Substring(0, cut) != key) {\n  d.SetData(\"uimtest.settle\", key + \"|\" + now.ToString(ic));\n  return \"waiting: \" + sc + \" just came up\";\n}\nfloat since = now - float.Parse(last.Substring(cut + 1), ic);\nif (sc == \"LoadingScreen\") return \"waiting: loading\";\nif (LevelSelectionController.IsCampaignScene) {\n  if (HeroController.Instance == null || Map.Instance == null || GameModeController.Instance == null) return \"waiting: the level is still being built\";\n  var wt = typeof(GameModeController).GetField(\"winTimer\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\n  if (GameModeController.IsLevelFinished() && (float)wt.GetValue(GameModeController.Instance) < 999999f) return \"waiting: the level finished and is moving on\";\n}\nif (since < 4f) return \"waiting: \" + sc + \" unchanged for \" + since.ToString(\"0.0\", ic) + \" s\";\nreturn \"settled in \" + sc;"
+      },
+      "until": {
+        "timeout": 90,
+        "interval": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "settled in"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar set = Swap_Bros_Mod.Main.settings;\nSwap_Bros_Mod.API.EnsureBroListUpdated();\nvar l = Swap_Bros_Mod.Main.currentBroList;\nstring sw = set.alwaysChosen + \"|\" + set.ignoreCurrentUnlocked;\nfor (int i = 0; i < 4; i++) sw += \"|\" + l[set.selGridInt[i]];\nd.SetData(\"uimtest.swap\", sw);\nd.SetData(\"uimtest.found\", sw);\nstring lv = \"0|1\";\nif (LevelSelectionController.IsCampaignScene && LevelSelectionController.currentCampaign != null) {\n  var all = typeof(Unity_Inspector_Mod.StateModifier).GetField(\"CampaignNames\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null) as string[];\n  for (int i = 0; i < all.Length; i++) if (string.Equals(all[i], LevelSelectionController.currentCampaign.name, System.StringComparison.OrdinalIgnoreCase)) lv = i + \"|\" + LevelSelectionController.CurrentLevelNum;\n}\nd.SetData(\"uimtest.level\", lv);\nd.SetData(\"uimtest.settle\", null);\nreturn \"recorded swap=\" + sw + \" level=\" + d.GetData(\"uimtest.level\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "recorded swap="
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 0,
+        "levelIndex": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Level 2"
+        ]
+      },
+      "wait": 7000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"timeScale\": 1"
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"timeScale\": 1",
+          "\"pauseState\": \"UnPaused\"",
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nvar d = System.AppDomain.CurrentDomain;\nd.SetData(\"uimtest.u3.x\", c.X); d.SetData(\"uimtest.u3.y\", c.Y);\nreturn \"at \" + c.X + \",\" + c.Y + \" \" + c.actionState;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "at "
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "jump"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"action\": \"jump\"",
+          "\"player\": 0",
+          "\"framesRead\": "
+        ],
+        "notContains": [
+          "warning"
+        ]
+      },
+      "wait": 250
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nfloat y0 = (float)System.AppDomain.CurrentDomain.GetData(\"uimtest.u3.y\");\nreturn (c.Y - y0 > 5f ? \"rose \" : \"did not rise \") + (c.Y - y0) + \" \" + c.actionState;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "rose "
+        ]
+      },
+      "wait": 1500
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nvar d = System.AppDomain.CurrentDomain;\nd.SetData(\"uimtest.u3.x\", c.X); d.SetData(\"uimtest.u3.y\", c.Y);\nreturn \"at \" + c.X + \",\" + c.Y + \" \" + c.actionState;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "at "
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "right",
+        "duration": 600
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"duration\": 600"
+        ],
+        "notContains": [
+          "warning"
+        ]
+      },
+      "wait": 900
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nfloat x0 = (float)System.AppDomain.CurrentDomain.GetData(\"uimtest.u3.x\");\nreturn (c.X - x0 > 20f ? \"moved right \" : \"did not move right \") + (c.X - x0);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "moved right "
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "down",
+        "duration": 5000
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"duration\": 5000",
+          "\"framesRead\": "
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nreturn \"down=\" + c.down;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "down=False"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "sequence": [
+          {
+            "wait": 500,
+            "duration": 90000
+          }
+        ]
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Step 0 has a duration but no action"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "FIRE"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"action\": \"FIRE\""
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "fire",
+        "count": 3,
+        "interval": 100,
+        "duration": 50
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"count\": 3",
+          "\"interval\": 100",
+          "\"framesRead\": ["
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "fire",
+        "count": 2,
+        "interval": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"count\": 2",
+          "\"interval\": 0",
+          "\"framesRead\": ["
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "fire",
+        "count": 0
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "count must be at least 1"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "fire",
+        "count": -1
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "duration, count and interval must not be negative"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "fire",
+        "count": 2,
+        "interval": -1
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "duration, count and interval must not be negative"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return 1 + 1;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "fire",
+        "duration": -5
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "duration, count and interval must not be negative"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "sequence": [
+          {
+            "action": "right",
+            "duration": 200,
+            "wait": 100
+          },
+          {
+            "action": "jump",
+            "duration": 100
+          }
+        ]
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"steps\": 2",
+          "\"totalMs\": 400"
+        ],
+        "notContains": [
+          "warning"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "sequence": [
+          {
+            "wait": 500
+          },
+          {
+            "wait": 300
+          }
+        ]
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"steps\": 2",
+          "\"totalMs\": 800"
+        ],
+        "notContains": [
+          "warning"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "sequence": [
+          {
+            "action": "dance"
+          }
+        ]
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Unknown input action in step 0: dance"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "sequence": [
+          {
+            "action": "jump",
+            "wait": -1
+          }
+        ]
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Step 0 has a negative duration or wait"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "sequence": [
+          {
+            "wait": 61000
+          }
+        ]
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Step 0 alone exceeds the 60000ms limit"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "sequence": [
+          {
+            "wait": 40000
+          },
+          {
+            "wait": 30000
+          }
+        ]
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Input sequence would take 70000ms, over the 60000ms limit"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"simulate_input\\\",\\\"params\\\":{\\\"sequence\\\":\\\"right\\\"}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "True|sequence must be an array of steps"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"simulate_input\\\",\\\"params\\\":{\\\"sequence\\\":[5]}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "True|Step 0 is not an object"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "sequence": []
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Exactly one of action, binding or sequence is required"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "jump",
+        "sequence": [
+          {
+            "wait": 10
+          }
+        ]
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Provide only one of action, binding and sequence"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "jump",
+        "duration": 61000
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Holding for 61000ms is over the 60000ms limit"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "jump",
+        "count": 100,
+        "duration": 500
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "100 presses would take 69800ms, over the 60000ms limit"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "melee"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Unknown input action: melee"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "fire",
+        "player": 7
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "player must be 0 to 3, got 7"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "string s = \"\";\nfor (int i = 1; i < 4; i++) if (HeroController.IsPlaying(i)) { HeroController.Dropout(i, false); s += i; }\nreturn s.Length == 0 ? \"no player to drop\" : \"dropped player(s) \" + s;"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "highFive"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"action\": \"highFive\""
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "gesture"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"action\": \"gesture\""
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "sprint",
+        "duration": 100
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"action\": \"sprint\""
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "start"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "warning"
+        ]
+      },
+      "wait": 1000
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"pauseState\": \"MenuPause\""
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "right"
+      },
+      "expect": {
+        "contains": [
+          "the game is paused (MenuPause)"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "escape"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "warning"
+        ]
+      },
+      "wait": 1000
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"pauseState\": \"UnPaused\""
+        ]
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"timeScale\": 0"
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"timeScale\": 0"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "right",
+        "duration": 100
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"note\": \"Time.timeScale is 0: the bro took the press, but nothing moves until the clock runs\""
+        ],
+        "notContains": [
+          "warning"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "sequence": [
+          {
+            "wait": 100
+          }
+        ]
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "warning"
+        ]
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 0.5
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"timeScale\": 0.5"
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"timeScale\": 0.5"
+        ]
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 0.002
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"timeScale\": 0.002"
+        ]
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 2
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"timeScale\": 2"
+        ]
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 10
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"timeScale\": 10"
+        ]
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 10.5
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Speed 10.5 is out of range - give a number from 0 to 10"
+        ]
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": -1
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Speed -1 is out of range"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"set_game_speed\\\",\\\"params\\\":{\\\"speed\\\":NaN}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "False|speed must be a finite number, got NaN"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"set_game_speed\\\",\\\"params\\\":{\\\"speed\\\":Infinity}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "False|speed must be a finite number, got Infinity"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"timeScale\": 10"
+        ]
+      }
+    },
+    {
+      "command": "set_game_speed",
+      "params": {
+        "speed": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"timeScale\": 1"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "string s = \"\";\nfor (int i = 1; i < 4; i++) if (HeroController.IsPlaying(i)) { HeroController.Dropout(i, false); s += i; }\nreturn s.Length == 0 ? \"no player to drop\" : \"dropped player(s) \" + s;"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "fire"
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 1500
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "string s = \"\";\nfor (int i = 1; i < 4; i++) if (HeroController.IsPlaying(i)) s += \" \" + i + \"=\" + (HeroController.players[i].character == null ? \"no bro\" : HeroController.players[i].character.name);\nreturn s.Length == 0 ? \"no player joined\" : \"joined:\" + s;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "no player joined"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "fire",
+        "player": 1
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "\"player\": 1",
+          "player 1 is not playing on this machine",
+          "\"framesRead\": 0"
+        ]
+      },
+      "wait": 1500
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "string s = \"\";\nfor (int i = 1; i < 4; i++) if (HeroController.IsPlaying(i)) s += \" \" + i + \"=\" + (HeroController.players[i].character == null ? \"no bro\" : HeroController.players[i].character.name);\nreturn s.Length == 0 ? \"no player joined\" : \"joined:\" + s;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "no player joined"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "string s = \"\";\nfor (int i = 1; i < 4; i++) if (HeroController.IsPlaying(i)) { HeroController.Dropout(i, false); s += i; }\nreturn s.Length == 0 ? \"no player to drop\" : \"dropped player(s) \" + s;"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "start",
+        "duration": 500
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"framesRead\": 1"
+        ]
+      },
+      "wait": 1000
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"pauseState\": \"MenuPause\""
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "escape"
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 1000
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"pauseState\": \"UnPaused\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "System.AppDomain.CurrentDomain.SetData(\"uimtest.blocked\", InputReader.IsBlocked);\nInputReader.IsBlocked = true;\nreturn \"blocked\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "blocked"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "right",
+        "duration": 200
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "No frame read right",
+          "the game is blocking input"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nInputReader.IsBlocked = (bool)d.GetData(\"uimtest.blocked\");\nd.SetData(\"uimtest.blocked\", null);\nreturn \"blocked=\" + InputReader.IsBlocked;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "blocked=False"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "System.AppDomain.CurrentDomain.SetData(\"uimtest.held\", !CutsceneController.PlayersCanMove());\nCutsceneController.HoldPlayersStill(true);\nreturn \"held still\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "held still"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "right",
+        "duration": 200
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "No frame read right",
+          "the game is holding players still"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nCutsceneController.HoldPlayersStill((bool)d.GetData(\"uimtest.held\"));\nd.SetData(\"uimtest.held\", null);\nreturn \"players can move=\" + CutsceneController.PlayersCanMove();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "players can move=True"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "escape"
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 1000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "GameState.LoadLevel(LevelSelectionController.MainMenuScene);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      },
+      "wait": 5000
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"scene\": \"MainMenu\""
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "fire"
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 1500
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "fire"
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 1500
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "fire"
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 1500
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var m = OnlineOrOfflineMenu.instance;\nif (m == null) return \"no online menu\";\nvar f = typeof(OnlineOrOfflineMenu).GetField(\"isOpen\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\nreturn \"online menu open=\" + f.GetValue(m) + \" scene \" + UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "online menu open=True"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "escape"
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 1500
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var m = OnlineOrOfflineMenu.instance;\nif (m == null) return \"no online menu\";\nvar f = typeof(OnlineOrOfflineMenu).GetField(\"isOpen\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\nreturn \"online menu open=\" + f.GetValue(m) + \" scene \" + UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "online menu open=False"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "fire"
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 1500
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var m = OnlineOrOfflineMenu.instance;\nif (m == null) return \"no online menu\";\nvar f = typeof(OnlineOrOfflineMenu).GetField(\"isOpen\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\nreturn \"online menu open=\" + f.GetValue(m) + \" scene \" + UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "online menu open=True"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "GameState.LoadLevel(LevelSelectionController.MainMenuScene);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      },
+      "wait": 5000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nstring log = \"\";\ntry { if (PauseController.pauseStatus != PauseStatus.UnPaused) { PauseController.SetPause(PauseStatus.UnPaused); log += \"unpaused \"; } } catch (System.Exception ex) { log += \"unpause failed: \" + ex.Message + \" \"; }\nif (UnityEngine.Time.timeScale != 1f) { UnityEngine.Time.timeScale = 1f; log += \"speed1 \"; }\ntry { if (d.GetData(\"uimtest.joined\") != null && HeroController.IsPlaying(1)) { HeroController.Dropout(1, false); log += \"dropped1 \"; } } catch (System.Exception ex) { log += \"dropout failed: \" + ex.Message + \" \"; }\nd.SetData(\"uimtest.joined\", null);\nvar hc = d.GetData(\"uimtest.ironbro\") as string;\nd.SetData(\"uimtest.ironbro\", null);\ntry {\n  var save = GameState.Instance.currentWorldmapSave;\n  if (hc != null && save != null) {\n    var parts = hc.Split(':');\n    save.worldMapIsHardcoreCampaign = parts[0] == \"1\";\n    save.hardcoreLives = int.Parse(parts[1]);\n    save.hardcoreModeAvailableBros.Clear();\n    foreach (var n in parts[2].Split(',')) if (n.Length > 0) save.hardcoreModeAvailableBros.Add((HeroType)System.Enum.Parse(typeof(HeroType), n));\n    log += \"ironbro-restored \";\n  }\n} catch (System.Exception ex) { log += \"ironbro restore failed: \" + ex.Message + \" \"; }\nvar lk = d.GetData(\"uimtest.lock\") as string;\nd.SetData(\"uimtest.lock\", null);\ntry {\n  if (lk != null) {\n    var fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\n    var t = System.Type.GetType(\"BroMakerLib.Unlocks.BroUnlockManager, BroMakerLib\");\n    var pd = t.GetField(\"progressData\", fl).GetValue(null);\n    var states = pd.GetType().GetProperty(\"BroStates\").GetValue(pd, null) as System.Collections.IDictionary;\n    var st = states[lk];\n    st.GetType().GetProperty(\"IsUnlocked\").SetValue(st, true, null);\n    st.GetType().GetProperty(\"UnlockedDate\").SetValue(st, d.GetData(\"uimtest.lock.date\"), null);\n    var names = t.GetProperty(\"UnlockedBroNames\", fl).GetValue(null, null) as System.Collections.Generic.List<string>;\n    var bros = t.GetProperty(\"UnlockedBros\", fl).GetValue(null, null) as System.Collections.IList;\n    int ni = (int)d.GetData(\"uimtest.lock.ni\"); if (ni < 0 || ni > names.Count) ni = names.Count;\n    if (!names.Contains(lk)) names.Insert(ni, lk);\n    var hero = d.GetData(\"uimtest.lock.hero\");\n    int hi = (int)d.GetData(\"uimtest.lock.hi\"); if (hi < 0 || hi > bros.Count) hi = bros.Count;\n    if (hero != null && !bros.Contains(hero)) bros.Insert(hi, hero);\n    typeof(BroMakerLib.Storages.BroSpawnManager).GetMethod(\"BroStatusChanged\", fl).Invoke(null, null);\n    log += \"unlocked \" + lk + \" \";\n  }\n} catch (System.Exception ex) { log += \"unlock failed: \" + ex.Message + \" \"; }\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); set.selGridInt[i] = ix < 0 ? 0 : ix; }\n    log += \"swap-settings-restored \";\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nvar fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\nstring log = \"\";\nvar ums = d.GetData(\"uimtest.u3.ums\") as string;\nd.SetData(\"uimtest.u3.ums\", null);\ntry {\n  if (ums != null) {\nSystem.Type um = null;\nforeach (var a in System.AppDomain.CurrentDomain.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\nvar umEnabled = um.GetField(\"enabled\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);\nvar umSettings = um.GetField(\"settings\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null);\nvar umDisable = umSettings.GetType().GetField(\"disableEnemySpawn\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\n    var p = ums.Split('|');\n    umEnabled.SetValue(null, p[0] == \"True\");\n    umDisable.SetValue(umSettings, p[1] == \"True\");\n    log += \"utility-mod-restored \";\n  }\n} catch (System.Exception ex) { log += \"utility mod restore failed: \" + ex.Message + \" \"; }\nvar hcs = d.GetData(\"uimtest.u3.hc\") as string;\nd.SetData(\"uimtest.u3.hc\", null);\ntry {\n  if (hcs != null) {\n    var p = hcs.Split('|');\n    HeroController.mustShowHUDS = p[0] == \"True\";\n    typeof(HeroController).GetField(\"doubleBroSevenAvatarCount\", fl).SetValue(null, int.Parse(p[1], ic));\n    var hc = UnityEngine.Object.FindObjectOfType<HeroController>();\n    if (hc != null) {\n      var ifl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance;\n      typeof(HeroController).GetField(\"explosivesCounter\", ifl).SetValue(hc, float.Parse(p[2], ic));\n      var c = p[3].Split(',');\n      hc.infoBarColor = new Color(float.Parse(c[0], ic), float.Parse(c[1], ic), float.Parse(c[2], ic), float.Parse(c[3], ic));\n      var ds = p[4].Split(',');\n      var arr = new float[ds.Length];\n      for (int i = 0; i < ds.Length; i++) arr[i] = float.Parse(ds[i], ic);\n      typeof(HeroController).GetField(\"suicideBroSpawnDelay\", ifl).SetValue(hc, arr);\n    }\n    log += \"hero-controller-restored \";\n  }\n} catch (System.Exception ex) { log += \"hero controller restore failed: \" + ex.Message + \" \"; }\ntry {\n  string dropped = \"\";\n  for (int i = 1; i < 4; i++) if (HeroController.IsPlaying(i)) { HeroController.Dropout(i, false); dropped += i; }\n  if (dropped.Length > 0) log += \"dropped-in-players-removed=\" + dropped + \" \";\n} catch (System.Exception ex) { log += \"drop-in removal failed: \" + ex.Message + \" \"; }\ntry {\n  string[] probes = { \"UimProbe\", \"UimDup\", \"UimInactive\", \"UimConstHolder\", \"UimShotProbe\", \"UimFarProbe\", \"UimBareProbe\", \"UimHiddenProbe\" };\n  int gone = 0;\n  foreach (var tr in Resources.FindObjectsOfTypeAll<Transform>()) {\n    if (tr == null || tr.parent != null || !tr.gameObject.scene.IsValid()) continue;\n    if (System.Array.IndexOf(probes, tr.name) < 0) continue;\n    UnityEngine.Object.DestroyImmediate(tr.gameObject);\n    gone++;\n  }\n  if (gone > 0) log += \"probes-destroyed=\" + gone + \" \";\n} catch (System.Exception ex) { log += \"probe cleanup failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar rec = (d.GetData(\"uimtest.level\") as string) ?? \"0|1\";\nd.SetData(\"uimtest.level\", null);\nvar p = rec.Split('|');\nvar r = Unity_Inspector_Mod.StateModifier.GoToLevel(int.Parse(p[0]), int.Parse(p[1]));\nvar j = Newtonsoft.Json.Linq.JToken.FromObject(r);\nreturn \"loading recorded level \" + rec + \": success=\" + j[\"success\"] + \" \" + j.ToString(Newtonsoft.Json.Formatting.None);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "success=True"
+        ]
+      },
+      "wait": 6000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar f = d.GetData(\"uimtest.found\") as string;\nvar set = Swap_Bros_Mod.Main.settings;\nSwap_Bros_Mod.API.EnsureBroListUpdated();\nvar l = Swap_Bros_Mod.Main.currentBroList;\nstring now = set.alwaysChosen + \"|\" + set.ignoreCurrentUnlocked;\nfor (int i = 0; i < 4; i++) now += \"|\" + l[set.selGridInt[i]];\nd.SetData(\"uimtest.found\", null);\nvar c = HeroController.players[0] == null ? null : HeroController.players[0].character;\nreturn \"settings \" + (now == f ? \"match\" : \"differ: found \" + f + \" now \" + now) + \" speed=\" + UnityEngine.Time.timeScale + \" pause=\" + PauseController.pauseStatus + \" p1=\" + HeroController.IsPlaying(1) + \" hc=\" + GameModeController.IsHardcoreMode + \" locked=\" + !BroMakerLib.Storages.BroSpawnManager.IsBroUnlocked(\"Cobro\") + \" scene=\" + UnityEngine.SceneManagement.SceneManager.GetActiveScene().name + \" level=\" + LevelSelectionController.CurrentLevelNum + \" bro=\" + (c == null ? \"none\" : c.name);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "settings match",
+          "speed=1 ",
+          "pause=UnPaused",
+          "p1=False",
+          "hc=False",
+          "locked=False",
+          "scene=Test Evan2"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "start"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "warning"
+        ]
+      },
+      "wait": 1000
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"pauseState\": \"MenuPause\""
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "jump"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "no bro will act on it",
+          "the game is paused (MenuPause)"
+        ]
+      },
+      "wait": 1000
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"pauseState\": \"UnPaused\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nSystem.Type um = null;\nforeach (var a in d.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\nvar set = um.GetField(\"settings\", fl).GetValue(null);\nvar active = um.GetField(\"activeKeybindings\", fl).GetValue(null) as System.Collections.Generic.List<string>;\nbool wasActive = active.Contains(\"Pause/Unpause Game\");\nvar gpf = set.GetType().GetField(\"isGamePaused\");\nstring rec = wasActive + \"|\" + (gpf == null ? \"absent\" : gpf.GetValue(set).ToString()) + \"|\" + UnityEngine.Time.timeScale.ToString(ic);\nd.SetData(\"uimtest.bind.um\", rec);\nif (!wasActive) active.Add(\"Pause/Unpause Game\");\nif (gpf != null) gpf.SetValue(set, false);\nstring lv = \"0|1\";\nif (LevelSelectionController.IsCampaignScene && LevelSelectionController.currentCampaign != null) {\n  var all = typeof(Unity_Inspector_Mod.StateModifier).GetField(\"CampaignNames\", fl).GetValue(null) as string[];\n  for (int i = 0; i < all.Length; i++) if (string.Equals(all[i], LevelSelectionController.currentCampaign.name, System.StringComparison.OrdinalIgnoreCase)) lv = i + \"|\" + LevelSelectionController.CurrentLevelNum;\n}\nd.SetData(\"uimtest.level\", lv);\nreturn \"recorded utility mod pause \" + rec + \" enabled=\" + um.GetField(\"enabled\", fl).GetValue(null) + \" level=\" + lv;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "recorded utility mod pause",
+          "enabled=True"
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Imperator Furibrosa",
+        "playerNum": 0,
+        "ignoreUnlocks": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Furibrosa",
+          "\"broFrom\": \"custom\""
+        ]
+      },
+      "wait": 1000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nvar f = c.GetType().GetField(\"currentState\");\nif (f == null) return \"not Furibrosa: \" + c.GetType().Name;\nvar st = f.GetValue(c).ToString();\nSystem.AppDomain.CurrentDomain.SetData(\"uimtest.bind.weapon\", st);\nreturn \"weapon=\" + st;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "weapon="
+        ],
+        "notContains": [
+          "Switching",
+          "not Furibrosa"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "binding": "Furibrosa/Switch Weapon"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"binding\": \"Furibrosa/Switch Weapon\"",
+          "\"player\": 0",
+          "\"framesRead\": "
+        ],
+        "notContains": [
+          "warning"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nvar now = c.GetType().GetField(\"currentState\").GetValue(c).ToString();\nvar before = System.AppDomain.CurrentDomain.GetData(\"uimtest.bind.weapon\") as string;\nif (now == \"Switching\") return \"still switching from \" + before;\nreturn (now != before ? \"switched \" : \"unchanged \") + before + \" -> \" + now;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "switched "
+        ]
+      },
+      "until": {
+        "timeout": 10,
+        "interval": 1
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "binding": "Furibrosa/Fly"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Unknown binding \\\"Furibrosa/Fly\\\": Furibrosa registers Switch Weapon"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "binding": "Nobody/Fly"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Unknown binding \\\"Nobody/Fly\\\"",
+          "the mods with key bindings are",
+          "Furibrosa",
+          "Utility Mod"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "jump",
+        "binding": "Furibrosa/Switch Weapon"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Provide only one of action, binding and sequence"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "sequence": [
+          {
+            "action": "jump",
+            "binding": "Furibrosa/Switch Weapon"
+          }
+        ]
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Step 0 has both an action and a binding; a step presses one"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nvar f = c.GetType().GetField(\"currentState\");\nif (f == null) return \"not Furibrosa: \" + c.GetType().Name;\nvar st = f.GetValue(c).ToString();\nSystem.AppDomain.CurrentDomain.SetData(\"uimtest.bind.weapon\", st);\nreturn \"weapon=\" + st;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "weapon="
+        ],
+        "notContains": [
+          "Switching",
+          "not Furibrosa"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "sequence": [
+          {
+            "binding": "Furibrosa/Switch Weapon"
+          },
+          {
+            "wait": 200
+          },
+          {
+            "action": "jump"
+          }
+        ]
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"steps\": 3",
+          "\"framesRead\": ["
+        ],
+        "notContains": [
+          "warning"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nvar now = c.GetType().GetField(\"currentState\").GetValue(c).ToString();\nvar before = System.AppDomain.CurrentDomain.GetData(\"uimtest.bind.weapon\") as string;\nif (now == \"Switching\") return \"still switching from \" + before;\nreturn (now != before ? \"switched \" : \"unchanged \") + before + \" -> \" + now;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "switched "
+        ]
+      },
+      "until": {
+        "timeout": 10,
+        "interval": 1
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "binding": "Utility Mod/Pause/Unpause Game"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"binding\": \"Utility Mod/Pause/Unpause Game\"",
+          "\"framesRead\": "
+        ]
+      },
+      "wait": 500
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nSystem.Type um = null;\nforeach (var a in d.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\nvar set = um.GetField(\"settings\", fl).GetValue(null);\nvar active = um.GetField(\"activeKeybindings\", fl).GetValue(null) as System.Collections.Generic.List<string>;\nvar gpf = set.GetType().GetField(\"isGamePaused\");\nreturn \"timeScale=\" + UnityEngine.Time.timeScale.ToString(ic) + \" stopped=\" + (UnityEngine.Time.timeScale < 0.01f) + \" isGamePaused=\" + (gpf == null ? \"absent\" : gpf.GetValue(set).ToString());"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "stopped=True"
+        ],
+        "notContains": [
+          "isGamePaused=False"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "binding": "Utility Mod/Pause/Unpause Game"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"framesRead\": "
+        ]
+      },
+      "wait": 500
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nSystem.Type um = null;\nforeach (var a in d.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\nvar set = um.GetField(\"settings\", fl).GetValue(null);\nvar active = um.GetField(\"activeKeybindings\", fl).GetValue(null) as System.Collections.Generic.List<string>;\nvar gpf = set.GetType().GetField(\"isGamePaused\");\nreturn \"timeScale=\" + UnityEngine.Time.timeScale.ToString(ic) + \" running=\" + (UnityEngine.Time.timeScale >= 0.01f) + \" isGamePaused=\" + (gpf == null ? \"absent\" : gpf.GetValue(set).ToString());"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "running=True"
+        ],
+        "notContains": [
+          "isGamePaused=True"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "binding": "Utility Mod/Pause/Unpause Game",
+        "player": 1
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "No frame read Utility Mod/Pause/Unpause Game: no code called its IsDown for player 1 while it was held",
+          "\"framesRead\": 0"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nd.SetData(\"uimtest.bind.weapon\", null);\nvar rec = d.GetData(\"uimtest.bind.um\") as string;\nd.SetData(\"uimtest.bind.um\", null);\nif (rec == null) return \"nothing to restore\";\nstring log = \"\";\ntry {\n  System.Type um = null;\n  foreach (var a in d.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\n  var set = um.GetField(\"settings\", fl).GetValue(null);\n  var active = um.GetField(\"activeKeybindings\", fl).GetValue(null) as System.Collections.Generic.List<string>;\n  var p = rec.Split('|');\n  if (p[0] != \"True\") active.Remove(\"Pause/Unpause Game\");\n  d.SetData(\"uimtest.bind.polled\", p[0]);\n  d.SetData(\"uimtest.bind.paused\", p[1]);\n  var gpf = set.GetType().GetField(\"isGamePaused\");\n  if (gpf != null) gpf.SetValue(set, p[1] == \"True\");\n  UnityEngine.Time.timeScale = float.Parse(p[2], ic);\n  log += \"utility-mod-pause-restored \";\n} catch (System.Exception ex) { log += \"utility mod pause restore failed: \" + ex.Message + \" \"; }\nreturn log;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "utility-mod-pause-restored"
+        ],
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar rec = (d.GetData(\"uimtest.level\") as string) ?? \"0|1\";\nd.SetData(\"uimtest.level\", null);\nvar p = rec.Split('|');\nvar r = Unity_Inspector_Mod.StateModifier.GoToLevel(int.Parse(p[0]), int.Parse(p[1]));\nvar j = Newtonsoft.Json.Linq.JToken.FromObject(r);\nreturn \"loading recorded level \" + rec + \": success=\" + j[\"success\"] + \" \" + j.ToString(Newtonsoft.Json.Formatting.None);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "success=True"
+        ]
+      },
+      "wait": 6000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\nSystem.Type um = null;\nforeach (var a in d.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\nvar set = um.GetField(\"settings\", fl).GetValue(null);\nvar active = um.GetField(\"activeKeybindings\", fl).GetValue(null) as System.Collections.Generic.List<string>;\nvar polled = d.GetData(\"uimtest.bind.polled\") as string;\nd.SetData(\"uimtest.bind.polled\", null);\nvar paused = d.GetData(\"uimtest.bind.paused\") as string;\nd.SetData(\"uimtest.bind.paused\", null);\nstring pp = active.Contains(\"Pause/Unpause Game\").ToString();\nvar gpf = set.GetType().GetField(\"isGamePaused\");\nstring gp = gpf == null ? \"absent\" : gpf.GetValue(set).ToString();\nreturn \"pausePolled \" + (pp == polled ? \"as found\" : \"differs: found \" + polled + \" now \" + pp) + \" speed=\" + UnityEngine.Time.timeScale + \" pause=\" + PauseController.pauseStatus + \" isGamePaused \" + (gp != paused ? \"differs: found \" + paused + \" now \" + gp : gp == \"absent\" ? \"absent\" : \"as found\") + \" scene=\" + UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "speed=1 ",
+          "pause=UnPaused",
+          "scene=Test Evan2",
+          "pausePolled as found",
+          "isGamePaused "
+        ],
+        "notContains": [
+          "differs"
+        ]
+      }
+    }
+  ],
+  "cleanup": [
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nd.SetData(\"uimtest.found\", null);\nd.SetData(\"uimtest.level\", null);\nstring log = \"\";\ntry { if (PauseController.pauseStatus != PauseStatus.UnPaused) { PauseController.SetPause(PauseStatus.UnPaused); log += \"unpaused \"; } } catch (System.Exception ex) { log += \"unpause failed: \" + ex.Message + \" \"; }\nif (UnityEngine.Time.timeScale != 1f) { UnityEngine.Time.timeScale = 1f; log += \"speed1 \"; }\ntry { if (d.GetData(\"uimtest.joined\") != null && HeroController.IsPlaying(1)) { HeroController.Dropout(1, false); log += \"dropped1 \"; } } catch (System.Exception ex) { log += \"dropout failed: \" + ex.Message + \" \"; }\nd.SetData(\"uimtest.joined\", null);\nvar hc = d.GetData(\"uimtest.ironbro\") as string;\nd.SetData(\"uimtest.ironbro\", null);\ntry {\n  var save = GameState.Instance.currentWorldmapSave;\n  if (hc != null && save != null) {\n    var parts = hc.Split(':');\n    save.worldMapIsHardcoreCampaign = parts[0] == \"1\";\n    save.hardcoreLives = int.Parse(parts[1]);\n    save.hardcoreModeAvailableBros.Clear();\n    foreach (var n in parts[2].Split(',')) if (n.Length > 0) save.hardcoreModeAvailableBros.Add((HeroType)System.Enum.Parse(typeof(HeroType), n));\n    log += \"ironbro-restored \";\n  }\n} catch (System.Exception ex) { log += \"ironbro restore failed: \" + ex.Message + \" \"; }\nvar lk = d.GetData(\"uimtest.lock\") as string;\nd.SetData(\"uimtest.lock\", null);\ntry {\n  if (lk != null) {\n    var fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\n    var t = System.Type.GetType(\"BroMakerLib.Unlocks.BroUnlockManager, BroMakerLib\");\n    var pd = t.GetField(\"progressData\", fl).GetValue(null);\n    var states = pd.GetType().GetProperty(\"BroStates\").GetValue(pd, null) as System.Collections.IDictionary;\n    var st = states[lk];\n    st.GetType().GetProperty(\"IsUnlocked\").SetValue(st, true, null);\n    st.GetType().GetProperty(\"UnlockedDate\").SetValue(st, d.GetData(\"uimtest.lock.date\"), null);\n    var names = t.GetProperty(\"UnlockedBroNames\", fl).GetValue(null, null) as System.Collections.Generic.List<string>;\n    var bros = t.GetProperty(\"UnlockedBros\", fl).GetValue(null, null) as System.Collections.IList;\n    int ni = (int)d.GetData(\"uimtest.lock.ni\"); if (ni < 0 || ni > names.Count) ni = names.Count;\n    if (!names.Contains(lk)) names.Insert(ni, lk);\n    var hero = d.GetData(\"uimtest.lock.hero\");\n    int hi = (int)d.GetData(\"uimtest.lock.hi\"); if (hi < 0 || hi > bros.Count) hi = bros.Count;\n    if (hero != null && !bros.Contains(hero)) bros.Insert(hi, hero);\n    typeof(BroMakerLib.Storages.BroSpawnManager).GetMethod(\"BroStatusChanged\", fl).Invoke(null, null);\n    log += \"unlocked \" + lk + \" \";\n  }\n} catch (System.Exception ex) { log += \"unlock failed: \" + ex.Message + \" \"; }\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); set.selGridInt[i] = ix < 0 ? 0 : ix; }\n    log += \"swap-settings-restored \";\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nvar fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\nstring log = \"\";\nvar ums = d.GetData(\"uimtest.u3.ums\") as string;\nd.SetData(\"uimtest.u3.ums\", null);\ntry {\n  if (ums != null) {\nSystem.Type um = null;\nforeach (var a in System.AppDomain.CurrentDomain.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\nvar umEnabled = um.GetField(\"enabled\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);\nvar umSettings = um.GetField(\"settings\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null);\nvar umDisable = umSettings.GetType().GetField(\"disableEnemySpawn\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\n    var p = ums.Split('|');\n    umEnabled.SetValue(null, p[0] == \"True\");\n    umDisable.SetValue(umSettings, p[1] == \"True\");\n    log += \"utility-mod-restored \";\n  }\n} catch (System.Exception ex) { log += \"utility mod restore failed: \" + ex.Message + \" \"; }\nvar hcs = d.GetData(\"uimtest.u3.hc\") as string;\nd.SetData(\"uimtest.u3.hc\", null);\ntry {\n  if (hcs != null) {\n    var p = hcs.Split('|');\n    HeroController.mustShowHUDS = p[0] == \"True\";\n    typeof(HeroController).GetField(\"doubleBroSevenAvatarCount\", fl).SetValue(null, int.Parse(p[1], ic));\n    var hc = UnityEngine.Object.FindObjectOfType<HeroController>();\n    if (hc != null) {\n      var ifl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance;\n      typeof(HeroController).GetField(\"explosivesCounter\", ifl).SetValue(hc, float.Parse(p[2], ic));\n      var c = p[3].Split(',');\n      hc.infoBarColor = new Color(float.Parse(c[0], ic), float.Parse(c[1], ic), float.Parse(c[2], ic), float.Parse(c[3], ic));\n      var ds = p[4].Split(',');\n      var arr = new float[ds.Length];\n      for (int i = 0; i < ds.Length; i++) arr[i] = float.Parse(ds[i], ic);\n      typeof(HeroController).GetField(\"suicideBroSpawnDelay\", ifl).SetValue(hc, arr);\n    }\n    log += \"hero-controller-restored \";\n  }\n} catch (System.Exception ex) { log += \"hero controller restore failed: \" + ex.Message + \" \"; }\ntry {\n  string dropped = \"\";\n  for (int i = 1; i < 4; i++) if (HeroController.IsPlaying(i)) { HeroController.Dropout(i, false); dropped += i; }\n  if (dropped.Length > 0) log += \"dropped-in-players-removed=\" + dropped + \" \";\n} catch (System.Exception ex) { log += \"drop-in removal failed: \" + ex.Message + \" \"; }\ntry {\n  string[] probes = { \"UimProbe\", \"UimDup\", \"UimInactive\", \"UimConstHolder\", \"UimShotProbe\", \"UimFarProbe\", \"UimBareProbe\", \"UimHiddenProbe\" };\n  int gone = 0;\n  foreach (var tr in Resources.FindObjectsOfTypeAll<Transform>()) {\n    if (tr == null || tr.parent != null || !tr.gameObject.scene.IsValid()) continue;\n    if (System.Array.IndexOf(probes, tr.name) < 0) continue;\n    UnityEngine.Object.DestroyImmediate(tr.gameObject);\n    gone++;\n  }\n  if (gone > 0) log += \"probes-destroyed=\" + gone + \" \";\n} catch (System.Exception ex) { log += \"probe cleanup failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nstring log = \"\";\nif (d.GetData(\"uimtest.blocked\") != null) { InputReader.IsBlocked = (bool)d.GetData(\"uimtest.blocked\"); d.SetData(\"uimtest.blocked\", null); log += \"unblocked \"; }\nif (d.GetData(\"uimtest.held\") != null) { CutsceneController.HoldPlayersStill((bool)d.GetData(\"uimtest.held\")); d.SetData(\"uimtest.held\", null); log += \"released \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nd.SetData(\"uimtest.bind.weapon\", null);\nd.SetData(\"uimtest.bind.polled\", null);\nd.SetData(\"uimtest.bind.paused\", null);\nvar rec = d.GetData(\"uimtest.bind.um\") as string;\nd.SetData(\"uimtest.bind.um\", null);\nif (rec == null) return \"nothing to restore\";\nstring log = \"\";\ntry {\n  System.Type um = null;\n  foreach (var a in d.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\n  var set = um.GetField(\"settings\", fl).GetValue(null);\n  var active = um.GetField(\"activeKeybindings\", fl).GetValue(null) as System.Collections.Generic.List<string>;\n  var p = rec.Split('|');\n  if (p[0] != \"True\") active.Remove(\"Pause/Unpause Game\");\n  var gpf = set.GetType().GetField(\"isGamePaused\");\n  if (gpf != null && p[1] != \"absent\") gpf.SetValue(set, p[1] == \"True\");\n  UnityEngine.Time.timeScale = float.Parse(p[2], ic);\n  log += \"utility-mod-pause-restored \";\n} catch (System.Exception ex) { log += \"utility mod pause restore failed: \" + ex.Message + \" \"; }\nreturn log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    }
+  ]
+}

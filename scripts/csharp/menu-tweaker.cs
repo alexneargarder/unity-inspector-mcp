@@ -1,10 +1,21 @@
 // #name Menu Tweaker
 // #description Live-edit FlexMenu element properties without rebuilding. Target by name, type, or wildcard pattern.
 // #tags menus, debugging, flexmenu
-// #args elementName: Name or pattern to match (use * to list all, Item* for wildcard, or exact name), type: Filter by element type (ActionButton, TextElement, etc.), properties: Property=Value pairs (e.g. Width=100 Height=30 FontSize=5)
+// #args elementName: Name or pattern to match (use * to list all, Item* for wildcard, or exact name)
+// #args type: Filter by element type (ActionButton, TextElement, etc.)
+// #args Width: element width
+// #args Height: element height
+// #args FontSize: font size of an ActionButton or TextElement
+// #args Text: text of an ActionButton or TextElement
+// #args Padding: padding of a container
+// #args Spacing: spacing of a container
+// #args WidthMode: SizeMode for the width
+// #args HeightMode: SizeMode for the height
+// #args Visible: true or false
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using RocketLib.Menus.Core;
 using RocketLib.Menus.Elements;
 using RocketLib.Menus.Layout;
@@ -58,6 +69,15 @@ public class MenuTweaker
             return;
         }
 
+        var unknown = new List<string>();
+        foreach (var pair in ScriptContext.Args)
+        {
+            if (pair.Key != "elementName" && pair.Key != "type" && !KnownProperties.Contains(pair.Key.ToLower()))
+                unknown.Add(pair.Key);
+        }
+        if (unknown.Count > 0)
+            ScriptContext.Logger($"Unknown properties, ignored: {string.Join(", ", unknown.ToArray())}. Properties: Width, Height, FontSize, Text, Padding, Spacing, WidthMode, HeightMode, Visible");
+
         int updated = 0;
         foreach (var element in targets)
         {
@@ -70,6 +90,18 @@ public class MenuTweaker
             menu.RefreshLayout();
             ScriptContext.Logger($"Updated {updated} element(s) and refreshed layout.");
         }
+        else
+        {
+            ScriptContext.Logger($"No property applied to the {targets.Count} matched element(s).");
+        }
+    }
+
+    static readonly HashSet<string> KnownProperties = new HashSet<string>
+        { "width", "height", "widthmode", "heightmode", "fontsize", "text", "padding", "spacing", "visible" };
+
+    static float ParseFloat(string val)
+    {
+        return float.Parse(val, NumberStyles.Float, CultureInfo.InvariantCulture);
     }
 
     static bool HasPropertyArgs()
@@ -142,11 +174,11 @@ public class MenuTweaker
                 switch (prop.ToLower())
                 {
                     case "width":
-                        element.Width = float.Parse(val);
+                        element.Width = ParseFloat(val);
                         changed = true;
                         break;
                     case "height":
-                        element.Height = float.Parse(val);
+                        element.Height = ParseFloat(val);
                         changed = true;
                         break;
                     case "widthmode":
@@ -160,12 +192,12 @@ public class MenuTweaker
                     case "fontsize":
                         if (element is ActionButton btn)
                         {
-                            btn.FontSize = float.Parse(val);
+                            btn.FontSize = ParseFloat(val);
                             changed = true;
                         }
                         else if (element is TextElement txt)
                         {
-                            txt.FontSize = float.Parse(val);
+                            txt.FontSize = ParseFloat(val);
                             changed = true;
                         }
                         break;
@@ -184,14 +216,14 @@ public class MenuTweaker
                     case "padding":
                         if (element is LayoutContainer pc)
                         {
-                            pc.Padding = float.Parse(val);
+                            pc.Padding = ParseFloat(val);
                             changed = true;
                         }
                         break;
                     case "spacing":
                         if (element is LayoutContainer sc)
                         {
-                            sc.Spacing = float.Parse(val);
+                            sc.Spacing = ParseFloat(val);
                             changed = true;
                         }
                         break;

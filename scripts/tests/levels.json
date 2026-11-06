@@ -1,0 +1,1411 @@
+{
+  "name": "Level loading, restart and screenshot highlights",
+  "description": "Covers list_campaigns, go_to_level over the stock and challenge campaigns, out-of-range campaign and level indices, every challenge and Muscle Temple campaign once, a fractional campaign index sent to the mod's message handler directly, a load from the main menu with no save slot it could use, a load from the pause menu and a restart from a cutscene (a persistent object the pause deactivated is active again after each), the slot tools refused on a finished level, during the switch to the next scene and during a fade, a level index past the campaign's end (the Victory map), an intro cutscene re-armed for Indiana Brones on Mission1's first level, whose bros arrive by transport, which go_to_level and restart_level each answer once it holds the level, naming it, and start skips, and a load while a MonoBehaviour's Update holds the main thread past its 3 s budget, which leaves the level as it was; restart_level in a level and at the main menu, where it is refused; inspect_player in a level; and take_screenshot plain and with every highlight form: an object path, an off-screen object, an object with nothing to outline, an inactive or missing object, an empty path, rectangles on, partly on and off the screen or with a negative size, a rectangle missing a field, null, and a number, array and bool sent to the mod's message handler directly from a thread of its own, since the server refuses them before they are sent. The highlights use campaign 0 level 2: the on-screen rectangles are computed from the camera's view, whatever the window size, and sent to the mod's message handler from a thread of their own; the off-screen ones sit a million units away; and probe objects the script creates above the bro. Needs Utility Mod's disableEnemySpawn on for the load warning. It changes no Utility Mod setting itself: its restore only puts back what a failed spawning.json run recorded, so a settings save during the run writes the user's values. Its first steps undo whatever an earlier run left changed and wait for any load in progress to settle; its last steps destroy the probes and reload the level it started in. Its cleanup runs the restore again whatever ended the steps: pause, speed, the second player, IronBro, the lock, the Swap Bros selection, Indiana Brones's unlock and the bros yet to be played, and the Utility Mod settings and HeroController values that a failed spawning or inspection run recorded.",
+  "steps": [
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "escape"
+      },
+      "until": {
+        "timeout": 90,
+        "interval": 1
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 1000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nstring log = \"\";\ntry { if (PauseController.pauseStatus != PauseStatus.UnPaused) { PauseController.SetPause(PauseStatus.UnPaused); log += \"unpaused \"; } } catch (System.Exception ex) { log += \"unpause failed: \" + ex.Message + \" \"; }\nif (UnityEngine.Time.timeScale != 1f) { UnityEngine.Time.timeScale = 1f; log += \"speed1 \"; }\ntry { if (d.GetData(\"uimtest.joined\") != null && HeroController.IsPlaying(1)) { HeroController.Dropout(1, false); log += \"dropped1 \"; } } catch (System.Exception ex) { log += \"dropout failed: \" + ex.Message + \" \"; }\nd.SetData(\"uimtest.joined\", null);\nvar hc = d.GetData(\"uimtest.ironbro\") as string;\nd.SetData(\"uimtest.ironbro\", null);\ntry {\n  var save = GameState.Instance.currentWorldmapSave;\n  if (hc != null && save != null) {\n    var parts = hc.Split(':');\n    save.worldMapIsHardcoreCampaign = parts[0] == \"1\";\n    save.hardcoreLives = int.Parse(parts[1]);\n    save.hardcoreModeAvailableBros.Clear();\n    foreach (var n in parts[2].Split(',')) if (n.Length > 0) save.hardcoreModeAvailableBros.Add((HeroType)System.Enum.Parse(typeof(HeroType), n));\n    log += \"ironbro-restored \";\n  }\n} catch (System.Exception ex) { log += \"ironbro restore failed: \" + ex.Message + \" \"; }\nvar lk = d.GetData(\"uimtest.lock\") as string;\nd.SetData(\"uimtest.lock\", null);\ntry {\n  if (lk != null) {\n    var fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\n    var t = System.Type.GetType(\"BroMakerLib.Unlocks.BroUnlockManager, BroMakerLib\");\n    var pd = t.GetField(\"progressData\", fl).GetValue(null);\n    var states = pd.GetType().GetProperty(\"BroStates\").GetValue(pd, null) as System.Collections.IDictionary;\n    var st = states[lk];\n    st.GetType().GetProperty(\"IsUnlocked\").SetValue(st, true, null);\n    st.GetType().GetProperty(\"UnlockedDate\").SetValue(st, d.GetData(\"uimtest.lock.date\"), null);\n    var names = t.GetProperty(\"UnlockedBroNames\", fl).GetValue(null, null) as System.Collections.Generic.List<string>;\n    var bros = t.GetProperty(\"UnlockedBros\", fl).GetValue(null, null) as System.Collections.IList;\n    int ni = (int)d.GetData(\"uimtest.lock.ni\"); if (ni < 0 || ni > names.Count) ni = names.Count;\n    if (!names.Contains(lk)) names.Insert(ni, lk);\n    var hero = d.GetData(\"uimtest.lock.hero\");\n    int hi = (int)d.GetData(\"uimtest.lock.hi\"); if (hi < 0 || hi > bros.Count) hi = bros.Count;\n    if (hero != null && !bros.Contains(hero)) bros.Insert(hi, hero);\n    typeof(BroMakerLib.Storages.BroSpawnManager).GetMethod(\"BroStatusChanged\", fl).Invoke(null, null);\n    log += \"unlocked \" + lk + \" \";\n  }\n} catch (System.Exception ex) { log += \"unlock failed: \" + ex.Message + \" \"; }\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); set.selGridInt[i] = ix < 0 ? 0 : ix; }\n    log += \"swap-settings-restored \";\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\nvar sl = d.GetData(\"uimtest.slots\") as string;\nd.SetData(\"uimtest.slots\", null);\ntry {\n  if (sl != null) {\n    var slots = PlayerProgress.Instance.saveSlots;\n    for (int i = 0; i < slots.Length && i < sl.Length; i++) if (slots[i] != null && sl[i] != 'n') slots[i].worldMapIsHardcoreCampaign = sl[i] == '1';\n    log += \"save-slots-restored \";\n  }\n} catch (System.Exception ex) { log += \"save slot restore failed: \" + ex.Message + \" \"; }\ntry {\n  if (d.GetData(\"uimtest.fade\") != null && Fader.instance != null) { Fader.instance.fadingBlack = false; log += \"fade-cleared \"; }\n  d.SetData(\"uimtest.fade\", null);\n  if (d.GetData(\"uimtest.switching\") != null && GameModeController.Instance != null) {\n    var gf = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;\n    typeof(GameModeController).GetField(\"switchingLevel\", gf).SetValue(GameModeController.Instance, false);\n    typeof(GameModeController).GetField(\"switchLevelDelay\", gf).SetValue(GameModeController.Instance, 1.5f);\n    log += \"switching-cleared \";\n  }\n  d.SetData(\"uimtest.switching\", null);\n} catch (System.Exception ex) { log += \"transition flag restore failed: \" + ex.Message + \" \"; }\nvar intro = d.GetData(\"uimtest.intro\") as string;\nd.SetData(\"uimtest.intro\", null);\ntry {\n  if (intro != null) {\n    var pp = PlayerProgress.Instance;\n    var ip = intro.Split(':');\n    int at = int.Parse(ip[0]);\n    pp.unlockedHeroes.Remove(HeroType.IndianaBrones);\n    if (at >= 0) pp.unlockedHeroes.Insert(System.Math.Min(at, pp.unlockedHeroes.Count), HeroType.IndianaBrones);\n    pp.yetToBePlayedUnlockedHeroes.Clear();\n    foreach (var n in ip[1].Split(',')) if (n.Length > 0) pp.yetToBePlayedUnlockedHeroes.Add((HeroType)System.Enum.Parse(typeof(HeroType), n));\n    log += \"intro-restored \";\n  }\n} catch (System.Exception ex) { log += \"intro restore failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nvar fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\nstring log = \"\";\nvar ums = d.GetData(\"uimtest.u3.ums\") as string;\nd.SetData(\"uimtest.u3.ums\", null);\ntry {\n  if (ums != null) {\nSystem.Type um = null;\nforeach (var a in System.AppDomain.CurrentDomain.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\nvar umEnabled = um.GetField(\"enabled\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);\nvar umSettings = um.GetField(\"settings\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null);\nvar umDisable = umSettings.GetType().GetField(\"disableEnemySpawn\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\n    var p = ums.Split('|');\n    umEnabled.SetValue(null, p[0] == \"True\");\n    umDisable.SetValue(umSettings, p[1] == \"True\");\n    log += \"utility-mod-restored \";\n  }\n} catch (System.Exception ex) { log += \"utility mod restore failed: \" + ex.Message + \" \"; }\nvar hcs = d.GetData(\"uimtest.u3.hc\") as string;\nd.SetData(\"uimtest.u3.hc\", null);\ntry {\n  if (hcs != null) {\n    var p = hcs.Split('|');\n    HeroController.mustShowHUDS = p[0] == \"True\";\n    typeof(HeroController).GetField(\"doubleBroSevenAvatarCount\", fl).SetValue(null, int.Parse(p[1], ic));\n    var hc = UnityEngine.Object.FindObjectOfType<HeroController>();\n    if (hc != null) {\n      var ifl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance;\n      typeof(HeroController).GetField(\"explosivesCounter\", ifl).SetValue(hc, float.Parse(p[2], ic));\n      var c = p[3].Split(',');\n      hc.infoBarColor = new Color(float.Parse(c[0], ic), float.Parse(c[1], ic), float.Parse(c[2], ic), float.Parse(c[3], ic));\n      var ds = p[4].Split(',');\n      var arr = new float[ds.Length];\n      for (int i = 0; i < ds.Length; i++) arr[i] = float.Parse(ds[i], ic);\n      typeof(HeroController).GetField(\"suicideBroSpawnDelay\", ifl).SetValue(hc, arr);\n    }\n    log += \"hero-controller-restored \";\n  }\n} catch (System.Exception ex) { log += \"hero controller restore failed: \" + ex.Message + \" \"; }\ntry {\n  string dropped = \"\";\n  for (int i = 1; i < 4; i++) if (HeroController.IsPlaying(i)) { HeroController.Dropout(i, false); dropped += i; }\n  if (dropped.Length > 0) log += \"dropped-in-players-removed=\" + dropped + \" \";\n} catch (System.Exception ex) { log += \"drop-in removal failed: \" + ex.Message + \" \"; }\ntry {\n  string[] probes = { \"UimProbe\", \"UimDup\", \"UimInactive\", \"UimConstHolder\", \"UimShotProbe\", \"UimFarProbe\", \"UimBareProbe\", \"UimHiddenProbe\", \"UimPersistProbe\" };\n  int gone = 0;\n  foreach (var tr in Resources.FindObjectsOfTypeAll<Transform>()) {\n    if (tr == null || tr.parent != null || !tr.gameObject.scene.IsValid()) continue;\n    if (System.Array.IndexOf(probes, tr.name) < 0) continue;\n    UnityEngine.Object.DestroyImmediate(tr.gameObject);\n    gone++;\n  }\n  if (gone > 0) log += \"probes-destroyed=\" + gone + \" \";\n} catch (System.Exception ex) { log += \"probe cleanup failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar sc = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;\nvar camp = LevelSelectionController.currentCampaign;\nstring key = sc + \"|\" + (camp == null ? \"\" : camp.name) + \"|\" + LevelSelectionController.CurrentLevelNum;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nfloat now = UnityEngine.Time.realtimeSinceStartup;\nvar last = d.GetData(\"uimtest.settle\") as string;\nint cut = last == null ? -1 : last.LastIndexOf('|');\nif (last == null || last.Substring(0, cut) != key) {\n  d.SetData(\"uimtest.settle\", key + \"|\" + now.ToString(ic));\n  return \"waiting: \" + sc + \" just came up\";\n}\nfloat since = now - float.Parse(last.Substring(cut + 1), ic);\nif (sc == \"LoadingScreen\") return \"waiting: loading\";\nif (LevelSelectionController.IsCampaignScene) {\n  if (HeroController.Instance == null || Map.Instance == null || GameModeController.Instance == null) return \"waiting: the level is still being built\";\n  var wt = typeof(GameModeController).GetField(\"winTimer\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\n  if (GameModeController.IsLevelFinished() && (float)wt.GetValue(GameModeController.Instance) < 999999f) return \"waiting: the level finished and is moving on\";\n}\nif (since < 4f) return \"waiting: \" + sc + \" unchanged for \" + since.ToString(\"0.0\", ic) + \" s\";\nreturn \"settled in \" + sc;"
+      },
+      "until": {
+        "timeout": 90,
+        "interval": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "settled in"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar set = Swap_Bros_Mod.Main.settings;\nSwap_Bros_Mod.API.EnsureBroListUpdated();\nvar l = Swap_Bros_Mod.Main.currentBroList;\nstring sw = set.alwaysChosen + \"|\" + set.ignoreCurrentUnlocked;\nfor (int i = 0; i < 4; i++) sw += \"|\" + l[set.selGridInt[i]];\nd.SetData(\"uimtest.swap\", sw);\nd.SetData(\"uimtest.found\", sw);\nstring lv = \"0|1\";\nif (LevelSelectionController.IsCampaignScene && LevelSelectionController.currentCampaign != null) {\n  var all = typeof(Unity_Inspector_Mod.StateModifier).GetField(\"CampaignNames\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null) as string[];\n  for (int i = 0; i < all.Length; i++) if (string.Equals(all[i], LevelSelectionController.currentCampaign.name, System.StringComparison.OrdinalIgnoreCase)) lv = i + \"|\" + LevelSelectionController.CurrentLevelNum;\n}\nd.SetData(\"uimtest.level\", lv);\nd.SetData(\"uimtest.settle\", null);\nreturn \"recorded swap=\" + sw + \" level=\" + d.GetData(\"uimtest.level\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "recorded swap="
+        ]
+      }
+    },
+    {
+      "command": "list_campaigns",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"index\": 0,",
+          "\"name\": \"WM_Intro(mouse)\"",
+          "\"displayName\": \"Intro\"",
+          "\"displayName\": \"Mission2\"",
+          "\"name\": \"WM_HELL\"",
+          "\"name\": \"Challenge_Alien\"",
+          "\"displayName\": \"Challenge Alien\"",
+          "\"index\": 25,",
+          "\"name\": \"MuscleTemple_4\"",
+          "\"name\": \"Challenge_Mech1\""
+        ],
+        "notContains": [
+          "\"index\": 26",
+          "MuscleTemple_5Stages",
+          "Challenge_Bombardment1",
+          "\"name\": \"Challenge_Mech\""
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 0,
+        "levelIndex": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Loaded WM_Intro(mouse) - Level 1",
+          "Enemy spawning is suppressed by Utility Mod",
+          "\"loaded\": true"
+        ]
+      },
+      "wait": 7000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"scene\": \"Test Evan2\"",
+          "\"campaignName\": \"WM_Intro(mouse)\"",
+          "\"campaignDisplay\": \"Intro\"",
+          "\"levelIndex\": 0",
+          "\"levelNumber\": 1",
+          "\"isInGame\": true"
+        ]
+      }
+    },
+    {
+      "command": "inspect_player",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"playerIndex\": 0",
+          "\"state\": \"alive\"",
+          "\"isAlive\": true"
+        ]
+      }
+    },
+    {
+      "command": "restart_level",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"scene\": \"Test Evan2\"",
+          "\"loaded\": true"
+        ]
+      },
+      "wait": 7000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"campaignName\": \"WM_Intro(mouse)\"",
+          "\"levelNumber\": 1",
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 3,
+        "levelIndex": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Loaded WM_City1(mouse) - Level 1",
+          "\"loaded\": true"
+        ]
+      },
+      "wait": 7000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"campaignName\": \"WM_City1(mouse)\"",
+          "\"campaignDisplay\": \"City1\"",
+          "\"levelName\": \"City Intro\"",
+          "\"levelNumber\": 1"
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 16,
+        "levelIndex": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Loaded Challenge_Alien - Level 1",
+          "\"loaded\": true"
+        ]
+      },
+      "wait": 7000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"campaignName\": \"Challenge_Alien\"",
+          "\"campaignDisplay\": \"Challenge Alien\"",
+          "\"levelName\": null"
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 26,
+        "levelIndex": 0
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Campaign index 26 is out of range - valid indices are 0 to 25 (see list_campaigns)"
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 99,
+        "levelIndex": 0
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Campaign index 99 is out of range - valid indices are 0 to 25 (see list_campaigns)"
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": -1,
+        "levelIndex": 0
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Campaign index -1 is out of range - valid indices are 0 to 25 (see list_campaigns)"
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 0,
+        "levelIndex": -1
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Level index -1 is out of range - level indices start at 0"
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"campaignName\": \"Challenge_Alien\""
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 0,
+        "levelIndex": 99
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Loaded WM_Intro(mouse) - Level 100",
+          "\"loaded\": true"
+        ]
+      },
+      "wait": 8000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"scene\": \"Test Evan2\"",
+          "\"levelName\": \"Victory\"",
+          "\"levelIndex\": 99",
+          "\"levelNumber\": 100"
+        ]
+      }
+    },
+    {
+      "command": "take_screenshot",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"path\": \"",
+          ".png",
+          "\"highlighted\": null",
+          "\"highlightError\": null"
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 0,
+        "levelIndex": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Loaded WM_Intro(mouse) - Level 2",
+          "\"loaded\": true"
+        ],
+        "notContains": [
+          "\"cutscene\""
+        ]
+      },
+      "wait": 7000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "foreach (var n in new[] { \"UimShotProbe\", \"UimFarProbe\", \"UimBareProbe\", \"UimHiddenProbe\" }) {\n  foreach (var tr in Resources.FindObjectsOfTypeAll<Transform>())\n    if (tr != null && tr.parent == null && tr.name == n && tr.gameObject.scene.IsValid()) UnityEngine.Object.DestroyImmediate(tr.gameObject);\n}\nvar c = HeroController.players[0].character;\nvar sprite = Sprite.Create(Texture2D.whiteTexture, new Rect(0, 0, 4, 4), new Vector2(0.5f, 0.5f), 0.25f);\nvar shot = new GameObject(\"UimShotProbe\");\nshot.transform.position = new Vector3(c.X, c.Y + 30f, 0f);\nshot.AddComponent<SpriteRenderer>().sprite = sprite;\nvar far = new GameObject(\"UimFarProbe\");\nfar.transform.position = new Vector3(-1000000f, -1000000f, 0f);\nfar.AddComponent<SpriteRenderer>().sprite = sprite;\nvar bare = new GameObject(\"UimBareProbe\");\nbare.transform.position = shot.transform.position;\nvar hidden = new GameObject(\"UimHiddenProbe\");\nhidden.transform.position = shot.transform.position;\nhidden.AddComponent<SpriteRenderer>().sprite = sprite;\nhidden.SetActive(false);\nreturn \"screenshot probes created above the bro at \" + c.X + \",\" + c.Y;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "screenshot probes created"
+        ]
+      }
+    },
+    {
+      "command": "take_screenshot",
+      "params": {
+        "highlight": "/UimShotProbe"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"highlighted\": {",
+          "\"highlightError\": null",
+          ".png",
+          "\"width\": 16",
+          "\"height\": 16"
+        ]
+      }
+    },
+    {
+      "command": "take_screenshot",
+      "params": {
+        "highlight": "/UimFarProbe"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"highlighted\": null",
+          "'UimFarProbe' is off-screen, so no outline would be visible in the capture",
+          ".png"
+        ]
+      }
+    },
+    {
+      "command": "take_screenshot",
+      "params": {
+        "highlight": "/UimBareProbe"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"highlighted\": null",
+          "'UimBareProbe' has no enabled renderer with bounds, no enabled collider",
+          ".png"
+        ]
+      }
+    },
+    {
+      "command": "take_screenshot",
+      "params": {
+        "highlight": "/UimHiddenProbe"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"highlighted\": null",
+          "'UimHiddenProbe' is inactive, so it is not in the captured frame",
+          ".png"
+        ]
+      }
+    },
+    {
+      "command": "take_screenshot",
+      "params": {
+        "highlight": "/NoSuchThing"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"highlighted\": null",
+          "GameObject not found: /NoSuchThing",
+          ".png"
+        ]
+      }
+    },
+    {
+      "command": "take_screenshot",
+      "params": {
+        "highlight": ""
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"highlighted\": null",
+          "highlight is an empty GameObject path",
+          ".png"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar state = d.GetData(\"uimtest.highlightInside\") as string;\nif (state == \"pending\") return \"pending\";\nif (state != null) { d.SetData(\"uimtest.highlightInside\", null); return state; }\nCamera cam = CameraController.MainCam;\nif (cam == null) cam = Camera.main;\nfloat depth = Mathf.Abs(cam.transform.position.z);\nVector3 lo = cam.ViewportToWorldPoint(new Vector3(0f, 0f, depth));\nVector3 hi = cam.ViewportToWorldPoint(new Vector3(1f, 1f, depth));\nfloat vw = hi.x - lo.x;\nfloat cx = Mathf.Round((lo.x + hi.x) / 2f), cy = Mathf.Round((lo.y + hi.y) / 2f);\nfloat x = cx - 20f, y = cy - 20f, w = 40f, h = 40f;\nfloat ex = x, ey = y, ew = w, eh = h;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nd.SetData(\"uimtest.highlightInside.params\", \"{\\\"x\\\":\" + x.ToString(ic) + \",\\\"y\\\":\" + y.ToString(ic) + \",\\\"width\\\":\" + w.ToString(ic) + \",\\\"height\\\":\" + h.ToString(ic) + \"}\");\nd.SetData(\"uimtest.highlightInside.expected\", ex.ToString(ic) + \"|\" + ey.ToString(ic) + \"|\" + ew.ToString(ic) + \"|\" + eh.ToString(ic));\nd.SetData(\"uimtest.highlightInside\", \"pending\");\nnew System.Threading.Thread(() => {\n  var dom = System.AppDomain.CurrentDomain;\n  string outcome;\n  try {\n    var ci = System.Globalization.CultureInfo.InvariantCulture;\n    var want = ((string)dom.GetData(\"uimtest.highlightInside.expected\")).Split('|');\n    var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"highlight-rect\\\",\\\"method\\\":\\\"take_screenshot\\\",\\\"params\\\":{\\\"highlight\\\":\" + (string)dom.GetData(\"uimtest.highlightInside.params\") + \"}}\", null));\n    var result = reply[\"result\"];\n    var hl = result[\"highlighted\"];\n    bool drawn = hl != null && hl.Type == Newtonsoft.Json.Linq.JTokenType.Object\n      && (float)hl[\"x\"] == float.Parse(want[0], ci) && (float)hl[\"y\"] == float.Parse(want[1], ci)\n      && (float)hl[\"width\"] == float.Parse(want[2], ci) && (float)hl[\"height\"] == float.Parse(want[3], ci);\n    var err = result[\"highlightError\"];\n    bool png = result[\"path\"] != null && result[\"path\"].ToString().EndsWith(\".png\");\n    outcome = \"highlight inside the view: drawn=\" + drawn + \" error=\" + (err == null || err.Type == Newtonsoft.Json.Linq.JTokenType.Null ? \"none\" : err.ToString()) + \" png=\" + png + \" reply=\" + (drawn ? \"\" : result.ToString(Newtonsoft.Json.Formatting.None));\n  } catch (System.Exception e) { outcome = \"highlight inside the view: failed \" + e.Message; }\n  dom.SetData(\"uimtest.highlightInside\", outcome);\n}).Start();\nreturn \"pending\";"
+      },
+      "until": {
+        "timeout": 30,
+        "interval": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "highlight inside the view: drawn=True error=none png=True"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar state = d.GetData(\"uimtest.highlightWide\") as string;\nif (state == \"pending\") return \"pending\";\nif (state != null) { d.SetData(\"uimtest.highlightWide\", null); return state; }\nCamera cam = CameraController.MainCam;\nif (cam == null) cam = Camera.main;\nfloat depth = Mathf.Abs(cam.transform.position.z);\nVector3 lo = cam.ViewportToWorldPoint(new Vector3(0f, 0f, depth));\nVector3 hi = cam.ViewportToWorldPoint(new Vector3(1f, 1f, depth));\nfloat vw = hi.x - lo.x;\nfloat cx = Mathf.Round((lo.x + hi.x) / 2f), cy = Mathf.Round((lo.y + hi.y) / 2f);\nfloat x = Mathf.Floor(lo.x) - 1000f, y = cy - 5f, w = 1000f + Mathf.Round(vw / 2f), h = 10f;\nfloat ex = x, ey = y, ew = w, eh = h;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nd.SetData(\"uimtest.highlightWide.params\", \"{\\\"x\\\":\" + x.ToString(ic) + \",\\\"y\\\":\" + y.ToString(ic) + \",\\\"width\\\":\" + w.ToString(ic) + \",\\\"height\\\":\" + h.ToString(ic) + \"}\");\nd.SetData(\"uimtest.highlightWide.expected\", ex.ToString(ic) + \"|\" + ey.ToString(ic) + \"|\" + ew.ToString(ic) + \"|\" + eh.ToString(ic));\nd.SetData(\"uimtest.highlightWide\", \"pending\");\nnew System.Threading.Thread(() => {\n  var dom = System.AppDomain.CurrentDomain;\n  string outcome;\n  try {\n    var ci = System.Globalization.CultureInfo.InvariantCulture;\n    var want = ((string)dom.GetData(\"uimtest.highlightWide.expected\")).Split('|');\n    var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"highlight-rect\\\",\\\"method\\\":\\\"take_screenshot\\\",\\\"params\\\":{\\\"highlight\\\":\" + (string)dom.GetData(\"uimtest.highlightWide.params\") + \"}}\", null));\n    var result = reply[\"result\"];\n    var hl = result[\"highlighted\"];\n    bool drawn = hl != null && hl.Type == Newtonsoft.Json.Linq.JTokenType.Object\n      && (float)hl[\"x\"] == float.Parse(want[0], ci) && (float)hl[\"y\"] == float.Parse(want[1], ci)\n      && (float)hl[\"width\"] == float.Parse(want[2], ci) && (float)hl[\"height\"] == float.Parse(want[3], ci);\n    var err = result[\"highlightError\"];\n    bool png = result[\"path\"] != null && result[\"path\"].ToString().EndsWith(\".png\");\n    outcome = \"highlight partly off the view: drawn=\" + drawn + \" error=\" + (err == null || err.Type == Newtonsoft.Json.Linq.JTokenType.Null ? \"none\" : err.ToString()) + \" png=\" + png + \" reply=\" + (drawn ? \"\" : result.ToString(Newtonsoft.Json.Formatting.None));\n  } catch (System.Exception e) { outcome = \"highlight partly off the view: failed \" + e.Message; }\n  dom.SetData(\"uimtest.highlightWide\", outcome);\n}).Start();\nreturn \"pending\";"
+      },
+      "until": {
+        "timeout": 30,
+        "interval": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "highlight partly off the view: drawn=True error=none png=True"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar state = d.GetData(\"uimtest.highlightNegative\") as string;\nif (state == \"pending\") return \"pending\";\nif (state != null) { d.SetData(\"uimtest.highlightNegative\", null); return state; }\nCamera cam = CameraController.MainCam;\nif (cam == null) cam = Camera.main;\nfloat depth = Mathf.Abs(cam.transform.position.z);\nVector3 lo = cam.ViewportToWorldPoint(new Vector3(0f, 0f, depth));\nVector3 hi = cam.ViewportToWorldPoint(new Vector3(1f, 1f, depth));\nfloat vw = hi.x - lo.x;\nfloat cx = Mathf.Round((lo.x + hi.x) / 2f), cy = Mathf.Round((lo.y + hi.y) / 2f);\nfloat x = cx + 20f, y = cy + 20f, w = -40f, h = -40f;\nfloat ex = cx - 20f, ey = cy - 20f, ew = 40f, eh = 40f;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nd.SetData(\"uimtest.highlightNegative.params\", \"{\\\"x\\\":\" + x.ToString(ic) + \",\\\"y\\\":\" + y.ToString(ic) + \",\\\"width\\\":\" + w.ToString(ic) + \",\\\"height\\\":\" + h.ToString(ic) + \"}\");\nd.SetData(\"uimtest.highlightNegative.expected\", ex.ToString(ic) + \"|\" + ey.ToString(ic) + \"|\" + ew.ToString(ic) + \"|\" + eh.ToString(ic));\nd.SetData(\"uimtest.highlightNegative\", \"pending\");\nnew System.Threading.Thread(() => {\n  var dom = System.AppDomain.CurrentDomain;\n  string outcome;\n  try {\n    var ci = System.Globalization.CultureInfo.InvariantCulture;\n    var want = ((string)dom.GetData(\"uimtest.highlightNegative.expected\")).Split('|');\n    var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"highlight-rect\\\",\\\"method\\\":\\\"take_screenshot\\\",\\\"params\\\":{\\\"highlight\\\":\" + (string)dom.GetData(\"uimtest.highlightNegative.params\") + \"}}\", null));\n    var result = reply[\"result\"];\n    var hl = result[\"highlighted\"];\n    bool drawn = hl != null && hl.Type == Newtonsoft.Json.Linq.JTokenType.Object\n      && (float)hl[\"x\"] == float.Parse(want[0], ci) && (float)hl[\"y\"] == float.Parse(want[1], ci)\n      && (float)hl[\"width\"] == float.Parse(want[2], ci) && (float)hl[\"height\"] == float.Parse(want[3], ci);\n    var err = result[\"highlightError\"];\n    bool png = result[\"path\"] != null && result[\"path\"].ToString().EndsWith(\".png\");\n    outcome = \"highlight with a negative size: drawn=\" + drawn + \" error=\" + (err == null || err.Type == Newtonsoft.Json.Linq.JTokenType.Null ? \"none\" : err.ToString()) + \" png=\" + png + \" reply=\" + (drawn ? \"\" : result.ToString(Newtonsoft.Json.Formatting.None));\n  } catch (System.Exception e) { outcome = \"highlight with a negative size: failed \" + e.Message; }\n  dom.SetData(\"uimtest.highlightNegative\", outcome);\n}).Start();\nreturn \"pending\";"
+      },
+      "until": {
+        "timeout": 30,
+        "interval": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "highlight with a negative size: drawn=True error=none png=True"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "take_screenshot",
+      "params": {
+        "highlight": {
+          "x": -1000000,
+          "y": -1000000,
+          "width": 40,
+          "height": 40
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"highlighted\": null",
+          "the highlight rectangle is off-screen, so no outline would be visible in the capture",
+          ".png"
+        ]
+      }
+    },
+    {
+      "command": "take_screenshot",
+      "params": {
+        "highlight": {
+          "x": 770,
+          "y": 480,
+          "width": 40
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"highlighted\": null",
+          "highlight rectangle has no 'height' - it needs x, y, width and height in world units",
+          ".png"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "System.AppDomain.CurrentDomain.SetData(\"unityInspectorHighlightTypes\", null);\nnew System.Threading.Thread(() => {\n  var replies = new System.Collections.Generic.List<string>();\n  foreach (var highlight in new string[] { \"5\", \"[770,480,40,40]\", \"true\" })\n    replies.Add(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"highlight-type\\\",\\\"method\\\":\\\"take_screenshot\\\",\\\"params\\\":{\\\"highlight\\\":\" + highlight + \"}}\", null));\n  System.AppDomain.CurrentDomain.SetData(\"unityInspectorHighlightTypes\", string.Join(\"\\n\", replies.ToArray()));\n}).Start();\nreturn \"started\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "started"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var all = System.AppDomain.CurrentDomain.GetData(\"unityInspectorHighlightTypes\") as string;\nif (all == null) return \"pending\";\nvar rows = new System.Collections.Generic.List<string>();\nforeach (var line in all.Split('\\n')) {\n  var result = Newtonsoft.Json.Linq.JObject.Parse(line)[\"result\"];\n  bool png = result[\"path\"] != null && result[\"path\"].ToString().EndsWith(\".png\");\n  rows.Add(result[\"highlighted\"].Type + \"|\" + result[\"highlightError\"] + \"|png=\" + png);\n}\nreturn rows.Count + \" replies, \" + new System.Collections.Generic.HashSet<string>(rows).Count + \" distinct\\n\" + string.Join(\"\\n\", rows.ToArray());"
+      },
+      "until": {
+        "timeout": 30,
+        "interval": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "3 replies, 1 distinct",
+          "Null|highlight must be a GameObject path, an object with an instanceId, or a rectangle with x, y, width and height|png=True"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "System.AppDomain.CurrentDomain.SetData(\"unityInspectorHighlightTypes\", null);\nreturn \"cleared\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "cleared"
+        ]
+      }
+    },
+    {
+      "command": "take_screenshot",
+      "params": {
+        "highlight": null
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"highlighted\": null",
+          "\"highlightError\": null",
+          ".png"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "new GameObject(\"UimLevelMarker\");\nreturn \"marker placed in \" + GameState.Instance.campaignName + \" level index \" + LevelSelectionController.CurrentLevelNum;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "marker placed in WM_Intro(mouse) level index 1"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class UimBusyHold : MonoBehaviour\n{\n    public int Ms;\n\n    void Update()\n    {\n        int ms = Ms;\n        Ms = 0;\n        if (ms <= 0) return;\n        Destroy(gameObject);\n        System.Threading.Thread.Sleep(ms);\n    }\n}\nnew GameObject(\"UimBusyHold\").AddComponent<UimBusyHold>().Ms = 6000;\nreturn \"main thread held for 6000 ms from the next frame\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "main thread held for 6000 ms"
+        ]
+      },
+      "wait": 300
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 0,
+        "levelIndex": 0
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Main thread action timed out after 3000ms",
+          "\"mainThreadAnswered\": false"
+        ],
+        "notContains": [
+          "Internal error",
+          "stackTrace"
+        ]
+      },
+      "wait": 6000
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"scene\": \"Test Evan2\"",
+          "\"campaignName\": \"WM_Intro(mouse)\"",
+          "\"levelIndex\": 1",
+          "\"levelNumber\": 2",
+          "\"isInGame\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var mk = GameObject.Find(\"UimLevelMarker\");\nif (mk != null) UnityEngine.Object.Destroy(mk);\nreturn \"level index \" + LevelSelectionController.CurrentLevelNum + \", marker \" + (mk != null ? \"kept: the level was not reloaded\" : \"gone: the level was reloaded\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "level index 1, marker kept"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "GameState.LoadLevel(LevelSelectionController.MainMenuScene);\nreturn \"loading the main menu\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "loading the main menu"
+        ]
+      },
+      "wait": 5000
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"scene\": \"MainMenu\""
+        ]
+      }
+    },
+    {
+      "command": "restart_level",
+      "params": {},
+      "expect": {
+        "success": false,
+        "contains": [
+          "Cannot restart: no level is being played - the main menu (MainMenu) is showing",
+          "\"scene\": \"MainMenu\""
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"scene\": \"MainMenu\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar slots = PlayerProgress.Instance.saveSlots;\nstring rec = \"\";\nfor (int i = 0; i < slots.Length; i++) rec += slots[i] == null ? \"n\" : (slots[i].worldMapIsHardcoreCampaign ? \"1\" : \"0\");\nif (d.GetData(\"uimtest.slots\") == null) d.SetData(\"uimtest.slots\", rec);\nfor (int i = 0; i < slots.Length; i++) if (slots[i] != null) slots[i].worldMapIsHardcoreCampaign = true;\nreturn \"every save slot an IronBro run, was \" + rec;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "every save slot an IronBro run"
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 0,
+        "levelIndex": 1
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "\"reason\": \"no-save-slot\"",
+          "IronBro"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar rec = d.GetData(\"uimtest.slots\") as string;\nd.SetData(\"uimtest.slots\", null);\nvar slots = PlayerProgress.Instance.saveSlots;\nfor (int i = 0; rec != null && i < slots.Length && i < rec.Length; i++) if (slots[i] != null && rec[i] != 'n') slots[i].worldMapIsHardcoreCampaign = rec[i] == '1';\nreturn \"save slots restored, scene \" + UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "save slots restored, scene MainMenu"
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 0,
+        "levelIndex": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Loaded WM_Intro(mouse) - Level 2",
+          "\"loaded\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var g = new GameObject(\"UimPersistProbe\");\nUnityEngine.Object.DontDestroyOnLoad(g);\nPauseController.SetPause(PauseStatus.MenuPause);\nreturn \"pause=\" + PauseController.pauseStatus + \" probe active=\" + g.activeSelf;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "pause=MenuPause probe active=False"
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 0,
+        "levelIndex": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Loaded WM_Intro(mouse) - Level 2",
+          "\"loaded\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "GameObject g = null;\nforeach (var tr in Resources.FindObjectsOfTypeAll<Transform>()) if (tr != null && tr.parent == null && tr.name == \"UimPersistProbe\") g = tr.gameObject;\nreturn g == null ? \"probe gone\" : \"pause=\" + PauseController.pauseStatus + \" probe active=\" + g.activeSelf + \" cutscene=\" + CutsceneController.InCutscene;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "pause=UnPaused probe active=True cutscene=False"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "CutsceneController.LoadCutScene(CutsceneName.Rambro, 0f);\nGameObject g = null;\nforeach (var tr in Resources.FindObjectsOfTypeAll<Transform>()) if (tr != null && tr.parent == null && tr.name == \"UimPersistProbe\") g = tr.gameObject;\nreturn \"cutscene=\" + CutsceneController.InCutscene + \" pause=\" + PauseController.pauseStatus + \" probe active=\" + (g != null && g.activeSelf);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "cutscene=True pause=CutscenePause probe active=False"
+        ]
+      }
+    },
+    {
+      "command": "restart_level",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"scene\": \"Test Evan2\"",
+          "\"loaded\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "GameObject g = null;\nforeach (var tr in Resources.FindObjectsOfTypeAll<Transform>()) if (tr != null && tr.parent == null && tr.name == \"UimPersistProbe\") g = tr.gameObject;\nstring state = g == null ? \"probe gone\" : \"pause=\" + PauseController.pauseStatus + \" probe active=\" + g.activeSelf + \" cutscene=\" + CutsceneController.InCutscene;\nif (g != null) UnityEngine.Object.Destroy(g);\nreturn state;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "pause=UnPaused probe active=True cutscene=False"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "GameModeController.LevelFinish(LevelResult.Success);\nUnityEngine.Time.timeScale = 0f;\nreturn \"levelFinished=\" + GameModeController.IsLevelFinished();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "levelFinished=True"
+        ]
+      }
+    },
+    {
+      "command": "teleport_player",
+      "params": {
+        "x": 784,
+        "y": 408
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Cannot teleport: no level is being played - the level has finished",
+          "\"reason\": \"no-level\""
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Mook",
+        "x": 800,
+        "y": 520,
+        "ignoreSuppression": true
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Cannot spawn: no level is being played - the level has finished",
+          "\"reason\": \"no-level\""
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"isInGame\": false",
+          "\"levelFinished\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;\nvar gmc = GameModeController.Instance;\nd.SetData(\"uimtest.switching\", \"1\");\nGameModeController.LevelFinished = false;\ntypeof(GameModeController).GetField(\"switchLevelDelay\", fl).SetValue(gmc, 1000f);\ntypeof(GameModeController).GetField(\"switchingLevel\", fl).SetValue(gmc, true);\nreturn \"switching=\" + GameModeController.InSwitchingScenesPhase() + \" finished=\" + GameModeController.IsLevelFinished();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "switching=True finished=False"
+        ]
+      }
+    },
+    {
+      "command": "teleport_player",
+      "params": {
+        "x": 784,
+        "y": 408
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Cannot teleport: no level is being played - the game is switching to the next scene",
+          "\"reason\": \"no-level\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;\nvar gmc = GameModeController.Instance;\ntypeof(GameModeController).GetField(\"switchingLevel\", fl).SetValue(gmc, false);\ntypeof(GameModeController).GetField(\"switchLevelDelay\", fl).SetValue(gmc, 1.5f);\nd.SetData(\"uimtest.switching\", null);\nd.SetData(\"uimtest.fade\", \"1\");\nFader.instance.fadingBlack = true;\nreturn \"switching=\" + GameModeController.InSwitchingScenesPhase() + \" fading=\" + Fader.instance.fadingBlack;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "switching=False fading=True"
+        ]
+      }
+    },
+    {
+      "command": "set_player_health",
+      "params": {
+        "health": 5
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Cannot set health: no level is being played - the screen is fading to another scene",
+          "\"reason\": \"no-level\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nFader.instance.fadingBlack = false;\nd.SetData(\"uimtest.fade\", null);\nUnityEngine.Time.timeScale = 1f;\nreturn \"fade cleared, speed 1\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "fade cleared, speed 1"
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 0,
+        "levelIndex": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Loaded WM_Intro(mouse) - Level 2",
+          "\"loaded\": true"
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 17,
+        "levelIndex": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Loaded Challenge_Ammo - Level 1",
+          "\"loaded\": true"
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 18,
+        "levelIndex": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Loaded Challenge_Dash - Level 1",
+          "\"loaded\": true"
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 19,
+        "levelIndex": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Loaded Challenge_Mech1 - Level 1",
+          "\"loaded\": true"
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 20,
+        "levelIndex": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Loaded Challenge_MacBrover - Level 1",
+          "\"loaded\": true"
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 21,
+        "levelIndex": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Loaded Challenge_TimeBro - Level 1",
+          "\"loaded\": true"
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 22,
+        "levelIndex": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Loaded MuscleTemple_1 - Level 1",
+          "\"loaded\": true"
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 23,
+        "levelIndex": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Loaded MuscleTemple_2 - Level 1",
+          "\"loaded\": true"
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 24,
+        "levelIndex": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Loaded MuscleTemple_3 - Level 1",
+          "\"loaded\": true"
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 25,
+        "levelIndex": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Loaded MuscleTemple_4 - Level 1",
+          "\"loaded\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"go_to_level\\\",\\\"params\\\":{\\\"campaignIndex\\\":1.5,\\\"levelIndex\\\":0}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "False|campaignIndex must be an integer, got 1.5"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Indiana Brones",
+        "nextSpawn": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"nextBro\": \"Indiana Brones\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar pp = PlayerProgress.Instance;\nif (d.GetData(\"uimtest.intro\") == null) {\n  var was = new System.Collections.Generic.List<string>();\n  foreach (var h in pp.yetToBePlayedUnlockedHeroes) was.Add(h.ToString());\n  d.SetData(\"uimtest.intro\", pp.unlockedHeroes.IndexOf(HeroType.IndianaBrones) + \":\" + string.Join(\",\", was.ToArray()));\n}\npp.unlockedHeroes.Remove(HeroType.IndianaBrones);\nif (!pp.yetToBePlayedUnlockedHeroes.Contains(HeroType.IndianaBrones)) pp.yetToBePlayedUnlockedHeroes.Add(HeroType.IndianaBrones);\nreturn \"intro armed: unlocked=\" + pp.unlockedHeroes.Contains(HeroType.IndianaBrones) + \" yet=\" + pp.yetToBePlayedUnlockedHeroes.Contains(HeroType.IndianaBrones);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "intro armed: unlocked=False yet=True"
+        ]
+      }
+    },
+    {
+      "command": "go_to_level",
+      "params": {
+        "campaignIndex": 1,
+        "levelIndex": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Loaded WM_Mission1(mouse) - Level 1",
+          "\"loaded\": true",
+          "\"cutscene\": \"CutscenePause\"",
+          "simulate_input with action start skips it"
+        ]
+      },
+      "wait": 1500
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"pauseState\": \"CutscenePause\"",
+          "\"heroType\": \"IndianaBrones\"",
+          "\"state\": \"arriving\""
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "start"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 20,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"pauseState\": \"UnPaused\"",
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar pp = PlayerProgress.Instance;\nif (d.GetData(\"uimtest.intro\") == null) {\n  var was = new System.Collections.Generic.List<string>();\n  foreach (var h in pp.yetToBePlayedUnlockedHeroes) was.Add(h.ToString());\n  d.SetData(\"uimtest.intro\", pp.unlockedHeroes.IndexOf(HeroType.IndianaBrones) + \":\" + string.Join(\",\", was.ToArray()));\n}\npp.unlockedHeroes.Remove(HeroType.IndianaBrones);\nif (!pp.yetToBePlayedUnlockedHeroes.Contains(HeroType.IndianaBrones)) pp.yetToBePlayedUnlockedHeroes.Add(HeroType.IndianaBrones);\nreturn \"intro armed: unlocked=\" + pp.unlockedHeroes.Contains(HeroType.IndianaBrones) + \" yet=\" + pp.yetToBePlayedUnlockedHeroes.Contains(HeroType.IndianaBrones);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "intro armed: unlocked=False yet=True"
+        ]
+      }
+    },
+    {
+      "command": "restart_level",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"loaded\": true",
+          "\"cutscene\": \"CutscenePause\"",
+          "simulate_input with action start skips it"
+        ]
+      },
+      "wait": 1500
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"pauseState\": \"CutscenePause\""
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "start"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 20,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"pauseState\": \"UnPaused\"",
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "escape"
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 1000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nstring log = \"\";\ntry { if (PauseController.pauseStatus != PauseStatus.UnPaused) { PauseController.SetPause(PauseStatus.UnPaused); log += \"unpaused \"; } } catch (System.Exception ex) { log += \"unpause failed: \" + ex.Message + \" \"; }\nif (UnityEngine.Time.timeScale != 1f) { UnityEngine.Time.timeScale = 1f; log += \"speed1 \"; }\ntry { if (d.GetData(\"uimtest.joined\") != null && HeroController.IsPlaying(1)) { HeroController.Dropout(1, false); log += \"dropped1 \"; } } catch (System.Exception ex) { log += \"dropout failed: \" + ex.Message + \" \"; }\nd.SetData(\"uimtest.joined\", null);\nvar hc = d.GetData(\"uimtest.ironbro\") as string;\nd.SetData(\"uimtest.ironbro\", null);\ntry {\n  var save = GameState.Instance.currentWorldmapSave;\n  if (hc != null && save != null) {\n    var parts = hc.Split(':');\n    save.worldMapIsHardcoreCampaign = parts[0] == \"1\";\n    save.hardcoreLives = int.Parse(parts[1]);\n    save.hardcoreModeAvailableBros.Clear();\n    foreach (var n in parts[2].Split(',')) if (n.Length > 0) save.hardcoreModeAvailableBros.Add((HeroType)System.Enum.Parse(typeof(HeroType), n));\n    log += \"ironbro-restored \";\n  }\n} catch (System.Exception ex) { log += \"ironbro restore failed: \" + ex.Message + \" \"; }\nvar lk = d.GetData(\"uimtest.lock\") as string;\nd.SetData(\"uimtest.lock\", null);\ntry {\n  if (lk != null) {\n    var fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\n    var t = System.Type.GetType(\"BroMakerLib.Unlocks.BroUnlockManager, BroMakerLib\");\n    var pd = t.GetField(\"progressData\", fl).GetValue(null);\n    var states = pd.GetType().GetProperty(\"BroStates\").GetValue(pd, null) as System.Collections.IDictionary;\n    var st = states[lk];\n    st.GetType().GetProperty(\"IsUnlocked\").SetValue(st, true, null);\n    st.GetType().GetProperty(\"UnlockedDate\").SetValue(st, d.GetData(\"uimtest.lock.date\"), null);\n    var names = t.GetProperty(\"UnlockedBroNames\", fl).GetValue(null, null) as System.Collections.Generic.List<string>;\n    var bros = t.GetProperty(\"UnlockedBros\", fl).GetValue(null, null) as System.Collections.IList;\n    int ni = (int)d.GetData(\"uimtest.lock.ni\"); if (ni < 0 || ni > names.Count) ni = names.Count;\n    if (!names.Contains(lk)) names.Insert(ni, lk);\n    var hero = d.GetData(\"uimtest.lock.hero\");\n    int hi = (int)d.GetData(\"uimtest.lock.hi\"); if (hi < 0 || hi > bros.Count) hi = bros.Count;\n    if (hero != null && !bros.Contains(hero)) bros.Insert(hi, hero);\n    typeof(BroMakerLib.Storages.BroSpawnManager).GetMethod(\"BroStatusChanged\", fl).Invoke(null, null);\n    log += \"unlocked \" + lk + \" \";\n  }\n} catch (System.Exception ex) { log += \"unlock failed: \" + ex.Message + \" \"; }\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); set.selGridInt[i] = ix < 0 ? 0 : ix; }\n    log += \"swap-settings-restored \";\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\nvar sl = d.GetData(\"uimtest.slots\") as string;\nd.SetData(\"uimtest.slots\", null);\ntry {\n  if (sl != null) {\n    var slots = PlayerProgress.Instance.saveSlots;\n    for (int i = 0; i < slots.Length && i < sl.Length; i++) if (slots[i] != null && sl[i] != 'n') slots[i].worldMapIsHardcoreCampaign = sl[i] == '1';\n    log += \"save-slots-restored \";\n  }\n} catch (System.Exception ex) { log += \"save slot restore failed: \" + ex.Message + \" \"; }\ntry {\n  if (d.GetData(\"uimtest.fade\") != null && Fader.instance != null) { Fader.instance.fadingBlack = false; log += \"fade-cleared \"; }\n  d.SetData(\"uimtest.fade\", null);\n  if (d.GetData(\"uimtest.switching\") != null && GameModeController.Instance != null) {\n    var gf = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;\n    typeof(GameModeController).GetField(\"switchingLevel\", gf).SetValue(GameModeController.Instance, false);\n    typeof(GameModeController).GetField(\"switchLevelDelay\", gf).SetValue(GameModeController.Instance, 1.5f);\n    log += \"switching-cleared \";\n  }\n  d.SetData(\"uimtest.switching\", null);\n} catch (System.Exception ex) { log += \"transition flag restore failed: \" + ex.Message + \" \"; }\nvar intro = d.GetData(\"uimtest.intro\") as string;\nd.SetData(\"uimtest.intro\", null);\ntry {\n  if (intro != null) {\n    var pp = PlayerProgress.Instance;\n    var ip = intro.Split(':');\n    int at = int.Parse(ip[0]);\n    pp.unlockedHeroes.Remove(HeroType.IndianaBrones);\n    if (at >= 0) pp.unlockedHeroes.Insert(System.Math.Min(at, pp.unlockedHeroes.Count), HeroType.IndianaBrones);\n    pp.yetToBePlayedUnlockedHeroes.Clear();\n    foreach (var n in ip[1].Split(',')) if (n.Length > 0) pp.yetToBePlayedUnlockedHeroes.Add((HeroType)System.Enum.Parse(typeof(HeroType), n));\n    log += \"intro-restored \";\n  }\n} catch (System.Exception ex) { log += \"intro restore failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "intro-restored"
+        ],
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nvar fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\nstring log = \"\";\nvar ums = d.GetData(\"uimtest.u3.ums\") as string;\nd.SetData(\"uimtest.u3.ums\", null);\ntry {\n  if (ums != null) {\nSystem.Type um = null;\nforeach (var a in System.AppDomain.CurrentDomain.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\nvar umEnabled = um.GetField(\"enabled\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);\nvar umSettings = um.GetField(\"settings\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null);\nvar umDisable = umSettings.GetType().GetField(\"disableEnemySpawn\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\n    var p = ums.Split('|');\n    umEnabled.SetValue(null, p[0] == \"True\");\n    umDisable.SetValue(umSettings, p[1] == \"True\");\n    log += \"utility-mod-restored \";\n  }\n} catch (System.Exception ex) { log += \"utility mod restore failed: \" + ex.Message + \" \"; }\nvar hcs = d.GetData(\"uimtest.u3.hc\") as string;\nd.SetData(\"uimtest.u3.hc\", null);\ntry {\n  if (hcs != null) {\n    var p = hcs.Split('|');\n    HeroController.mustShowHUDS = p[0] == \"True\";\n    typeof(HeroController).GetField(\"doubleBroSevenAvatarCount\", fl).SetValue(null, int.Parse(p[1], ic));\n    var hc = UnityEngine.Object.FindObjectOfType<HeroController>();\n    if (hc != null) {\n      var ifl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance;\n      typeof(HeroController).GetField(\"explosivesCounter\", ifl).SetValue(hc, float.Parse(p[2], ic));\n      var c = p[3].Split(',');\n      hc.infoBarColor = new Color(float.Parse(c[0], ic), float.Parse(c[1], ic), float.Parse(c[2], ic), float.Parse(c[3], ic));\n      var ds = p[4].Split(',');\n      var arr = new float[ds.Length];\n      for (int i = 0; i < ds.Length; i++) arr[i] = float.Parse(ds[i], ic);\n      typeof(HeroController).GetField(\"suicideBroSpawnDelay\", ifl).SetValue(hc, arr);\n    }\n    log += \"hero-controller-restored \";\n  }\n} catch (System.Exception ex) { log += \"hero controller restore failed: \" + ex.Message + \" \"; }\ntry {\n  string dropped = \"\";\n  for (int i = 1; i < 4; i++) if (HeroController.IsPlaying(i)) { HeroController.Dropout(i, false); dropped += i; }\n  if (dropped.Length > 0) log += \"dropped-in-players-removed=\" + dropped + \" \";\n} catch (System.Exception ex) { log += \"drop-in removal failed: \" + ex.Message + \" \"; }\ntry {\n  string[] probes = { \"UimProbe\", \"UimDup\", \"UimInactive\", \"UimConstHolder\", \"UimShotProbe\", \"UimFarProbe\", \"UimBareProbe\", \"UimHiddenProbe\", \"UimPersistProbe\" };\n  int gone = 0;\n  foreach (var tr in Resources.FindObjectsOfTypeAll<Transform>()) {\n    if (tr == null || tr.parent != null || !tr.gameObject.scene.IsValid()) continue;\n    if (System.Array.IndexOf(probes, tr.name) < 0) continue;\n    UnityEngine.Object.DestroyImmediate(tr.gameObject);\n    gone++;\n  }\n  if (gone > 0) log += \"probes-destroyed=\" + gone + \" \";\n} catch (System.Exception ex) { log += \"probe cleanup failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar rec = (d.GetData(\"uimtest.level\") as string) ?? \"0|1\";\nd.SetData(\"uimtest.level\", null);\nvar p = rec.Split('|');\nvar r = Unity_Inspector_Mod.StateModifier.GoToLevel(int.Parse(p[0]), int.Parse(p[1]));\nvar j = Newtonsoft.Json.Linq.JToken.FromObject(r);\nreturn \"loading recorded level \" + rec + \": success=\" + j[\"success\"] + \" \" + j.ToString(Newtonsoft.Json.Formatting.None);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "success=True"
+        ]
+      },
+      "wait": 6000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar f = d.GetData(\"uimtest.found\") as string;\nvar set = Swap_Bros_Mod.Main.settings;\nSwap_Bros_Mod.API.EnsureBroListUpdated();\nvar l = Swap_Bros_Mod.Main.currentBroList;\nstring now = set.alwaysChosen + \"|\" + set.ignoreCurrentUnlocked;\nfor (int i = 0; i < 4; i++) now += \"|\" + l[set.selGridInt[i]];\nd.SetData(\"uimtest.found\", null);\nvar c = HeroController.players[0] == null ? null : HeroController.players[0].character;\nreturn \"settings \" + (now == f ? \"match\" : \"differ: found \" + f + \" now \" + now) + \" speed=\" + UnityEngine.Time.timeScale + \" pause=\" + PauseController.pauseStatus + \" p1=\" + HeroController.IsPlaying(1) + \" hc=\" + GameModeController.IsHardcoreMode + \" locked=\" + !BroMakerLib.Storages.BroSpawnManager.IsBroUnlocked(\"Cobro\") + \" scene=\" + UnityEngine.SceneManagement.SceneManager.GetActiveScene().name + \" level=\" + LevelSelectionController.CurrentLevelNum + \" bro=\" + (c == null ? \"none\" : c.name);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "settings match",
+          "speed=1 ",
+          "pause=UnPaused",
+          "p1=False",
+          "hc=False",
+          "locked=False",
+          "scene=Test Evan2"
+        ]
+      }
+    }
+  ],
+  "cleanup": [
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nd.SetData(\"uimtest.found\", null);\nd.SetData(\"uimtest.level\", null);\nstring log = \"\";\ntry { if (PauseController.pauseStatus != PauseStatus.UnPaused) { PauseController.SetPause(PauseStatus.UnPaused); log += \"unpaused \"; } } catch (System.Exception ex) { log += \"unpause failed: \" + ex.Message + \" \"; }\nif (UnityEngine.Time.timeScale != 1f) { UnityEngine.Time.timeScale = 1f; log += \"speed1 \"; }\ntry { if (d.GetData(\"uimtest.joined\") != null && HeroController.IsPlaying(1)) { HeroController.Dropout(1, false); log += \"dropped1 \"; } } catch (System.Exception ex) { log += \"dropout failed: \" + ex.Message + \" \"; }\nd.SetData(\"uimtest.joined\", null);\nvar hc = d.GetData(\"uimtest.ironbro\") as string;\nd.SetData(\"uimtest.ironbro\", null);\ntry {\n  var save = GameState.Instance.currentWorldmapSave;\n  if (hc != null && save != null) {\n    var parts = hc.Split(':');\n    save.worldMapIsHardcoreCampaign = parts[0] == \"1\";\n    save.hardcoreLives = int.Parse(parts[1]);\n    save.hardcoreModeAvailableBros.Clear();\n    foreach (var n in parts[2].Split(',')) if (n.Length > 0) save.hardcoreModeAvailableBros.Add((HeroType)System.Enum.Parse(typeof(HeroType), n));\n    log += \"ironbro-restored \";\n  }\n} catch (System.Exception ex) { log += \"ironbro restore failed: \" + ex.Message + \" \"; }\nvar lk = d.GetData(\"uimtest.lock\") as string;\nd.SetData(\"uimtest.lock\", null);\ntry {\n  if (lk != null) {\n    var fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\n    var t = System.Type.GetType(\"BroMakerLib.Unlocks.BroUnlockManager, BroMakerLib\");\n    var pd = t.GetField(\"progressData\", fl).GetValue(null);\n    var states = pd.GetType().GetProperty(\"BroStates\").GetValue(pd, null) as System.Collections.IDictionary;\n    var st = states[lk];\n    st.GetType().GetProperty(\"IsUnlocked\").SetValue(st, true, null);\n    st.GetType().GetProperty(\"UnlockedDate\").SetValue(st, d.GetData(\"uimtest.lock.date\"), null);\n    var names = t.GetProperty(\"UnlockedBroNames\", fl).GetValue(null, null) as System.Collections.Generic.List<string>;\n    var bros = t.GetProperty(\"UnlockedBros\", fl).GetValue(null, null) as System.Collections.IList;\n    int ni = (int)d.GetData(\"uimtest.lock.ni\"); if (ni < 0 || ni > names.Count) ni = names.Count;\n    if (!names.Contains(lk)) names.Insert(ni, lk);\n    var hero = d.GetData(\"uimtest.lock.hero\");\n    int hi = (int)d.GetData(\"uimtest.lock.hi\"); if (hi < 0 || hi > bros.Count) hi = bros.Count;\n    if (hero != null && !bros.Contains(hero)) bros.Insert(hi, hero);\n    typeof(BroMakerLib.Storages.BroSpawnManager).GetMethod(\"BroStatusChanged\", fl).Invoke(null, null);\n    log += \"unlocked \" + lk + \" \";\n  }\n} catch (System.Exception ex) { log += \"unlock failed: \" + ex.Message + \" \"; }\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); set.selGridInt[i] = ix < 0 ? 0 : ix; }\n    log += \"swap-settings-restored \";\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\nvar sl = d.GetData(\"uimtest.slots\") as string;\nd.SetData(\"uimtest.slots\", null);\ntry {\n  if (sl != null) {\n    var slots = PlayerProgress.Instance.saveSlots;\n    for (int i = 0; i < slots.Length && i < sl.Length; i++) if (slots[i] != null && sl[i] != 'n') slots[i].worldMapIsHardcoreCampaign = sl[i] == '1';\n    log += \"save-slots-restored \";\n  }\n} catch (System.Exception ex) { log += \"save slot restore failed: \" + ex.Message + \" \"; }\ntry {\n  if (d.GetData(\"uimtest.fade\") != null && Fader.instance != null) { Fader.instance.fadingBlack = false; log += \"fade-cleared \"; }\n  d.SetData(\"uimtest.fade\", null);\n  if (d.GetData(\"uimtest.switching\") != null && GameModeController.Instance != null) {\n    var gf = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;\n    typeof(GameModeController).GetField(\"switchingLevel\", gf).SetValue(GameModeController.Instance, false);\n    typeof(GameModeController).GetField(\"switchLevelDelay\", gf).SetValue(GameModeController.Instance, 1.5f);\n    log += \"switching-cleared \";\n  }\n  d.SetData(\"uimtest.switching\", null);\n} catch (System.Exception ex) { log += \"transition flag restore failed: \" + ex.Message + \" \"; }\nvar intro = d.GetData(\"uimtest.intro\") as string;\nd.SetData(\"uimtest.intro\", null);\ntry {\n  if (intro != null) {\n    var pp = PlayerProgress.Instance;\n    var ip = intro.Split(':');\n    int at = int.Parse(ip[0]);\n    pp.unlockedHeroes.Remove(HeroType.IndianaBrones);\n    if (at >= 0) pp.unlockedHeroes.Insert(System.Math.Min(at, pp.unlockedHeroes.Count), HeroType.IndianaBrones);\n    pp.yetToBePlayedUnlockedHeroes.Clear();\n    foreach (var n in ip[1].Split(',')) if (n.Length > 0) pp.yetToBePlayedUnlockedHeroes.Add((HeroType)System.Enum.Parse(typeof(HeroType), n));\n    log += \"intro-restored \";\n  }\n} catch (System.Exception ex) { log += \"intro restore failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nvar fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\nstring log = \"\";\nvar ums = d.GetData(\"uimtest.u3.ums\") as string;\nd.SetData(\"uimtest.u3.ums\", null);\ntry {\n  if (ums != null) {\nSystem.Type um = null;\nforeach (var a in System.AppDomain.CurrentDomain.GetAssemblies()) if (a.GetName().Name == \"Utility Mod\") um = a.GetType(\"Utility_Mod.Main\");\nvar umEnabled = um.GetField(\"enabled\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);\nvar umSettings = um.GetField(\"settings\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null);\nvar umDisable = umSettings.GetType().GetField(\"disableEnemySpawn\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\n    var p = ums.Split('|');\n    umEnabled.SetValue(null, p[0] == \"True\");\n    umDisable.SetValue(umSettings, p[1] == \"True\");\n    log += \"utility-mod-restored \";\n  }\n} catch (System.Exception ex) { log += \"utility mod restore failed: \" + ex.Message + \" \"; }\nvar hcs = d.GetData(\"uimtest.u3.hc\") as string;\nd.SetData(\"uimtest.u3.hc\", null);\ntry {\n  if (hcs != null) {\n    var p = hcs.Split('|');\n    HeroController.mustShowHUDS = p[0] == \"True\";\n    typeof(HeroController).GetField(\"doubleBroSevenAvatarCount\", fl).SetValue(null, int.Parse(p[1], ic));\n    var hc = UnityEngine.Object.FindObjectOfType<HeroController>();\n    if (hc != null) {\n      var ifl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance;\n      typeof(HeroController).GetField(\"explosivesCounter\", ifl).SetValue(hc, float.Parse(p[2], ic));\n      var c = p[3].Split(',');\n      hc.infoBarColor = new Color(float.Parse(c[0], ic), float.Parse(c[1], ic), float.Parse(c[2], ic), float.Parse(c[3], ic));\n      var ds = p[4].Split(',');\n      var arr = new float[ds.Length];\n      for (int i = 0; i < ds.Length; i++) arr[i] = float.Parse(ds[i], ic);\n      typeof(HeroController).GetField(\"suicideBroSpawnDelay\", ifl).SetValue(hc, arr);\n    }\n    log += \"hero-controller-restored \";\n  }\n} catch (System.Exception ex) { log += \"hero controller restore failed: \" + ex.Message + \" \"; }\ntry {\n  string dropped = \"\";\n  for (int i = 1; i < 4; i++) if (HeroController.IsPlaying(i)) { HeroController.Dropout(i, false); dropped += i; }\n  if (dropped.Length > 0) log += \"dropped-in-players-removed=\" + dropped + \" \";\n} catch (System.Exception ex) { log += \"drop-in removal failed: \" + ex.Message + \" \"; }\ntry {\n  string[] probes = { \"UimProbe\", \"UimDup\", \"UimInactive\", \"UimConstHolder\", \"UimShotProbe\", \"UimFarProbe\", \"UimBareProbe\", \"UimHiddenProbe\", \"UimPersistProbe\" };\n  int gone = 0;\n  foreach (var tr in Resources.FindObjectsOfTypeAll<Transform>()) {\n    if (tr == null || tr.parent != null || !tr.gameObject.scene.IsValid()) continue;\n    if (System.Array.IndexOf(probes, tr.name) < 0) continue;\n    UnityEngine.Object.DestroyImmediate(tr.gameObject);\n    gone++;\n  }\n  if (gone > 0) log += \"probes-destroyed=\" + gone + \" \";\n} catch (System.Exception ex) { log += \"probe cleanup failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    }
+  ]
+}

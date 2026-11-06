@@ -89,6 +89,29 @@ test('launch_game counts a game that refused the hello as running and launches n
   await assert.rejects(fs.access(launchMarker), 'a game that answered was launched a second time');
 });
 
+test('a launch whose inspector refuses the hello ends at once as handshake-refused', { timeout: 30000 }, async (t) => {
+  let hellos = 0;
+  stub.hello = () => (++hellos === 1 ? 'close' : 'refuse');
+  if (process.platform === 'linux') {
+    setProcReader(fakeProcReader({}));
+    t.after(() => setProcReader(null));
+  }
+  const started = Date.now();
+
+  const payload = JSON.parse(textOf(await call('launch_game')));
+  const elapsed = Date.now() - started;
+
+  assert.equal(payload.success, false, payload.message);
+  assert.equal(payload.state, 'handshake-refused', payload.message);
+  assert.equal(payload.alreadyRunning, undefined);
+  assert.match(payload.message, /^Game launched with `sh -c .*`, but its inspector refused this server's connection: /);
+  assert.match(payload.message, /Found no unity-inspector-\d+\.token in .* \(UNITY_INSPECTOR_TOKEN_FILE\)/);
+  assert.equal(payload.attempts, 1);
+  assert.equal(hellos, 2);
+  assert.match(payload.launchCommand, /^sh -c /);
+  assert.ok(elapsed < 10000, `a refusal waited ${elapsed}ms of the 60s launch budget`);
+});
+
 test('a command and capture_animations alike fail with the refusal\'s own message', { timeout: 30000 }, async () => {
   stub.hello = 'old-mod';
 

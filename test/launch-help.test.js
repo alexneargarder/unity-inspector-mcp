@@ -129,11 +129,23 @@ test('a launch command whose help does not list the flag is never asked for it',
   assert.deepEqual(await launcherCalls(), ['--help'], 'the launcher was asked something it never offered');
 });
 
-test('with no launch command the description says arguments are not accepted', async () => {
+test('with no launch command the description says where launchArgs go through Steam', async (t) => {
+  setServerPlatform('linux');
+  t.after(() => setServerPlatform());
+  const description = await launchDescription();
+
+  assert.match(description, /launchArgs follow the Doorstop arguments of Steam's -applaunch/);
+  assert.match(description, /the Steam protocol launch, used only when no Steam executable is found, takes none/);
+  assert.deepEqual(await launcherCalls(), [], 'nothing should have been run');
+});
+
+test('on macOS, where only the protocol launch runs, the description says arguments are not accepted', async (t) => {
+  setServerPlatform('darwin');
+  t.after(() => setServerPlatform());
   const description = await launchDescription();
 
   assert.match(description, /The Steam protocol launch takes no arguments, so launchArgs are not accepted\./);
-  assert.deepEqual(await launcherCalls(), [], 'nothing should have been run');
+  assert.doesNotMatch(description, /-applaunch;/);
 });
 
 test('argument help longer than the cap is cut, and says so', async () => {
@@ -402,7 +414,7 @@ test('an instance launcher with no launch command beside it', { skip: process.pl
   const description = await launchDescription();
 
   assert.match(description, /Arguments the instance launch accepts, in the instance launcher's own words:/);
-  assert.match(description, /With steam: true the Steam protocol launch takes no arguments, so launchArgs are not accepted\./);
+  assert.match(description, /With steam: true launchArgs follow the Doorstop arguments of Steam's -applaunch/);
   assert.equal(fencedBlocks(description).length, 1, 'the one block takes the whole budget');
 });
 

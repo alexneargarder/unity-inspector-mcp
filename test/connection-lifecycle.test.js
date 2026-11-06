@@ -8,7 +8,6 @@ import { startStubServer, reply } from './support/stub-server.js';
 const echoStub = (request, socket) => reply(socket, request.id, { from: request.method });
 
 test('a null-id response is delivered when exactly one command is in flight', { timeout: 10000 }, async (t) => {
-  // The mod answers unparseable requests and internal errors with "id": null
   const stub = await startStubServer((request, socket) => {
     socket.write(JSON.stringify({ id: null, success: false, error: 'Internal error: boom' }) + '\n');
   });
@@ -18,26 +17,19 @@ test('a null-id response is delivered when exactly one command is in flight', { 
   await assert.rejects(client.sendCommand('anything', {}, 2000), /Internal error: boom/);
 });
 
-test('a null-id response is dropped when several commands are in flight', { timeout: 10000 }, async (t) => {
-  let seen = 0;
+test('a null-id response goes to the one command written, with another queued behind it', { timeout: 10000 }, async (t) => {
   const stub = await startStubServer((request, socket) => {
-    seen++;
-    if (seen === 2) {
-      socket.write(JSON.stringify({ id: null, success: true, result: { whose: 'unknowable' } }) + '\n');
-    }
+    socket.write(JSON.stringify({ id: null, success: false, error: `Internal error: ${request.method}` }) + '\n');
   });
   const client = new UnityInspectorClient({ host: '127.0.0.1', port: stub.port });
   t.after(async () => { client.disconnect(); await stub.close(); });
 
   const results = await Promise.allSettled([
-    client.sendCommand('one', {}, 400),
-    client.sendCommand('two', {}, 400),
+    client.sendCommand('one', {}, 2000),
+    client.sendCommand('two', {}, 2000),
   ]);
 
-  assert.deepEqual(results.map((r) => r.status), ['rejected', 'rejected']);
-  for (const r of results) {
-    assert.match(r.reason.message, /Command timeout/, 'an ambiguous reply must not satisfy either command');
-  }
+  assert.deepEqual(results.map((r) => r.reason?.message), ['Internal error: one', 'Internal error: two']);
 });
 
 test('disconnect() during connect() abandons the attempt and leaves no zombie', { timeout: 10000 }, async (t) => {

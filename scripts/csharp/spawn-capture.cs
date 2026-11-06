@@ -1,5 +1,5 @@
 // #name Spawn Capture
-// #description Capture what a spawn-style method was called with and what it produced: logs the call arguments and a dump of the returned object's initial state. Every overload of the name is patched.
+// #description Capture what a spawn-style method was called with and what it produced: logs the call arguments and a dump of the returned object's initial state. Every overload of the name is patched; a method the type inherits is patched on its declaring type and only calls on the named type are captured.
 // #tags harmony, debugging, spawning, inspection
 // #args typeName: Full type name containing the method (e.g., "ProjectileController")
 // #args methodName: Method name to capture, all overloads (e.g., "SpawnProjectileLocally")
@@ -19,8 +19,10 @@ public static class SpawnCapture
 
     private static int captureLimit;
     private static int recorded;
+    public static int Recorded { get { return recorded; } }
     private static bool stopped;
     private static string targetLabel;
+    private static Type targetType;
     // __originalMethod is materialized from a handle, so MethodBase identity is not guaranteed
     private static Dictionary<IntPtr, TargetInfo> targets;
     // ScriptContext.Logger only carries the [Script:name] prefix while Main()/Unload() is running
@@ -42,17 +44,11 @@ public static class SpawnCapture
         if (!int.TryParse(captureCountStr, out captureLimit) || captureLimit < 1)
             captureLimit = 10;
 
-        var type = AppDomain.CurrentDomain.GetAssemblies()
-            .SelectMany(a =>
-            {
-                try { return a.GetTypes(); }
-                catch { return new Type[0]; }
-            })
-            .FirstOrDefault(t => t.Name == typeName || t.FullName == typeName);
-
+        string refusal;
+        var type = FindType(typeName, out refusal);
         if (type == null)
         {
-            ScriptContext.Logger("Type not found: " + typeName);
+            ScriptContext.Logger(refusal);
             return;
         }
 
@@ -68,6 +64,7 @@ public static class SpawnCapture
         }
 
         targetLabel = type.Name + "." + methodName;
+        targetType = type;
         targets = new Dictionary<IntPtr, TargetInfo>();
         recorded = 0;
         stopped = false;
@@ -93,13 +90,13 @@ public static class SpawnCapture
         {
             try
             {
-                var info = BuildTarget(type, candidate);
+                var info = BuildTarget(candidate);
                 var key = candidate.MethodHandle.Value;
 
                 if (info.HasResult)
-                    ScriptContext.Harmony.Patch(candidate, prefix: prefix, postfix: postfix);
+                    ScriptContext.Harmony.Patch(AccessTools.GetDeclaredMember(candidate), prefix: prefix, postfix: postfix);
                 else
-                    ScriptContext.Harmony.Patch(candidate, prefix: prefix);
+                    ScriptContext.Harmony.Patch(AccessTools.GetDeclaredMember(candidate), prefix: prefix);
 
                 targets[key] = info;
                 patchedLines.Add("  " + Describe(candidate) +
@@ -123,6 +120,9 @@ public static class SpawnCapture
             " overload(s) of " + targetLabel + ", " + captureLimit +
             " invocation(s) total across them. Reaching the limit only stops the logging — the " +
             "patches keep running on every call until unload_script.");
+        var inherited = candidates.Where(m => m.DeclaringType != type).Select(m => m.DeclaringType.Name).Distinct().ToList();
+        if (inherited.Count > 0)
+            ScriptContext.Logger("Declared on " + string.Join(", ", inherited.ToArray()) + ": only calls on a " + type.Name + " are captured.");
         foreach (var line in patchedLines)
             ScriptContext.Logger(line);
 
@@ -136,6 +136,7 @@ public static class SpawnCapture
     {
         __state = 0;
         if (stopped) return;
+        if (__instance != null && targetType != null && !targetType.IsInstanceOfType(__instance)) return;
 
         recorded++;
         __state = recorded;
@@ -172,7 +173,28 @@ public static class SpawnCapture
             "to remove them.");
     }
 
-    private static TargetInfo BuildTarget(Type type, MethodInfo method)
+    private static Type FindType(string typeName, out string refusal)
+    {
+        refusal = null;
+        Type dynamicMatch = null;
+        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            Type[] types;
+            try { types = assembly.GetTypes(); }
+            catch { continue; }
+            var match = types.FirstOrDefault(t => t.Name == typeName || t.FullName == typeName);
+            if (match == null) continue;
+            if (!(assembly is System.Reflection.Emit.AssemblyBuilder)) return match;
+            if (dynamicMatch == null) dynamicMatch = match;
+        }
+
+        refusal = dynamicMatch != null
+            ? typeName + " is compiled by the script system; Harmony cannot patch it"
+            : "Type not found: " + typeName;
+        return null;
+    }
+
+    private static TargetInfo BuildTarget(MethodInfo method)
     {
         var parameters = method.GetParameters();
         var names = new string[parameters.Length];
@@ -184,7 +206,7 @@ public static class SpawnCapture
         }
 
         var info = new TargetInfo();
-        info.Label = type.Name + "." + method.Name + "(" + string.Join(", ", types) + ")";
+        info.Label = method.DeclaringType.Name + "." + method.Name + "(" + string.Join(", ", types) + ")";
         info.ParamNames = names;
         info.HasResult = method.ReturnType != typeof(void);
         return info;
@@ -202,7 +224,6 @@ public static class SpawnCapture
             }
             catch
             {
-                // Method has no usable handle — fall through to the generic label.
             }
         }
 
@@ -300,7 +321,6 @@ public static class SpawnCapture
             }
             catch
             {
-                // Field getter threw (destroyed object, uninitialised native side) — skip it.
             }
         }
     }

@@ -1,32 +1,49 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from 'child_process';
-import { appendFileSync, openSync, closeSync, readFileSync, unlinkSync } from 'fs';
+import { appendFileSync, chmodSync, openSync, closeSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync } from 'fs';
+import os from 'os';
 import { fileURLToPath } from 'url';
 import path from 'path';
 
-import { instanceConfig } from './lib/instance.js';
+import { INSTANCE_STOP_TIMEOUT_MS, instanceConfig } from './lib/instance.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const SERVER_PATH = process.env.UNITY_INSPECTOR_MCP_CHILD || path.join(__dirname, 'index.js');
 const NODE_PATH = process.execPath;
-const LOG_FILE = process.env.UNITY_INSPECTOR_MCP_WRAPPER_LOG || `/tmp/mcp-wrapper-${process.pid}.log`;
+function defaultLogDir() {
+  if (process.platform === 'win32') return os.tmpdir();
+  // nix-shell points TMPDIR at a directory it deletes when its command exits
+  const stateHome = process.env.XDG_STATE_HOME && path.isAbsolute(process.env.XDG_STATE_HOME)
+    ? process.env.XDG_STATE_HOME
+    : path.join(os.homedir(), '.local', 'state');
+  return path.join(stateHome, 'unity-inspector-mcp');
+}
+const LOG_OVERRIDE = process.env.UNITY_INSPECTOR_MCP_WRAPPER_LOG || '';
+const LOG_FILE = LOG_OVERRIDE || path.join(defaultLogDir(), `mcp-wrapper-${process.pid}.log`);
+const LOG_MODE = 0o600;
+const OLD_LOG_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const OLD_LOG_DIRS = process.platform === 'win32' ? [path.dirname(LOG_FILE)] : [path.dirname(LOG_FILE), '/tmp'];
 // Where instances live is the launcher's to report and the server's to ask for; this wrapper is
 // told the path of the owner.pid the server wrote rather than deriving one of its own
-const CLAIM_FILE = process.env.UNITY_INSPECTOR_MCP_CLAIM_FILE || `/tmp/mcp-wrapper-${process.pid}.claim`;
+const CLAIM_FILE = process.env.UNITY_INSPECTOR_MCP_CLAIM_FILE || path.join(path.dirname(LOG_FILE), `mcp-wrapper-${process.pid}.claim`);
 
 const MAX_RAPID_DEATHS = 3;
 const DEATH_WINDOW_MS = 30000;
+const START_TIMEOUT_MS = 10000;
+const CHILD_STOP_GRACE_MS = 3000;
+// On Windows kill() is abrupt, so the child's own stdin-end shutdown is the only graceful one it has
+const WINDOWS_STDIN_GRACE_MS = 2500;
 
-// This process is co-terminal with the session, and the child is only what restart_server replaces,
-// so the instance's game is stopped here or not at all
 // An empty setting is an unset one, not the zero Number('') would make of it
 const configuredStopWait = String(process.env.UNITY_INSPECTOR_MCP_STOP_WAIT_MS ?? '').trim();
 const stopWait = configuredStopWait === '' ? NaN : Number(configuredStopWait);
 const STOP_WAIT_MS = Number.isFinite(stopWait) && stopWait >= 0 ? stopWait : 15000;
 const STOP_POLL_MS = 500;
-const STOP_COMMAND_TIMEOUT_MS = 20000;
+const REAP_FLAG = '--reap';
+
+const SERVER_INFO = { name: 'unity-inspector-mcp', version: '1.0.0' };
 
 const RESTART_TOOL = {
   name: "restart_server",
@@ -36,21 +53,18 @@ const RESTART_TOOL = {
 
 let child = null;
 let initMessage = null;
-let childBuffer = '';
 let pendingRequests = new Map();
-let outstandingRequests = new Set();
+let outstandingRequests = new Map();
 let restarting = false;
 let shuttingDown = false;
 let serverDown = false;
+let wrapperRequests = 0;
 const deathTimestamps = [];
 
-// A parent that has gone takes its end of these pipes with it, and a write to a dead pipe fails
-// asynchronously: with no listener that failure is an uncaught exception, and one raised from
-// inside the logger would be reported by writing again. Both streams are dropped once broken, and
-// the loss is recorded in the log file, which is all a mute wrapper leaves behind.
 let stderrBroken = false;
 let stdoutBroken = false;
 
+// A write to a pipe the parent took with it fails asynchronously, and unheard it is an uncaught exception
 process.stderr.on('error', (err) => {
   if (stderrBroken) return;
   stderrBroken = true;
@@ -68,37 +82,96 @@ function log(msg) {
   if (!stderrBroken) {
     try { process.stderr.write(`[wrapper] ${line}\n`); } catch { stderrBroken = true; }
   }
-  try { appendFileSync(LOG_FILE, line + '\n'); } catch {}
+  try { appendFileSync(LOG_FILE, line + '\n', { mode: LOG_MODE }); } catch {}
 }
 
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === 'EPERM';
+  }
+}
+
+function setUpLogFile() {
+  if (!LOG_OVERRIDE) {
+    try {
+      mkdirSync(path.dirname(LOG_FILE), { recursive: true, mode: 0o700 });
+      chmodSync(path.dirname(LOG_FILE), 0o700);
+    } catch {}
+  }
+  const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+  const isOld = (file) => {
+    try {
+      const stat = statSync(file);
+      return (uid === null || stat.uid === uid) && Date.now() - stat.mtimeMs > OLD_LOG_AGE_MS;
+    } catch (err) {
+      return err.code === 'ENOENT';
+    }
+  };
+  for (const dir of [...new Set(OLD_LOG_DIRS)]) {
+    let names = [];
+    try { names = readdirSync(dir); } catch { continue; }
+    for (const name of names) {
+      const file = path.join(dir, name);
+      const match = /^mcp-wrapper-(\d+)\.(log|claim)$/.exec(name);
+      if (!match || file === LOG_FILE || file === CLAIM_FILE || pidAlive(Number(match[1]))) continue;
+      if (match[2] === 'claim' && !isOld(path.join(dir, `mcp-wrapper-${match[1]}.log`))) continue;
+      if (isOld(file)) {
+        try { unlinkSync(file); } catch {}
+      }
+    }
+  }
+  try { chmodSync(LOG_FILE, LOG_MODE); } catch {}
+}
+
+function openChildStderr() {
+  try {
+    return openSync(LOG_FILE, 'a', LOG_MODE);
+  } catch (err) {
+    log(`Cannot open ${LOG_FILE} (${err.code ?? err.message}) — the server's stderr goes nowhere`);
+    return null;
+  }
+}
+
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 function spawnChild() {
-  const stderrFd = openSync(LOG_FILE, 'a');
+  if (shuttingDown) throw new Error('The wrapper is shutting down');
+  const stderrFd = openChildStderr();
   const proc = spawn(NODE_PATH, [SERVER_PATH], {
-    stdio: ['pipe', 'pipe', stderrFd],
+    stdio: ['pipe', 'pipe', stderrFd ?? 'ignore'],
     cwd: __dirname,
     env: { ...process.env, UNITY_INSPECTOR_MCP_CLAIM_FILE: CLAIM_FILE },
   });
-  closeSync(stderrFd);
+  if (stderrFd !== null) closeSync(stderrFd);
   child = proc;
+  proc.closed = new Promise((resolve) => proc.once('close', resolve));
 
+  let buffer = '';
+  proc.stdout.setEncoding('utf8');
   proc.stdout.on('data', (data) => {
-    childBuffer += data.toString();
-    let lines = childBuffer.split('\n');
-    childBuffer = lines.pop();
+    buffer += data;
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
 
     for (const line of lines) {
       if (!line.trim()) continue;
-      handleChildMessage(line);
+      handleChildMessage(line, proc);
     }
   });
 
   proc.on('exit', (code, signal) => {
     log(`Child exited (code=${code}, signal=${signal})`);
-    if (child === proc) child = null;
-    if (restarting || shuttingDown) return;
+  });
 
-    failOutstanding(`The Unity Inspector MCP server process exited before answering this request. ${serverDownMessage()}`);
-    autoRespawn();
+  // 'close' comes once the child's stdout is drained, so every answer it wrote is in by then
+  proc.on('close', () => {
+    if (child === proc) child = null;
+    if (proc.stopping) return;
+    if (!restarting && !shuttingDown) autoRespawn();
+    failOutstanding(exitedMessage(), proc);
   });
 
   proc.on('error', (err) => {
@@ -109,57 +182,102 @@ function spawnChild() {
   return proc;
 }
 
-async function stopChild() {
-  const proc = child;
-  if (!proc) return;
+async function closedWithin(proc, ms) {
+  let timer;
+  const expired = new Promise((resolve) => { timer = setTimeout(() => resolve(false), ms); });
+  const closed = await Promise.race([proc.closed.then(() => true), expired]);
+  clearTimeout(timer);
+  return closed;
+}
 
-  failOutstanding('The Unity Inspector MCP server was restarted before answering this request. Retry the call.');
+async function stopChild(proc = child) {
+  if (!proc) return;
+  proc.stopping = true;
 
   try { proc.stdin.end(); } catch {}
-  proc.kill('SIGTERM');
-
-  await new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      try { proc.kill('SIGKILL'); } catch {}
-      resolve();
-    }, 3000);
-    proc.on('exit', () => {
-      clearTimeout(timer);
-      resolve();
-    });
-  });
+  let closed = process.platform === 'win32' && await closedWithin(proc, WINDOWS_STDIN_GRACE_MS);
+  if (!closed) {
+    try { proc.kill('SIGTERM'); } catch {}
+    closed = await closedWithin(proc, CHILD_STOP_GRACE_MS);
+  }
+  if (!closed) {
+    try { proc.kill('SIGKILL'); } catch {}
+    await closedWithin(proc, CHILD_STOP_GRACE_MS);
+  }
 
   if (child === proc) child = null;
+  failOutstanding(
+    'The Unity Inspector MCP server was restarted before answering this request, and the command may ' +
+    "already have run in the game. Check the game's state before retrying.",
+    proc,
+  );
+}
+
+function writeTo(proc, msg) {
+  if (proc && proc.stdin && proc.stdin.writable) {
+    proc.stdin.write(msg + '\n');
+    return true;
+  }
+  return false;
+}
+
+function askChild(proc, id, line, { timeoutMessage, exitMessage }) {
+  return new Promise((resolve, reject) => {
+    const settle = (fn) => {
+      clearTimeout(timeout);
+      proc.off('close', closed);
+      if (pendingRequests.get(id)?.callback === answered) pendingRequests.delete(id);
+      fn();
+    };
+    const answered = (response) => settle(() => resolve(response));
+    const closed = () => settle(() => reject(new Error(exitMessage)));
+    const timeout = setTimeout(() => settle(() => reject(new Error(timeoutMessage))), START_TIMEOUT_MS);
+
+    proc.once('close', closed);
+    pendingRequests.set(id, { proc, callback: answered });
+    if (!writeTo(proc, line)) settle(() => reject(new Error('Child is not accepting input')));
+  });
 }
 
 async function startChild() {
-  childBuffer = '';
   pendingRequests.clear();
-  spawnChild();
+  const proc = spawnChild();
 
-  if (!initMessage) return;
+  if (!initMessage) return null;
 
-  const initParsed = JSON.parse(initMessage);
-  const initId = initParsed.id;
+  const initId = JSON.parse(initMessage).id;
+  const listId = `wrapper-tools-list-${++wrapperRequests}`;
 
-  await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      pendingRequests.delete(initId);
-      reject(new Error('Init timeout'));
-    }, 10000);
-    pendingRequests.set(initId, (response) => {
-      clearTimeout(timeout);
-      resolve(response);
+  try {
+    await askChild(proc, initId, initMessage, {
+      timeoutMessage: 'Init timeout',
+      exitMessage: 'Child exited during initialize',
     });
-    if (!sendToChild(initMessage)) {
-      clearTimeout(timeout);
-      pendingRequests.delete(initId);
-      reject(new Error('Child is not accepting input'));
-    }
-  });
+    // Send initialized notification (required by MCP protocol)
+    writeTo(proc, JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }));
 
-  // Send initialized notification (required by MCP protocol)
-  sendToChild(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }));
+    const listing = await askChild(proc, listId, JSON.stringify({ jsonrpc: '2.0', id: listId, method: 'tools/list', params: {} }), {
+      timeoutMessage: 'The new server did not list its tools in time',
+      exitMessage: 'Child exited while listing its tools',
+    });
+    if (listing.error) throw new Error(`The new server could not list its tools: ${listing.error.message}`);
+    const tools = listing.result?.tools;
+    if (!Array.isArray(tools) || tools.length === 0) throw new Error('The new server listed no tools');
+    return tools.length;
+  } catch (err) {
+    await stopChild(proc);
+    throw err;
+  }
+}
+
+let transition = Promise.resolve();
+let pendingTransitions = 0;
+
+function exclusively(step) {
+  pendingTransitions++;
+  const run = transition.then(step, step).finally(() => { pendingTransitions--; });
+  transition = run.catch(() => {});
+  return run;
 }
 
 async function autoRespawn() {
@@ -176,28 +294,34 @@ async function autoRespawn() {
   }
 
   log(`Child died unexpectedly — respawning (death ${deathTimestamps.length} of ${MAX_RAPID_DEATHS})`);
+  await exclusively(respawnChild);
+}
+
+async function respawnChild() {
+  if (shuttingDown) return;
+  if (child) {
+    log('Auto-respawn skipped — a child is already running');
+    return;
+  }
 
   try {
     await startChild();
     serverDown = false;
     log('Auto-respawn complete');
-    sendToParent(JSON.stringify({
-      jsonrpc: "2.0",
-      method: "notifications/tools/list_changed",
-    }));
+    if (initMessage) {
+      sendToParent(JSON.stringify({
+        jsonrpc: "2.0",
+        method: "notifications/tools/list_changed",
+      }));
+    }
   } catch (err) {
     log(`Auto-respawn failed: ${err.message}`);
     serverDown = true;
-    await stopChild();
   }
 }
 
 function sendToChild(msg) {
-  if (child && child.stdin && child.stdin.writable) {
-    child.stdin.write(msg + '\n');
-    return true;
-  }
-  return false;
+  return writeTo(child, msg);
 }
 
 function sendToParent(msg) {
@@ -206,33 +330,61 @@ function sendToParent(msg) {
 }
 
 function serverDownMessage() {
+  if (pendingTransitions > 0) {
+    return 'The Unity Inspector MCP server (index.js) is restarting. Retry the call in a few seconds.';
+  }
   return `The Unity Inspector MCP server (index.js) is not running${serverDown ? ' and could not be respawned' : ''}. ` +
     `See ${LOG_FILE} for the child's output, fix the problem, then call restart_server.`;
+}
+
+function exitedMessage() {
+  const state = pendingTransitions > 0
+    ? 'The server is restarting.'
+    : `The server is not running${serverDown ? ' and could not be respawned' : ''}; fix the problem, then call restart_server.`;
+  return `The Unity Inspector MCP server process exited before answering this request (see ${LOG_FILE}). ` +
+    'The command may already have run in the game, and repeating it may crash the server again: ' +
+    `check the log before retrying. ${state}`;
+}
+
+function replyError(id, message) {
+  sendToParent(JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32000, message } }));
+}
+
+function replyWithoutChild(id, request, message) {
+  if (request.method === 'initialize') {
+    sendToParent(JSON.stringify({
+      jsonrpc: "2.0",
+      id,
+      result: {
+        protocolVersion: request.protocolVersion,
+        capabilities: { tools: { listChanged: true } },
+        serverInfo: SERVER_INFO,
+      },
+    }));
+    return;
+  }
+  if (request.method === 'tools/list') {
+    sendToParent(JSON.stringify({ jsonrpc: "2.0", id, result: { tools: [RESTART_TOOL] } }));
+    return;
+  }
+  replyError(id, message);
 }
 
 function respondServerDown(parsed) {
   if (parsed.id === undefined || parsed.id === null) return;
   outstandingRequests.delete(parsed.id);
-  sendToParent(JSON.stringify({
-    jsonrpc: "2.0",
-    id: parsed.id,
-    error: { code: -32000, message: serverDownMessage() },
-  }));
+  replyWithoutChild(parsed.id, { method: parsed.method, protocolVersion: parsed.params?.protocolVersion }, serverDownMessage());
 }
 
-function failOutstanding(message) {
-  if (outstandingRequests.size === 0) return;
-  for (const id of outstandingRequests) {
-    sendToParent(JSON.stringify({
-      jsonrpc: "2.0",
-      id,
-      error: { code: -32000, message },
-    }));
+function failOutstanding(message, proc) {
+  for (const [id, request] of [...outstandingRequests]) {
+    if (request.proc !== proc) continue;
+    outstandingRequests.delete(id);
+    replyWithoutChild(id, request, message);
   }
-  outstandingRequests.clear();
 }
 
-function handleChildMessage(line) {
+function handleChildMessage(line, proc) {
   let parsed;
   try {
     parsed = JSON.parse(line);
@@ -241,15 +393,22 @@ function handleChildMessage(line) {
     return;
   }
 
-  if (parsed.id !== undefined && parsed.id !== null) {
-    outstandingRequests.delete(parsed.id);
-  }
+  const id = parsed.id;
+  const isResponse = id !== undefined && id !== null && parsed.method === undefined;
 
-  if (parsed.id !== undefined && parsed.id !== null && pendingRequests.has(parsed.id)) {
-    const callback = pendingRequests.get(parsed.id);
-    pendingRequests.delete(parsed.id);
+  if (isResponse && pendingRequests.get(id)?.proc === proc) {
+    const { callback } = pendingRequests.get(id);
+    pendingRequests.delete(id);
     callback(parsed);
     return;
+  }
+
+  if (isResponse) {
+    if (outstandingRequests.get(id)?.proc !== proc) {
+      log(`Dropped a response to request ${JSON.stringify(id)}, which was already answered or cancelled`);
+      return;
+    }
+    outstandingRequests.delete(id);
   }
 
   if (parsed.result && parsed.result.tools && Array.isArray(parsed.result.tools)) {
@@ -274,13 +433,21 @@ function handleParentMessage(line) {
     initMessage = line;
   }
 
+  if (parsed.method === 'notifications/cancelled') {
+    outstandingRequests.delete(parsed.params?.requestId);
+  }
+
   if (parsed.method === 'tools/call' && parsed.params?.name === 'restart_server') {
     handleRestart(parsed);
     return;
   }
 
   if (parsed.method !== undefined && parsed.id !== undefined && parsed.id !== null) {
-    outstandingRequests.add(parsed.id);
+    outstandingRequests.set(parsed.id, {
+      proc: child,
+      method: parsed.method,
+      protocolVersion: parsed.params?.protocolVersion,
+    });
   }
 
   if (!sendToChild(line)) {
@@ -289,7 +456,44 @@ function handleParentMessage(line) {
   }
 }
 
+function replyToolResult(id, text, isError) {
+  sendToParent(JSON.stringify({
+    jsonrpc: "2.0",
+    id,
+    result: {
+      content: [{ type: "text", text }],
+      ...(isError ? { isError: true } : {}),
+    },
+  }));
+}
+
+let restartInFlight = null;
+
 async function handleRestart(request) {
+  const args = request.params?.arguments;
+  const unknown = args !== null && typeof args === 'object' && !Array.isArray(args) ? Object.keys(args) : [];
+  if (unknown.length > 0) {
+    const names = unknown.map((key) => `"${key}"`).join(', ');
+    replyToolResult(request.id, `Error: restart_server has no argument${unknown.length > 1 ? 's' : ''} ${names}; it takes no arguments`, true);
+    return;
+  }
+
+  const started = restartInFlight === null;
+  restartInFlight ??= exclusively(performRestart).finally(() => { restartInFlight = null; });
+  const outcome = await restartInFlight;
+
+  replyToolResult(request.id, JSON.stringify(outcome), !outcome.success);
+
+  if (started && outcome.success) {
+    sendToParent(JSON.stringify({
+      jsonrpc: "2.0",
+      method: "notifications/tools/list_changed",
+    }));
+  }
+}
+
+async function performRestart() {
+  if (shuttingDown) return { success: false, error: 'The wrapper is shutting down' };
   log('Restart requested');
   restarting = true;
 
@@ -299,69 +503,39 @@ async function handleRestart(request) {
     deathTimestamps.length = 0;
     serverDown = false;
 
-    await startChild();
+    const tools = await startChild();
 
     log('Restart complete');
-
-    sendToParent(JSON.stringify({
-      jsonrpc: "2.0",
-      id: request.id,
-      result: {
-        content: [{
-          type: "text",
-          text: JSON.stringify({ success: true, message: "MCP server restarted successfully" }),
-        }],
-      },
-    }));
-
-    sendToParent(JSON.stringify({
-      jsonrpc: "2.0",
-      method: "notifications/tools/list_changed",
-    }));
+    return {
+      success: true,
+      message: tools === null
+        ? 'MCP server restarted successfully'
+        : `MCP server restarted successfully, listing ${tools} tools`,
+    };
   } catch (err) {
     log(`Restart failed: ${err.message}`);
     serverDown = true;
-    sendToParent(JSON.stringify({
-      jsonrpc: "2.0",
-      id: request.id,
-      result: {
-        content: [{
-          type: "text",
-          text: JSON.stringify({ success: false, error: err.message }),
-        }],
-        isError: true,
-      },
-    }));
+    return { success: false, error: `${err.message}. See ${LOG_FILE} for the server's output.` };
   } finally {
     restarting = false;
   }
 }
 
-let parentBuffer = '';
-process.stdin.on('data', (data) => {
-  parentBuffer += data.toString();
-  let lines = parentBuffer.split('\n');
-  parentBuffer = lines.pop();
-
-  for (const line of lines) {
-    if (!line.trim()) continue;
-    handleParentMessage(line);
-  }
-});
-
-// The line the server writes into owner.pid: a pid and field 22 of /proc/<pid>/stat
-function ownIdentity() {
+function processIdentity(pid) {
   try {
-    const stat = readFileSync(`/proc/${process.pid}/stat`, 'utf8');
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
     const afterComm = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
-    return { pid: String(process.pid), startTime: afterComm[19] ?? null };
+    if (afterComm[0] === 'Z') return null;
+    return { pid: String(pid), startTime: afterComm[19] ?? null };
   } catch {
-    return { pid: String(process.pid), startTime: null };
+    return null;
   }
 }
 
-// The owner.pid the server wrote, as it recorded it here. A missing claim file is the ordinary
-// absence of one; any other read failure is worth naming, and neither is ownership
+function ownIdentity() {
+  return processIdentity(process.pid) ?? { pid: String(process.pid), startTime: null };
+}
+
 function claimedOwnerFile() {
   let line;
   try {
@@ -372,9 +546,7 @@ function claimedOwnerFile() {
   return { ownerFile: line || null, error: null };
 }
 
-// A missing file is the ordinary absence of a claim; any other read failure is worth naming, and
-// neither is ownership
-function readOwnership(ownerFile) {
+function readOwnership(ownerFile, owner) {
   let line;
   try {
     line = readFileSync(ownerFile, 'utf8').trim();
@@ -383,40 +555,60 @@ function readOwnership(ownerFile) {
   }
   if (!line) return { owned: false, error: null };
   const [pid, startTime] = line.split(/\s+/);
-  const own = ownIdentity();
-  if (pid !== own.pid) return { owned: false, error: null };
+  if (pid !== owner.pid) return { owned: false, error: null };
   // A pid alone can be a recycled one; the start time is what settles it when both sides have it
-  const owned = own.startTime === null || startTime === undefined || startTime === own.startTime;
+  const owned = owner.startTime === null || startTime === undefined || startTime === owner.startTime;
   return { owned, error: null };
 }
 
-const ownsInstance = (ownerFile) => readOwnership(ownerFile).owned;
+function handOffInstanceStop(proc, trigger, startedAt) {
+  const config = instanceConfig();
+  if (!config.isAgentInstance) return false;
 
-let wakePoll = null;
-
-// A signal recorded mid-poll has to be acted on when it arrives, not when the current tick runs out
-function sleep(ms) {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      wakePoll = null;
-      resolve();
-    }, ms);
-    wakePoll = () => {
-      clearTimeout(timer);
-      wakePoll = null;
-      resolve();
-    };
-  });
+  const job = {
+    owner: ownIdentity(),
+    child: proc && proc.exitCode === null && proc.signalCode === null ? processIdentity(proc.pid) : null,
+    trigger,
+    startedAt,
+  };
+  try {
+    const reaper = spawn(NODE_PATH, [__filename, REAP_FLAG, JSON.stringify(job)], {
+      detached: true,
+      stdio: 'ignore',
+      env: { ...process.env, UNITY_INSPECTOR_MCP_WRAPPER_LOG: LOG_FILE, UNITY_INSPECTOR_MCP_CLAIM_FILE: CLAIM_FILE },
+    });
+    reaper.on('error', (err) => log(`Could not start the stop of instance ${config.id}: ${err.message}`));
+    reaper.unref();
+    log(`Handed instance ${config.id} to reaper ${reaper.pid}, ${Date.now() - startedAt}ms after ${trigger}`);
+    return true;
+  } catch (err) {
+    log(`Could not start the stop of instance ${config.id}: ${err.message}`);
+    return false;
+  }
 }
 
-const STDIN_END = 'stdin end';
+function stillRunning(identity) {
+  const now = processIdentity(identity.pid);
+  return now !== null && now.startTime === identity.startTime;
+}
 
-// Only positive evidence that this wrapper owns the instance justifies handing the configured
-// launcher an `instance <id> stop`: a launcher without instance mode could read the first word as
-// something else entirely and launch the user's game
-async function stopOwnedInstance(state) {
+async function waitForServerGone(identity, startedAt) {
+  if (!identity) return;
+  const graceEnds = startedAt + CHILD_STOP_GRACE_MS;
+  while (stillRunning(identity) && Date.now() < graceEnds) await delay(100);
+  if (!stillRunning(identity)) return;
+
+  try { process.kill(Number(identity.pid), 'SIGKILL'); } catch {}
+  log(`Killed server ${identity.pid}, still running ${Date.now() - startedAt}ms after the session ended`);
+  const killEnds = Date.now() + CHILD_STOP_GRACE_MS;
+  while (stillRunning(identity) && Date.now() < killEnds) await delay(100);
+}
+
+async function reap({ owner, child: server, trigger, startedAt }) {
   const config = instanceConfig();
-  if (!config.isAgentInstance) return;
+  const since = () => `${Date.now() - startedAt}ms after ${trigger}`;
+
+  await waitForServerGone(server, startedAt);
 
   const claim = claimedOwnerFile();
   if (claim.error) {
@@ -425,7 +617,7 @@ async function stopOwnedInstance(state) {
   }
   const ownerFile = claim.ownerFile;
 
-  const ownership = ownerFile === null ? { owned: false, error: null } : readOwnership(ownerFile);
+  const ownership = ownerFile === null ? { owned: false, error: null } : readOwnership(ownerFile, owner);
   if (!ownership.owned) {
     log(ownership.error
       ? `Could not read owner.pid for instance ${config.id}: ${ownership.error} — leaving it alone`
@@ -433,76 +625,53 @@ async function stopOwnedInstance(state) {
     return;
   }
 
-  // A signal-terminated wrapper is killed uncatchably in well under a second, so only stdin end
-  // can afford the wait; a newer server adopting the id rewrites owner.pid and wins the wait
-  if (state.trigger === STDIN_END) {
-    const deadline = Date.now() + STOP_WAIT_MS;
-    while (Date.now() < deadline && pendingSignal === null) {
-      await sleep(Math.min(STOP_POLL_MS, Math.max(0, deadline - Date.now())));
-      if (!ownsInstance(ownerFile)) {
-        log(`Instance ${config.id} was taken over after ${Date.now() - state.startedAt}ms — leaving it running`);
-        return;
-      }
-    }
-
-    if (pendingSignal !== null) {
-      state.trigger = pendingSignal.trigger;
-      state.startedAt = pendingSignal.at;
-      if (!ownsInstance(ownerFile)) {
-        log(`Instance ${config.id} was taken over after ${Date.now() - state.startedAt}ms — leaving it running`);
-        return;
-      }
+  const deadline = startedAt + STOP_WAIT_MS;
+  while (Date.now() < deadline) {
+    await delay(Math.min(STOP_POLL_MS, Math.max(0, deadline - Date.now())));
+    if (!readOwnership(ownerFile, owner).owned) {
+      log(`Instance ${config.id} was taken over ${since()} — leaving it running`);
+      return;
     }
   }
 
-  // stdout carries the MCP stream, so the launcher is given none of this process's streams
   const result = spawnSync(config.launchCommand, config.stopArgs, {
     stdio: 'ignore',
-    timeout: STOP_COMMAND_TIMEOUT_MS,
+    timeout: INSTANCE_STOP_TIMEOUT_MS,
   });
-  const elapsed = `${Date.now() - state.startedAt}ms after ${state.trigger}`;
-  if (result.error) {
-    log(`Could not run the configured launcher to stop instance ${config.id}: ${result.error.message}, ${elapsed}`);
+  if (result.error?.code === 'ETIMEDOUT') {
+    log(`Stopping instance ${config.id} did not finish within ${INSTANCE_STOP_TIMEOUT_MS / 1000}s, ${since()}`);
+  } else if (result.error) {
+    log(`Could not run the configured launcher to stop instance ${config.id}: ${result.error.message}, ${since()}`);
   } else if (result.status !== 0) {
     const ending = result.status === null ? `signal ${result.signal}` : `status ${result.status}`;
-    log(`Stopping instance ${config.id} exited with ${ending}, ${elapsed}`);
+    log(`Stopping instance ${config.id} exited with ${ending}, ${since()}`);
   } else {
-    log(`Stopped instance ${config.id}, ${elapsed}`);
+    log(`Stopped instance ${config.id}, ${since()}`);
   }
 }
 
 let shutdownStarted = false;
-let pendingSignal = null;
 
-async function shutdown(trigger) {
-  if (shutdownStarted) {
-    // Not swallowed: a signal cuts a stdin-end wait short rather than starting a second shutdown
-    if (trigger !== STDIN_END && pendingSignal === null) {
-      pendingSignal = { trigger, at: Date.now() };
-      wakePoll?.();
-    }
-    return;
-  }
+async function shutdown(trigger, exitCode = 0) {
+  if (shutdownStarted) return;
   shutdownStarted = true;
   shuttingDown = true;
-  const state = { trigger, startedAt: Date.now() };
+  const startedAt = Date.now();
+  const proc = child;
 
+  const handedOff = handOffInstanceStop(proc, trigger, startedAt);
   try {
-    await stopOwnedInstance(state);
+    await stopChild(proc);
   } catch (err) {
-    log(`Instance stop failed: ${err.message}`);
+    log(`Stopping the server failed: ${err.message}`);
   }
 
-  if (child) child.kill('SIGTERM');
-  // The claim is this wrapper's own record and outlives nothing
-  try { unlinkSync(CLAIM_FILE); } catch {}
-  log(`Wrapper exiting, ${Date.now() - state.startedAt}ms after ${state.trigger}`);
-  process.exit(0);
+  if (!handedOff) {
+    try { unlinkSync(CLAIM_FILE); } catch {}
+  }
+  log(`Wrapper exiting, ${Date.now() - startedAt}ms after ${trigger}`);
+  process.exit(exitCode);
 }
-
-process.stdin.on('end', () => shutdown(STDIN_END));
-process.on('SIGINT', () => shutdown('SIGINT'));
-process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 const FATAL_BURST = 20;
 const FATAL_WINDOW_MS = 5000;
@@ -517,20 +686,52 @@ function reportFatal(what) {
 
   if (fatalReports.length >= FATAL_BURST) {
     log(`${fatalReports.length} failures within ${FATAL_WINDOW_MS / 1000}s — exiting rather than reporting more. Last: ${what}`);
-    process.exit(1);
+    if (shutdownStarted) process.exit(1);
+    shutdown('repeated failures', 1);
+    return;
   }
 
   log(what);
 }
 
-process.on('unhandledRejection', (reason) => {
-  reportFatal(`Unhandled rejection: ${reason}`);
-});
+function runWrapper() {
+  setUpLogFile();
+  let parentBuffer = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (data) => {
+    parentBuffer += data;
+    const lines = parentBuffer.split('\n');
+    parentBuffer = lines.pop();
 
-process.on('uncaughtException', (err) => {
-  reportFatal(`Uncaught exception: ${err.message}\n${err.stack}`);
-});
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      handleParentMessage(line);
+    }
+  });
 
-// Start
-spawnChild();
-log('Wrapper started');
+  process.stdin.on('end', () => shutdown('stdin end'));
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, () => shutdown(signal));
+
+  process.on('unhandledRejection', (reason) => {
+    reportFatal(`Unhandled rejection: ${reason}`);
+  });
+
+  process.on('uncaughtException', (err) => {
+    reportFatal(`Uncaught exception: ${err.message}\n${err.stack}`);
+  });
+
+  // Start
+  spawnChild();
+  log('Wrapper started');
+}
+
+if (process.argv[2] === REAP_FLAG) {
+  reap(JSON.parse(process.argv[3]))
+    .catch((err) => log(`The instance stop failed: ${err.message}`))
+    .finally(() => {
+      try { unlinkSync(CLAIM_FILE); } catch {}
+      process.exit(0);
+    });
+} else {
+  runWrapper();
+}

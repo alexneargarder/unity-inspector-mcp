@@ -10,7 +10,9 @@ import {
   HANDSHAKE_REFUSED,
   HANDSHAKE_TIMEOUT,
   UnityInspectorClient,
+  findSteamGame,
   readTokenFile,
+  steamLibraryPaths,
   steamTokenSearch,
   tokenFileName,
   tokenSearchIn,
@@ -230,6 +232,8 @@ test('the user\'s game is searched for in every data folder, XDG_CONFIG_HOME fir
   assert.equal(unset.override, false);
   assert.deepEqual(unset.searched, [
     path.join(home, '.config/unity3d/Free Lives/Broforce'),
+    path.join(home, '.var/app/com.valvesoftware.Steam/config/unity3d/Free Lives/Broforce'),
+    path.join(home, '.var/app/com.valvesoftware.Steam/.config/unity3d/Free Lives/Broforce'),
     path.join(home, 'AppData/LocalLow/Free Lives/Broforce'),
     path.join(home, 'Library/Application Support/Free Lives/Broforce'),
   ]);
@@ -240,6 +244,8 @@ test('the user\'s game is searched for in every data folder, XDG_CONFIG_HOME fir
   assert.deepEqual(set.searched, [
     path.join(xdg, 'unity3d/Free Lives/Broforce'),
     path.join(home, '.config/unity3d/Free Lives/Broforce'),
+    path.join(home, '.var/app/com.valvesoftware.Steam/config/unity3d/Free Lives/Broforce'),
+    path.join(home, '.var/app/com.valvesoftware.Steam/.config/unity3d/Free Lives/Broforce'),
     path.join('/c/Users/someone', 'AppData/LocalLow/Free Lives/Broforce'),
     path.join(home, 'AppData/LocalLow/Free Lives/Broforce'),
     path.join(home, 'Library/Application Support/Free Lives/Broforce'),
@@ -265,6 +271,105 @@ test('the search reaches the Proton prefix and, on WSL, every Windows user', asy
 
   const notWsl = await steamTokenSearch(4321, { env: {}, home, wslUsersRoot: users });
   assert.ok(!notWsl.searched.some((dir) => dir.startsWith(users)), 'the Windows users are only searched on WSL');
+});
+
+async function installGame(library, { proton = false } = {}) {
+  await fs.mkdir(path.join(library, 'steamapps/common/Broforce'), { recursive: true });
+  const prefix = path.join(library, 'steamapps/compatdata/274190/pfx');
+  if (proton) await fs.mkdir(prefix, { recursive: true });
+  return prefix;
+}
+
+async function writeLibraryFolders(steamRoot, libraries) {
+  await fs.mkdir(path.join(steamRoot, 'steamapps'), { recursive: true });
+  const entries = libraries.map((library, i) => `\t"${i}"\n\t{\n\t\t"path"\t\t"${library}"\n\t\t"apps"\n\t\t{\n\t\t}\n\t}`);
+  await fs.writeFile(path.join(steamRoot, 'steamapps/libraryfolders.vdf'), `"libraryfolders"\n{\n${entries.join('\n')}\n}\n`);
+}
+
+test('libraryfolders.vdf names every library, escapes undone', () => {
+  const vdf = '"libraryfolders"\n{\n\t"0"\n\t{\n\t\t"path"\t\t"/home/u/.local/share/Steam"\n\t}\n' +
+    '\t"1"\n\t{\n\t\t"path"\t\t"/run/media/sd card/Steam"\n\t\t"label"\t\t""\n\t}\n' +
+    '\t"2"\n\t{\n\t\t"path"\t\t"D:\\\\Games\\\\Steam"\n\t}\n}\n';
+  assert.deepEqual(steamLibraryPaths(vdf), ['/home/u/.local/share/Steam', '/run/media/sd card/Steam', 'D:\\Games\\Steam']);
+  assert.deepEqual(steamLibraryPaths('not a vdf'), []);
+});
+
+test('the game and its Proton prefix are found in a second Steam library, and the token search reaches that prefix', async () => {
+  const home = await fakeHome();
+  const second = path.join(scratch, `library-${++dirCounter}`);
+  const prefix = await installGame(second, { proton: true });
+  await writeLibraryFolders(path.join(home, '.local/share/Steam'), [path.join(home, '.local/share/Steam'), second]);
+
+  assert.deepEqual(await findSteamGame({ home }), { gamePath: path.join(second, 'steamapps/common/Broforce'), protonPrefix: prefix, steamapps: path.join(second, 'steamapps') });
+
+  const client = new UnityInspectorClient({ host: '127.0.0.1', port: 1 });
+  await client.detectGamePaths({ home });
+  assert.equal(client.protonPrefix, prefix);
+  const { searched } = await steamTokenSearch(9999, { env: {}, home, protonPrefix: client.protonPrefix });
+  assert.ok(searched.includes(path.join(prefix, 'drive_c/users/steamuser/AppData/LocalLow/Free Lives/Broforce')));
+  const { windows } = await unityDataDirs({ env: {}, home, protonPrefix: client.protonPrefix });
+  assert.ok(windows.includes(path.join(prefix, 'drive_c/users/steamuser/AppData/LocalLow/Free Lives/Broforce')),
+    'the player-log search reads the same folders');
+});
+
+test('a game under Flatpak Steam is found, its own libraries included, and its data folders are searched', async () => {
+  const home = await fakeHome();
+  const flatpakRoot = path.join(home, '.var/app/com.valvesoftware.Steam/.local/share/Steam');
+  const prefix = await installGame(flatpakRoot, { proton: true });
+  assert.deepEqual(await findSteamGame({ home }), { gamePath: path.join(flatpakRoot, 'steamapps/common/Broforce'), protonPrefix: prefix, steamapps: path.join(flatpakRoot, 'steamapps') });
+
+  const other = await fakeHome();
+  const otherRoot = path.join(other, '.var/app/com.valvesoftware.Steam/.local/share/Steam');
+  const card = path.join(scratch, `card-${++dirCounter}`);
+  await installGame(card);
+  await writeLibraryFolders(otherRoot, [otherRoot, card]);
+  assert.deepEqual(await findSteamGame({ home: other }), { gamePath: path.join(card, 'steamapps/common/Broforce'), protonPrefix: null, steamapps: path.join(card, 'steamapps') },
+    'a native game has no prefix');
+
+  const { searched } = await steamTokenSearch(9999, { env: {}, home });
+  assert.ok(searched.includes(path.join(home, '.var/app/com.valvesoftware.Steam/config/unity3d/Free Lives/Broforce')));
+  assert.ok(searched.includes(path.join(home, '.var/app/com.valvesoftware.Steam/.config/unity3d/Free Lives/Broforce')));
+});
+
+test('a screenshot from a game under Flatpak Steam is translated to where the sandbox put it, only when it is there', async () => {
+  const home = await fakeHome();
+  const flatpakHome = path.join(home, '.var/app/com.valvesoftware.Steam');
+  await installGame(path.join(flatpakHome, '.local/share/Steam'), { proton: true });
+
+  const client = new UnityInspectorClient({ host: '127.0.0.1', port: 1 });
+  client.platform = 'linux';
+  await client.detectGamePaths({ home });
+
+  const shot = 'r2/profiles/Default/Mods/Unity Inspector Mod/Screenshots/x.png';
+  const sandboxed = path.join(flatpakHome, shot);
+  await fs.mkdir(path.dirname(sandboxed), { recursive: true });
+  await fs.writeFile(sandboxed, 'png');
+  assert.equal(await client.translateScreenshotPath(path.join(home, shot)), sandboxed, 'a native path the sandbox moved');
+  assert.equal(await client.translateScreenshotPath(`Z:${home}/${shot}`), sandboxed, 'a Proton Z: path the sandbox moved');
+  assert.equal(await client.translateScreenshotPath(sandboxed), sandboxed, 'already on the host');
+  assert.equal(await client.translateScreenshotPath('/srv/shots/x.png'), '/srv/shots/x.png', 'outside the home');
+
+  const granted = 'granted/profiles/Default/Mods/Unity Inspector Mod/Screenshots/y.png';
+  await fs.mkdir(path.dirname(path.join(home, granted)), { recursive: true });
+  await fs.writeFile(path.join(home, granted), 'png');
+  assert.equal(await client.translateScreenshotPath(path.join(home, granted)), path.join(home, granted),
+    'a folder granted to the sandbox keeps its host path');
+  assert.equal(await client.translateScreenshotPath(path.join(home, 'nowhere/z.png')), path.join(home, 'nowhere/z.png'),
+    'a path found in neither place is left as given');
+
+  client.pointAt({ port: 1, gameConfig: { isAgentInstance: true } });
+  assert.equal(await client.translateScreenshotPath(path.join(home, shot)), path.join(home, shot), 'an instance is never under Flatpak Steam');
+
+  const native = new UnityInspectorClient({ host: '127.0.0.1', port: 1 });
+  native.platform = 'linux';
+  const plain = await fakeHome();
+  await installGame(path.join(plain, '.local/share/Steam'));
+  await native.detectGamePaths({ home: plain });
+  assert.equal(await native.translateScreenshotPath(path.join(plain, shot)), path.join(plain, shot), 'a game outside Flatpak keeps its path');
+});
+
+test('no Steam install finds no game', async () => {
+  assert.deepEqual(await findSteamGame({ home: await fakeHome() }), { gamePath: null, protonPrefix: null, steamapps: null });
 });
 
 test('the newest token file wins', async () => {

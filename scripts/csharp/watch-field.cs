@@ -24,18 +24,15 @@ public static class WatchField
             return;
         }
 
-        var go = GameObject.Find(goName);
-        if (go == null)
-        {
-            var allObjects = Resources.FindObjectsOfTypeAll<GameObject>();
-            go = allObjects.FirstOrDefault(g => g.name == goName);
-        }
-
+        bool isAsset;
+        var go = FindGameObject(goName, out isAsset);
         if (go == null)
         {
             ScriptContext.Logger("GameObject not found: " + goName);
             return;
         }
+        if (isAsset)
+            ScriptContext.Logger(goName + " matches no object in a loaded scene; watching the prefab asset of that name, which the game does not change.");
 
         var comp = go.GetComponents<Component>()
             .FirstOrDefault(c => c != null && (c.GetType().Name == compType || c.GetType().FullName == compType));
@@ -46,8 +43,10 @@ public static class WatchField
             return;
         }
 
-        var field = comp.GetType().GetField(fieldName,
-            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        FieldInfo field = null;
+        // GetField never returns a base class's private field
+        for (var t = comp.GetType(); field == null && t != null && t != typeof(MonoBehaviour) && t != typeof(Behaviour) && t != typeof(Component); t = t.BaseType)
+            field = t.GetField(fieldName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
 
         if (field == null)
         {
@@ -56,6 +55,7 @@ public static class WatchField
         }
 
         watcherGO = new GameObject("FieldWatcher_" + fieldName);
+        watcherGO.tag = "Unpausable";
         UnityEngine.Object.DontDestroyOnLoad(watcherGO);
         ScriptContext.GameObjects.Add(watcherGO);
 
@@ -63,7 +63,8 @@ public static class WatchField
         watcher.target = comp;
         watcher.field = field;
         watcher.fieldName = fieldName;
-        watcher.targetName = goName + "." + compType + "." + fieldName;
+        watcher.targetName = goName + "." + compType + "." + fieldName +
+            (field.DeclaringType == comp.GetType() ? "" : " (" + field.DeclaringType.Name + ")");
 
         try
         {
@@ -76,6 +77,23 @@ public static class WatchField
         }
 
         ScriptContext.Logger("Watching " + watcher.targetName + " (current: " + watcher.lastValue + "). Use unload_script to stop.");
+    }
+
+    private static GameObject FindGameObject(string name, out bool isAsset)
+    {
+        isAsset = false;
+        var go = GameObject.Find(name);
+        if (go != null) return go;
+
+        GameObject asset = null;
+        foreach (var candidate in Resources.FindObjectsOfTypeAll<GameObject>())
+        {
+            if (candidate == null || candidate.name != name) continue;
+            if (candidate.scene.IsValid()) return candidate;
+            if (asset == null) asset = candidate;
+        }
+        isAsset = asset != null;
+        return asset;
     }
 
     public static void Unload()
@@ -96,6 +114,10 @@ public class FieldWatcher : MonoBehaviour
     {
         if (target == null || field == null)
         {
+            var log = WatchField.cachedLogger;
+            if (log != null)
+                log(targetName + ": the watched object was destroyed; nothing more to watch. Use unload_script to stop.");
+            enabled = false;
             return;
         }
 

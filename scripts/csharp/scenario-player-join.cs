@@ -50,6 +50,7 @@ public static class ScenarioPlayerJoin
             new HarmonyMethod(typeof(ScenarioPlayerJoin).GetMethod("InputPrefix", flags)), postfix);
 
         var go = new GameObject("ScenarioPlayerJoin");
+        go.tag = "Unpausable";
         UnityEngine.Object.DontDestroyOnLoad(go);
         ScriptContext.GameObjects.Add(go);
         Runner = go.AddComponent<ScenarioPlayerJoinRunner>();
@@ -163,13 +164,14 @@ public class ScenarioPlayerJoinRunner : MonoBehaviour
 {
     private const float JoinTimeoutSec = 5f;
     private const float SpawnTimeoutSec = 15f;
+    private const int PlaceBlocks = 4;
 
     private int controllerId;
     private float durationSec;
     private string driver;
     private string phase = "joining";
     private float phaseStart;
-    private float runStart;
+    private float clock;
     private int slot = -1;
     private bool joined;
     private bool dropped;
@@ -180,6 +182,7 @@ public class ScenarioPlayerJoinRunner : MonoBehaviour
     private int savedLeader = -1;
     private float startX;
     private float startGap = -1f;
+    private float closestGap = -1f;
     private float maxMoved;
     private bool p2Died;
     private string spawnedAs;
@@ -194,8 +197,8 @@ public class ScenarioPlayerJoinRunner : MonoBehaviour
         this.controllerId = controllerId;
         this.durationSec = durationSec;
         this.driver = driver;
-        runStart = Time.realtimeSinceStartup;
-        phaseStart = runStart;
+        clock = 0f;
+        phaseStart = 0f;
         ScenarioPlayerJoin.Phase = "joining";
 
         var hc = HeroController.Instance;
@@ -221,12 +224,13 @@ public class ScenarioPlayerJoinRunner : MonoBehaviour
 
     private float Now()
     {
-        return Mathf.Round((Time.realtimeSinceStartup - runStart) * 10f) / 10f;
+        return Mathf.Round(clock * 10f) / 10f;
     }
 
     private void Update()
     {
-        if (phase == "done") return;
+        if (phase == "done" || PauseController.Paused) return;
+        clock += Time.unscaledDeltaTime;
         try { Tick(); }
         catch (Exception e)
         {
@@ -238,7 +242,7 @@ public class ScenarioPlayerJoinRunner : MonoBehaviour
 
     private void Tick()
     {
-        float inPhase = Time.realtimeSinceStartup - phaseStart;
+        float inPhase = clock - phaseStart;
         if (phase == "joining")
         {
             for (int i = 0; i < 4; i++)
@@ -274,17 +278,19 @@ public class ScenarioPlayerJoinRunner : MonoBehaviour
             {
                 spawnDelay = inPhase;
                 spawnedAs = p.character.GetType().Name;
-                startX = p.character.X;
                 var lead = HeroController.players[0];
-                if (lead != null && lead.character != null) startGap = Mathf.Abs(lead.character.X - startX);
+                TestVanDammeAnim leader = lead == null ? null : lead.character;
                 checks.Add(Check("spawned", p.character.playerNum == slot, spawnedAs + " with playerNum " + p.character.playerNum
-                    + " after " + Mathf.Round(inPhase * 10f) / 10f + " s, lives " + p.Lives));
+                    + " after " + Mathf.Round(inPhase * 10f) / 10f + " s, lives " + p.Lives
+                    + (leader == null ? "" : ", " + Mathf.Round(Mathf.Abs(leader.X - p.character.X)) + " px from player 1")));
                 if (driver == "bot")
                 {
                     p.EnableBotBrain();
                     p.SetBotbrainLeader(0);
-                    AddEvent("drive", "follower bot enabled, leader player 0");
+                    AddEvent("drive", "follower bot enabled, leader player 0, " + PlaceAway(p.character, leader));
                 }
+                startX = p.character.X;
+                if (leader != null) closestGap = startGap = Mathf.Abs(leader.X - startX);
                 Next("driving");
             }
             else if (inPhase > SpawnTimeoutSec)
@@ -298,18 +304,22 @@ public class ScenarioPlayerJoinRunner : MonoBehaviour
         {
             var p = HeroController.players[slot];
             var ch = p == null ? null : p.character;
-            if (ch != null && ch.health > 0) maxMoved = Mathf.Max(maxMoved, Mathf.Abs(ch.X - startX));
+            var lead = HeroController.players[0];
+            if (ch != null && ch.health > 0)
+            {
+                maxMoved = Mathf.Max(maxMoved, Mathf.Abs(ch.X - startX));
+                if (lead != null && lead.character != null) closestGap = Mathf.Min(closestGap, Mathf.Abs(lead.character.X - ch.X));
+            }
             else if (!p2Died) { p2Died = true; AddEvent("death", "player " + (slot + 1) + " died while driven"); }
             if (inPhase >= durationSec)
             {
-                // The follower bot stops at its leader, so with player 1 standing still it moves only as far as the gap it spawned at.
                 bool moved = maxMoved >= 16f && ScenarioPlayerJoin.BotMoveFrames > 0;
                 bool fired = ScenarioPlayerJoin.FireFrames > 0;
                 if (driver == "idle")
                     checks.Add(Check("held", maxMoved < 16f, "input held off for " + durationSec + " s, moved " + Mathf.Round(maxMoved) + " px"));
                 else
-                    checks.Add(Check("driven", moved || fired, "moved " + Mathf.Round(maxMoved) + " px from spawn " + Mathf.Round(startGap) + " px from player 1, bot movement input on "
-                        + ScenarioPlayerJoin.BotMoveFrames + " frames, fire held " + ScenarioPlayerJoin.FireFrames + " frames"));
+                    checks.Add(Check("driven", moved || fired, "moved " + Mathf.Round(maxMoved) + " px from " + Mathf.Round(startGap) + " px from player 1, closest "
+                        + Mathf.Round(closestGap) + " px, bot movement input on " + ScenarioPlayerJoin.BotMoveFrames + " frames, fire held " + ScenarioPlayerJoin.FireFrames + " frames"));
                 var p1 = HeroController.players[0];
                 bool p1ok = p1 != null && HeroController.IsPlayerPlaying(0) && HeroController.playerControllerIDs[0] == p1ControllerBefore;
                 checks.Add(Check("player1Unaffected", p1ok, "player 1 " + (p1 == null ? "missing" : "playing " + HeroController.IsPlayerPlaying(0)
@@ -336,10 +346,38 @@ public class ScenarioPlayerJoinRunner : MonoBehaviour
         }
     }
 
+    private static string PlaceAway(TestVanDammeAnim bot, TestVanDammeAnim leader)
+    {
+        if (leader == null) return "no player 1 bro to place it away from";
+        int col = Map.GetCollumn(leader.X);
+        int row = Map.GetRow(leader.Y);
+        for (int blocks = PlaceBlocks; blocks >= 2; blocks--)
+        {
+            foreach (int dir in new int[] { 1, -1 })
+            {
+                bool clear = true;
+                for (int i = 1; i <= blocks && clear; i++) clear = Walkable(col + dir * i, row);
+                if (!clear) continue;
+                bot.SetXY(Map.GetBlockCenterX(col + dir * blocks), leader.Y);
+                bot.SetPosition();
+                bot.xI = 0f;
+                bot.yI = 0f;
+                bot.xIBlast = 0f;
+                return "placed " + blocks + " blocks to the " + (dir > 0 ? "right" : "left") + " of player 1";
+            }
+        }
+        return "no level ground clear within " + PlaceBlocks + " blocks of player 1, so it stays where it spawned";
+    }
+
+    private static bool Walkable(int col, int row)
+    {
+        return !Map.IsBlockSolid(col, row) && !Map.IsBlockSolid(col, row + 1) && Map.IsBlockSolid(col, row - 1);
+    }
+
     private void Next(string next)
     {
         phase = next;
-        phaseStart = Time.realtimeSinceStartup;
+        phaseStart = clock;
         ScenarioPlayerJoin.Phase = next;
     }
 

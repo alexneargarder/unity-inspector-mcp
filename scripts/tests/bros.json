@@ -1,0 +1,1442 @@
+{
+  "name": "Bro swapping and selection",
+  "description": "Covers swap_bro, with and without nextSpawn, and list_bros over vanilla, Expendabros and unfinished names, case and spacing mismatches, an unlocked custom bro, a custom bro locked in memory (Cobro) with and without ignoreUnlocks, an already-held bro, an unknown name and out-of-range player numbers, the respawn after a plain and a bypass swap, the reply's roster broName and objectName, a bro the game holds refused, a swap keeping the save's hero unlocks and playing no unlock cutscene, a locked custom bro left out by Filter Bros with ignoreUnlocks, nextSpawn on a level that forces its bros, a swap Swap Bros Mod reports that the slot does not hold, one the slot loses within half a second, an incompatible Swap Bros Mod and a Swap Bros Mod lookup made again once lost, the reason each failure carries (no-player on an empty slot here, no-level in game-states.json), and swap-bros-missing and swap-failed, produced by hiding the integration's Swap Bros Mod in memory and by switching off Swap Bros Mod's enabled flag and selection array for one call each. Needs a loaded level, Swap Bros Mod with BroMaker enabled, alwaysChosen on and the custom bro installed and unlocked. Its first steps undo whatever an earlier run left changed, and its last steps unlock the bro again, restore the Swap Bros settings and anything those calls left switched off and reload the level it started in. Locking the bro never touches its saved unlock progress. Its cleanup runs the restore again whatever ended the steps: the lock, the Swap Bros settings, the hidden integration, Swap Bros Mod's enabled flag and selection array, the second player, IronBro, pause and speed.",
+  "steps": [
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "escape"
+      },
+      "until": {
+        "timeout": 90,
+        "interval": 1
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 1000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nstring log = \"\";\ntry { if (PauseController.pauseStatus != PauseStatus.UnPaused) { PauseController.SetPause(PauseStatus.UnPaused); log += \"unpaused \"; } } catch (System.Exception ex) { log += \"unpause failed: \" + ex.Message + \" \"; }\nif (UnityEngine.Time.timeScale != 1f) { UnityEngine.Time.timeScale = 1f; log += \"speed1 \"; }\ntry { if (d.GetData(\"uimtest.joined\") != null && HeroController.IsPlaying(1)) { HeroController.Dropout(1, false); log += \"dropped1 \"; } } catch (System.Exception ex) { log += \"dropout failed: \" + ex.Message + \" \"; }\nd.SetData(\"uimtest.joined\", null);\nvar hc = d.GetData(\"uimtest.ironbro\") as string;\nd.SetData(\"uimtest.ironbro\", null);\ntry {\n  var save = GameState.Instance.currentWorldmapSave;\n  if (hc != null && save != null) {\n    var parts = hc.Split(':');\n    save.worldMapIsHardcoreCampaign = parts[0] == \"1\";\n    save.hardcoreLives = int.Parse(parts[1]);\n    save.hardcoreModeAvailableBros.Clear();\n    foreach (var n in parts[2].Split(',')) if (n.Length > 0) save.hardcoreModeAvailableBros.Add((HeroType)System.Enum.Parse(typeof(HeroType), n));\n    log += \"ironbro-restored \";\n  }\n} catch (System.Exception ex) { log += \"ironbro restore failed: \" + ex.Message + \" \"; }\nvar lk = d.GetData(\"uimtest.lock\") as string;\nd.SetData(\"uimtest.lock\", null);\ntry {\n  if (lk != null) {\n    var fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\n    var t = System.Type.GetType(\"BroMakerLib.Unlocks.BroUnlockManager, BroMakerLib\");\n    var pd = t.GetField(\"progressData\", fl).GetValue(null);\n    var states = pd.GetType().GetProperty(\"BroStates\").GetValue(pd, null) as System.Collections.IDictionary;\n    var st = states[lk];\n    st.GetType().GetProperty(\"IsUnlocked\").SetValue(st, true, null);\n    st.GetType().GetProperty(\"UnlockedDate\").SetValue(st, d.GetData(\"uimtest.lock.date\"), null);\n    var names = t.GetProperty(\"UnlockedBroNames\", fl).GetValue(null, null) as System.Collections.Generic.List<string>;\n    var bros = t.GetProperty(\"UnlockedBros\", fl).GetValue(null, null) as System.Collections.IList;\n    int ni = (int)d.GetData(\"uimtest.lock.ni\"); if (ni < 0 || ni > names.Count) ni = names.Count;\n    if (!names.Contains(lk)) names.Insert(ni, lk);\n    var hero = d.GetData(\"uimtest.lock.hero\");\n    int hi = (int)d.GetData(\"uimtest.lock.hi\"); if (hi < 0 || hi > bros.Count) hi = bros.Count;\n    if (hero != null && !bros.Contains(hero)) bros.Insert(hi, hero);\n    typeof(BroMakerLib.Storages.BroSpawnManager).GetMethod(\"BroStatusChanged\", fl).Invoke(null, null);\n    log += \"unlocked \" + lk + \" \";\n  }\n} catch (System.Exception ex) { log += \"unlock failed: \" + ex.Message + \" \"; }\ntry {\n  if (d.GetData(\"uimtest.swaphidden\") != null) { typeof(Unity_Inspector_Mod.SwapBrosIntegration).GetField(\"_isAvailable\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).SetValue(null, true); d.SetData(\"uimtest.swaphidden\", null); log += \"swap-bros-shown \"; }\n  if (d.GetData(\"uimtest.swapdisabled\") != null) { Swap_Bros_Mod.Main.enabled = true; d.SetData(\"uimtest.swapdisabled\", null); log += \"swap-bros-enabled \"; }\n  var grid = d.GetData(\"uimtest.selgrid\") as int[];\n  if (grid != null) { Swap_Bros_Mod.Main.settings.selGridInt = grid; d.SetData(\"uimtest.selgrid\", null); log += \"selgrid-restored \"; }\n} catch (System.Exception ex) { log += \"swap bros state restore failed: \" + ex.Message + \" \"; }\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); set.selGridInt[i] = ix < 0 ? 0 : ix; }\n    log += \"swap-settings-restored \";\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\ntry {\n  var bc0 = HeroController.players != null && HeroController.players[0] != null ? HeroController.players[0].character : null;\n  if (d.GetData(\"uimtest.hiding\") != null && bc0 != null) { bc0.HidingPlayer = false; log += \"hiding-cleared \"; }\n  var ul = d.GetData(\"uimtest.unlocks\") as string;\n  if (ul != null) {\n    var pp = PlayerProgress.Instance;\n    if (ul[0] == '1' && !pp.unlockedHeroes.Contains(HeroType.Brominator)) pp.unlockedHeroes.Add(HeroType.Brominator);\n    if (ul[1] == '0') pp.yetToBePlayedUnlockedHeroes.Remove(HeroType.Brominator);\n    log += \"unlocks-restored \";\n  }\n  var fr = d.GetData(\"uimtest.filter\") as object[];\n  if (fr != null) { Swap_Bros_Mod.Main.settings.filterBros = (bool)fr[0]; Swap_Bros_Mod.Main.settings.enabledBros = (System.Collections.Generic.List<string>)fr[1]; Swap_Bros_Mod.Main.CreateBroList(); log += \"filter-restored \"; }\n  var fb = d.GetData(\"uimtest.forced\") as string;\n  if (fb != null && Map.MapData != null) { Map.MapData.forcedBro = (HeroType)System.Enum.Parse(typeof(HeroType), fb); log += \"forced-bro-restored \"; }\n  var cb = d.GetData(\"uimtest.cbl\");\n  if (cb != null) { typeof(Unity_Inspector_Mod.SwapBrosIntegration).GetField(\"_createBroListMethod\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).SetValue(null, cb); log += \"create-bro-list-restored \"; }\n} catch (System.Exception ex) { log += \"bro state restore failed: \" + ex.Message + \" \"; }\nforeach (var k in new[] { \"uimtest.hiding\", \"uimtest.unlocks\", \"uimtest.filter\", \"uimtest.forced\", \"uimtest.cbl\" }) d.SetData(k, null);\ntry {\n  if (d.GetData(\"uimtest.sbn\") != null) { typeof(Unity_Inspector_Mod.SwapBrosIntegration).GetField(\"_swapByNameMethod\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).SetValue(null, typeof(Swap_Bros_Mod.API).GetMethod(\"SwapByName\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)); log += \"swap-by-name-restored \"; }\n  foreach (var tr in Resources.FindObjectsOfTypeAll<Transform>()) if (tr != null && tr.parent == null && tr.name == \"UimRespawnLater\") UnityEngine.Object.Destroy(tr.gameObject);\n} catch (System.Exception ex) { log += \"swap-by-name restore failed: \" + ex.Message + \" \"; }\nd.SetData(\"uimtest.sbn\", null);\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar sc = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;\nvar camp = LevelSelectionController.currentCampaign;\nstring key = sc + \"|\" + (camp == null ? \"\" : camp.name) + \"|\" + LevelSelectionController.CurrentLevelNum;\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nfloat now = UnityEngine.Time.realtimeSinceStartup;\nvar last = d.GetData(\"uimtest.settle\") as string;\nint cut = last == null ? -1 : last.LastIndexOf('|');\nif (last == null || last.Substring(0, cut) != key) {\n  d.SetData(\"uimtest.settle\", key + \"|\" + now.ToString(ic));\n  return \"waiting: \" + sc + \" just came up\";\n}\nfloat since = now - float.Parse(last.Substring(cut + 1), ic);\nif (sc == \"LoadingScreen\") return \"waiting: loading\";\nif (LevelSelectionController.IsCampaignScene) {\n  if (HeroController.Instance == null || Map.Instance == null || GameModeController.Instance == null) return \"waiting: the level is still being built\";\n  var wt = typeof(GameModeController).GetField(\"winTimer\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\n  if (GameModeController.IsLevelFinished() && (float)wt.GetValue(GameModeController.Instance) < 999999f) return \"waiting: the level finished and is moving on\";\n}\nif (since < 4f) return \"waiting: \" + sc + \" unchanged for \" + since.ToString(\"0.0\", ic) + \" s\";\nreturn \"settled in \" + sc;"
+      },
+      "until": {
+        "timeout": 90,
+        "interval": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "settled in"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar set = Swap_Bros_Mod.Main.settings;\nSwap_Bros_Mod.API.EnsureBroListUpdated();\nvar l = Swap_Bros_Mod.Main.currentBroList;\nstring sw = set.alwaysChosen + \"|\" + set.ignoreCurrentUnlocked;\nfor (int i = 0; i < 4; i++) sw += \"|\" + l[set.selGridInt[i]];\nd.SetData(\"uimtest.swap\", sw);\nd.SetData(\"uimtest.found\", sw);\nstring lv = \"0|1\";\nif (LevelSelectionController.IsCampaignScene && LevelSelectionController.currentCampaign != null) {\n  var all = typeof(Unity_Inspector_Mod.StateModifier).GetField(\"CampaignNames\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).GetValue(null) as string[];\n  for (int i = 0; i < all.Length; i++) if (string.Equals(all[i], LevelSelectionController.currentCampaign.name, System.StringComparison.OrdinalIgnoreCase)) lv = i + \"|\" + LevelSelectionController.CurrentLevelNum;\n}\nd.SetData(\"uimtest.level\", lv);\nd.SetData(\"uimtest.settle\", null);\nreturn \"recorded swap=\" + sw + \" level=\" + d.GetData(\"uimtest.level\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "recorded swap="
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar rec = (d.GetData(\"uimtest.level\") as string) ?? \"0|1\";\n\nvar p = rec.Split('|');\nvar r = Unity_Inspector_Mod.StateModifier.GoToLevel(int.Parse(p[0]), int.Parse(p[1]));\nvar j = Newtonsoft.Json.Linq.JToken.FromObject(r);\nreturn \"loading recorded level \" + rec + \": success=\" + j[\"success\"] + \" \" + j.ToString(Newtonsoft.Json.Formatting.None);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "success=True"
+        ]
+      },
+      "wait": 6000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "list_bros",
+      "params": {
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"currentBro\": \"",
+          "\"currentBros\": [",
+          "\"allNormal\"",
+          "\"allExpendabros\"",
+          "\"allUnfinished\""
+        ]
+      }
+    },
+    {
+      "command": "list_bros",
+      "params": {
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"Cobro\"",
+          "\"Test_Rambro\"",
+          "\"Bronobi\"",
+          "\"R.J. Brocready\"",
+          "\"Test_LegacySpriteKey\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "System.AppDomain.CurrentDomain.SetData(\"uimtest.lives\", HeroController.players[0].Lives);\nreturn \"lives=\" + HeroController.players[0].Lives;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "lives="
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Brommando",
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"heroType\": \"Brommando\"",
+          "\"objectName\": \""
+        ]
+      }
+    },
+    {
+      "command": "list_bros",
+      "params": {
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"currentBro\": \"Brommando\""
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Broney Ross",
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"heroType\": \"BroneyRoss\"",
+          "\"objectName\": \""
+        ]
+      }
+    },
+    {
+      "command": "list_bros",
+      "params": {
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"currentBro\": \"Broney Ross\""
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Casey Broback",
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"heroType\": \"CaseyBroback\"",
+          "\"objectName\": \""
+        ]
+      }
+    },
+    {
+      "command": "list_bros",
+      "params": {
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"currentBro\": \"Casey Broback\""
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "tANK bRO",
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"heroType\": \"TankBro\"",
+          "\"objectName\": \""
+        ]
+      }
+    },
+    {
+      "command": "list_bros",
+      "params": {
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"currentBro\": \"Tank Bro\""
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "TankBro",
+        "playerNum": 0
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Bro 'TankBro' not found",
+          "\"allNormal\"",
+          "\"allExpendabros\"",
+          "\"allUnfinished\"",
+          "\"reason\": \"unknown-bro\""
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Boondock Bros",
+        "playerNum": 0
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Bro 'Boondock Bros' not found",
+          "\"allNormal\"",
+          "\"allExpendabros\"",
+          "\"allUnfinished\"",
+          "\"reason\": \"unknown-bro\""
+        ]
+      }
+    },
+    {
+      "command": "list_bros",
+      "params": {
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"currentBro\": \"Tank Bro\""
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Cobro",
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Cobro"
+        ]
+      }
+    },
+    {
+      "command": "list_bros",
+      "params": {
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"currentBro\": \"Cobro\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nSystem.AppDomain.CurrentDomain.SetData(\"uimtest.charid\", c.GetInstanceID());\nreturn \"holding \" + c.name;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Cobro"
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Cobro",
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Cobro"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nint before = (int)d.GetData(\"uimtest.charid\");\nd.SetData(\"uimtest.charid\", null);\nvar c = HeroController.players[0].character;\nreturn c == null ? \"slot empty\" : (c.GetInstanceID() == before ? \"same instance \" + c.name : \"new instance \" + c.name);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "new instance BM_Cobro"
+        ]
+      }
+    },
+    {
+      "command": "list_bros",
+      "params": {
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"currentBro\": \"Cobro\""
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "NotARealBro",
+        "playerNum": 0
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Bro 'NotARealBro' not found",
+          "\"availableBros\"",
+          "\"allNormal\"",
+          "\"allExpendabros\"",
+          "\"allUnfinished\"",
+          "\"reason\": \"unknown-bro\"",
+          "\"suggestions\""
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Rambro",
+        "playerNum": 4
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Player number must be 0-3",
+          "\"reason\": \"bad-player\""
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Rambro",
+        "playerNum": -1
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Player number must be 0-3",
+          "\"reason\": \"bad-player\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nint before = (int)d.GetData(\"uimtest.lives\");\nd.SetData(\"uimtest.lives\", null);\nint now = HeroController.players[0].Lives;\nreturn now == before ? \"lives unchanged (\" + now + \")\" : \"lives changed from \" + before + \" to \" + now;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "lives unchanged"
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Tank Bro",
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"heroType\": \"TankBro\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nstring name = \"Cobro\";\nvar fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\nvar t = System.Type.GetType(\"BroMakerLib.Unlocks.BroUnlockManager, BroMakerLib\");\nvar pd = t.GetField(\"progressData\", fl).GetValue(null);\nvar states = pd.GetType().GetProperty(\"BroStates\").GetValue(pd, null) as System.Collections.IDictionary;\nvar st = states[name];\nvar names = t.GetProperty(\"UnlockedBroNames\", fl).GetValue(null, null) as System.Collections.Generic.List<string>;\nvar bros = t.GetProperty(\"UnlockedBros\", fl).GetValue(null, null) as System.Collections.IList;\nif (d.GetData(\"uimtest.lock\") == null) {\n  int hi = -1;\n  for (int i = 0; i < bros.Count; i++) if (((BroMakerLib.Storages.StoredHero)bros[i]).name == name) hi = i;\n  d.SetData(\"uimtest.lock.date\", st.GetType().GetProperty(\"UnlockedDate\").GetValue(st, null));\n  d.SetData(\"uimtest.lock.ni\", names.IndexOf(name));\n  d.SetData(\"uimtest.lock.hi\", hi);\n  d.SetData(\"uimtest.lock.hero\", hi < 0 ? null : bros[hi]);\n  d.SetData(\"uimtest.lock\", name);\n  st.GetType().GetProperty(\"IsUnlocked\").SetValue(st, false, null);\n  st.GetType().GetProperty(\"UnlockedDate\").SetValue(st, null, null);\n  names.Remove(name);\n  if (hi >= 0) bros.RemoveAt(hi);\n  typeof(BroMakerLib.Storages.BroSpawnManager).GetMethod(\"BroStatusChanged\", fl).Invoke(null, null);\n}\nreturn \"locked \" + name + \": unlocked=\" + BroMakerLib.Storages.BroSpawnManager.IsBroUnlocked(name) + \" inUnlockedNames=\" + names.Contains(name);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "locked Cobro: unlocked=False inUnlockedNames=False"
+        ]
+      }
+    },
+    {
+      "command": "list_bros",
+      "params": {
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"Cobro\""
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Cobro",
+        "playerNum": 0
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "locked",
+          "\"reason\": \"unreachable\""
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Cobro",
+        "playerNum": 0,
+        "nextSpawn": true
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "locked",
+          "\"reason\": \"unreachable\""
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Cobro",
+        "playerNum": 0,
+        "ignoreUnlocks": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Cobro",
+          "\"broFrom\": \"custom\"",
+          "\"ignoreCurrentUnlocked\": false",
+          "\"customListReplaced\": true",
+          "\"rosterGate\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var set = Swap_Bros_Mod.Main.settings;\nreturn \"alwaysChosen=\" + set.alwaysChosen + \" ignore=\" + set.ignoreCurrentUnlocked + \" inSwapList=\" + Swap_Bros_Mod.Main.currentBroList.Contains(\"Cobro\") + \" unlocked=\" + BroMakerLib.Storages.BroSpawnManager.IsBroUnlocked(\"Cobro\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "alwaysChosen=True ignore=False inSwapList=False unlocked=False"
+        ]
+      }
+    },
+    {
+      "command": "list_bros",
+      "params": {
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"currentBro\": \"Cobro\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nc.SetInvulnerable(0f, false, false);\nc.Damage(c.health + 1, DamageType.Bullet, 0f, 0f, 0, null, c.X, c.Y);\nreturn \"player 0 \" + c.actionState;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Dead"
+        ]
+      },
+      "wait": 5000
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"broName\": \"TankBro(Clone) [local]\"",
+          "\"isAlive\": true"
+        ],
+        "notContains": [
+          "BM_Cobro"
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Brominator",
+        "playerNum": 0,
+        "ignoreUnlocks": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"heroType\": \"Brominator\"",
+          "\"broFrom\": \"vanilla\"",
+          "\"rosterGate\": false"
+        ]
+      }
+    },
+    {
+      "command": "list_bros",
+      "params": {
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"currentBro\": \"Brominator\""
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Brommando",
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"heroType\": \"Brommando\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nc.SetInvulnerable(0f, false, false);\nc.Damage(c.health + 1, DamageType.Bullet, 0f, 0f, 0, null, c.X, c.Y);\nreturn \"player 0 \" + c.actionState;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Dead"
+        ]
+      },
+      "wait": 5000
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"heroType\": \"Brommando\"",
+          "\"isAlive\": true"
+        ]
+      }
+    },
+    {
+      "command": "list_bros",
+      "params": {
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"currentBro\": \"Brommando\""
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Tank Bro",
+        "playerNum": 0,
+        "nextSpawn": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"nextBro\": \"Tank Bro\"",
+          "\"appliesThisLevel\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nc.SetInvulnerable(0f, false, false);\nc.Damage(c.health + 1, DamageType.Bullet, 0f, 0f, 0, null, c.X, c.Y);\nreturn \"player 0 \" + c.actionState;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Dead"
+        ]
+      },
+      "wait": 5000
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "\"heroType\": \"TankBro\"",
+          "\"isAlive\": true"
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Test_Rambro",
+        "playerNum": 0,
+        "nextSpawn": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"nextBro\": \"Test_Rambro\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = HeroController.players[0].character;\nc.SetInvulnerable(0f, false, false);\nc.Damage(c.health + 1, DamageType.Bullet, 0f, 0f, 0, null, c.X, c.Y);\nreturn \"player 0 \" + c.actionState;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Dead"
+        ]
+      },
+      "wait": 5000
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "expect": {
+        "contains": [
+          "BM_Test_Rambro",
+          "\"isAlive\": true"
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "bRoMmAnDo",
+        "playerNum": 0,
+        "nextSpawn": true
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "list_bros",
+      "params": {
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"selectedBro\": \"Brommando\"",
+          "\"currentBro\": \"Test_Rambro\""
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "TankBro",
+        "playerNum": 0,
+        "nextSpawn": true
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Bro 'TankBro' not found",
+          "\"allNormal\"",
+          "\"allExpendabros\"",
+          "\"allUnfinished\"",
+          "\"reason\": \"unknown-bro\""
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Rambro",
+        "playerNum": 4,
+        "nextSpawn": true
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Player number must be 0-3",
+          "\"reason\": \"bad-player\""
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Rambro",
+        "playerNum": -1,
+        "nextSpawn": true
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Player number must be 0-3",
+          "\"reason\": \"bad-player\""
+        ]
+      }
+    },
+    {
+      "command": "list_bros",
+      "params": {
+        "playerNum": 4
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Player number must be 0-3",
+          "\"reason\": \"bad-player\""
+        ]
+      }
+    },
+    {
+      "command": "list_bros",
+      "params": {
+        "playerNum": -1
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Player number must be 0-3",
+          "\"reason\": \"bad-player\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "Swap_Bros_Mod.Main.settings.alwaysChosen = false;\nreturn \"alwaysChosen=\" + Swap_Bros_Mod.Main.settings.alwaysChosen;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "alwaysChosen=False"
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Rambro",
+        "playerNum": 0,
+        "nextSpawn": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "alwaysChosen",
+          "\"nextBro\": \"Rambro\"",
+          "\"before\": false",
+          "\"after\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return \"alwaysChosen=\" + Swap_Bros_Mod.Main.settings.alwaysChosen;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "alwaysChosen=",
+          "alwaysChosen=True"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nbool before = Unity_Inspector_Mod.SwapBrosIntegration.IsAvailable;\nd.SetData(\"uimtest.swaphidden\", \"1\");\ntypeof(Unity_Inspector_Mod.SwapBrosIntegration).GetField(\"_isAvailable\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).SetValue(null, false);\nreturn \"available before=\" + before + \" now=\" + Unity_Inspector_Mod.SwapBrosIntegration.IsAvailable;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "available before=True now=False"
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Brommando",
+        "playerNum": 0
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Swap Bros Mod is required but not active",
+          "\"reason\": \"swap-bros-missing\""
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Brommando",
+        "playerNum": 0,
+        "nextSpawn": true
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Swap Bros Mod is required but not active",
+          "\"reason\": \"swap-bros-missing\""
+        ]
+      }
+    },
+    {
+      "command": "list_bros",
+      "params": {
+        "playerNum": 0
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Swap Bros Mod is required but not active",
+          "\"reason\": \"swap-bros-missing\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\ntypeof(Unity_Inspector_Mod.SwapBrosIntegration).GetField(\"_isAvailable\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).SetValue(null, true);\nd.SetData(\"uimtest.swaphidden\", null);\nreturn \"available=\" + Unity_Inspector_Mod.SwapBrosIntegration.IsAvailable;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "available=True"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "System.AppDomain.CurrentDomain.SetData(\"uimtest.swapdisabled\", \"1\");\nSwap_Bros_Mod.Main.enabled = false;\nreturn \"enabled=\" + Swap_Bros_Mod.Main.enabled;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "enabled=False"
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Brommando",
+        "playerNum": 0
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Swap Bros Mod did not swap player 0 to 'Brommando'",
+          "\"reason\": \"swap-failed\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "Swap_Bros_Mod.Main.enabled = true;\nSystem.AppDomain.CurrentDomain.SetData(\"uimtest.swapdisabled\", null);\nreturn \"enabled=\" + Swap_Bros_Mod.Main.enabled;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "enabled=True"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var s = Swap_Bros_Mod.Main.settings;\nSystem.AppDomain.CurrentDomain.SetData(\"uimtest.selgrid\", s.selGridInt);\ns.selGridInt = null;\nreturn \"selGridInt=\" + (s.selGridInt == null ? \"null\" : \"set\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "selGridInt=null"
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Brommando",
+        "playerNum": 0,
+        "nextSpawn": true
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Swap Bros Mod did not select 'Brommando' for player 0",
+          "\"reason\": \"swap-failed\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nSwap_Bros_Mod.Main.settings.selGridInt = (int[])d.GetData(\"uimtest.selgrid\");\nd.SetData(\"uimtest.selgrid\", null);\nreturn \"selGridInt=\" + Swap_Bros_Mod.Main.settings.selGridInt.Length;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "selGridInt=4"
+        ]
+      }
+    },
+    {
+      "command": "list_bros",
+      "params": {
+        "playerNum": 0
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"currentBros\": ["
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Brommando",
+        "playerNum": 1
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "no player in slot 1",
+          "\"reason\": \"no-player\""
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Brommando"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"broName\": \"Brommando\"",
+          "\"objectName\": \"",
+          "\"heroType\": \"Brommando\""
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Test_Rambro"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"broName\": \"Test_Rambro\"",
+          "\"objectName\": \"BM_Test_Rambro"
+        ],
+        "notContains": [
+          "\"heroType\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar c = HeroController.players[0].character;\nd.SetData(\"uimtest.hiding\", \"1\");\nc.HidingPlayer = true;\nreturn \"hiding=\" + c.HidingPlayer;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "hiding=True"
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Brommando"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "held by the game",
+          "\"reason\": \"held\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar c = HeroController.players[0].character;\nc.HidingPlayer = false;\nd.SetData(\"uimtest.hiding\", null);\nreturn \"hiding=\" + c.HidingPlayer;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "hiding=False"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar p = PlayerProgress.Instance;\nif (d.GetData(\"uimtest.unlocks\") == null) d.SetData(\"uimtest.unlocks\", (p.unlockedHeroes.Contains(HeroType.Brominator) ? \"1\" : \"0\") + (p.yetToBePlayedUnlockedHeroes.Contains(HeroType.Brominator) ? \"1\" : \"0\"));\np.unlockedHeroes.Remove(HeroType.Brominator);\nif (!p.yetToBePlayedUnlockedHeroes.Contains(HeroType.Brominator)) p.yetToBePlayedUnlockedHeroes.Add(HeroType.Brominator);\nreturn \"Brominator not unlocked, unplayed\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Brominator not unlocked, unplayed"
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Brominator",
+        "ignoreUnlocks": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"heroType\": \"Brominator\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var p = PlayerProgress.Instance;\nreturn \"unlocked=\" + p.unlockedHeroes.Contains(HeroType.Brominator) + \" unplayed=\" + p.yetToBePlayedUnlockedHeroes.Contains(HeroType.Brominator) + \" cutscene=\" + CutsceneController.InCutscene + \" pause=\" + PauseController.pauseStatus;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "unlocked=False unplayed=True cutscene=False pause=UnPaused"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar rec = d.GetData(\"uimtest.unlocks\") as string;\nd.SetData(\"uimtest.unlocks\", null);\nvar p = PlayerProgress.Instance;\nif (rec != null) {\n  if (rec[0] == '1' && !p.unlockedHeroes.Contains(HeroType.Brominator)) p.unlockedHeroes.Add(HeroType.Brominator);\n  if (rec[1] == '0') p.yetToBePlayedUnlockedHeroes.Remove(HeroType.Brominator);\n}\nreturn \"unlocks restored to \" + rec;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "unlocks restored to"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar set = Swap_Bros_Mod.Main.settings;\nif (d.GetData(\"uimtest.filter\") == null) d.SetData(\"uimtest.filter\", new object[] { set.filterBros, new System.Collections.Generic.List<string>(set.enabledBros) });\nSwap_Bros_Mod.API.EnsureBroListUpdated();\nset.enabledBros = new System.Collections.Generic.List<string>(Swap_Bros_Mod.Main.currentBroList);\nset.enabledBros.Remove(\"Cobro\");\nset.filterBros = true;\nSwap_Bros_Mod.Main.CreateBroList();\nreturn \"filter on, Cobro enabled=\" + set.enabledBros.Contains(\"Cobro\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "filter on, Cobro enabled=False"
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Cobro",
+        "ignoreUnlocks": true
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Filter Bros option leaves it out",
+          "\"reason\": \"unreachable\""
+        ],
+        "notContains": [
+          "it is locked"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar set = Swap_Bros_Mod.Main.settings;\nvar rec = d.GetData(\"uimtest.filter\") as object[];\nd.SetData(\"uimtest.filter\", null);\nif (rec != null) { set.filterBros = (bool)rec[0]; set.enabledBros = (System.Collections.Generic.List<string>)rec[1]; }\nSwap_Bros_Mod.Main.CreateBroList();\nreturn \"filter restored to \" + set.filterBros;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "filter restored to"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nif (d.GetData(\"uimtest.forced\") == null) d.SetData(\"uimtest.forced\", Map.MapData.forcedBro.ToString());\nMap.MapData.forcedBro = HeroType.Rambro;\nreturn \"forced \" + Map.MapData.forcedBro + \", ignoreForcedBros=\" + Swap_Bros_Mod.Main.settings.ignoreForcedBros;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "forced Rambro, ignoreForcedBros=False"
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Brommando",
+        "nextSpawn": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"nextBro\": \"Brommando\"",
+          "\"appliesThisLevel\": false",
+          "this level forces its bros"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar rec = d.GetData(\"uimtest.forced\") as string;\nd.SetData(\"uimtest.forced\", null);\nif (rec != null) Map.MapData.forcedBro = (HeroType)System.Enum.Parse(typeof(HeroType), rec);\nreturn \"forced bro back to \" + Map.MapData.forcedBro;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "forced bro back to"
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Brommando",
+        "nextSpawn": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"appliesThisLevel\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar f = typeof(Unity_Inspector_Mod.SwapBrosIntegration).GetField(\"_createBroListMethod\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);\nif (d.GetData(\"uimtest.cbl\") == null) d.SetData(\"uimtest.cbl\", f.GetValue(null));\nf.SetValue(null, null);\nreturn \"CreateBroList hidden\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "CreateBroList hidden"
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Brommando",
+        "ignoreUnlocks": true
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Main.CreateBroList()",
+          "\"reason\": \"swap-bros-incompatible\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar f = typeof(Unity_Inspector_Mod.SwapBrosIntegration).GetField(\"_createBroListMethod\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);\nvar m = d.GetData(\"uimtest.cbl\");\nd.SetData(\"uimtest.cbl\", null);\nif (m != null) f.SetValue(null, m);\nreturn \"CreateBroList back=\" + (f.GetValue(null) != null);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "CreateBroList back=True"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var f = typeof(Unity_Inspector_Mod.SwapBrosIntegration).GetField(\"_modEntry\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);\nf.SetValue(null, null);\nbool available = Unity_Inspector_Mod.SwapBrosIntegration.IsAvailable;\nreturn \"available=\" + available + \" found again=\" + (f.GetValue(null) != null);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "available=True found again=True"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"param-check\\\",\\\"method\\\":\\\"swap_bro\\\",\\\"params\\\":{\\\"broName\\\":\\\"Rambro\\\",\\\"playerNum\\\":0.5}}\", null));\nNewtonsoft.Json.Linq.JToken error = reply[\"error\"];\nif (error == null && reply[\"result\"] is Newtonsoft.Json.Linq.JObject) error = reply[\"result\"][\"error\"];\nreturn reply[\"success\"] + \"|\" + error;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "False|playerNum must be an integer, got 0.5"
+        ],
+        "notContains": [
+          "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "uim-swap-stub",
+        "source": "public static class UimSwapStub\n{\n    public static void Main() { }\n\n    public static bool Fake(int playerNum, string broName) { return true; }\n\n    public static bool SwapThenRespawn(int playerNum, string broName)\n    {\n        bool swapped = Swap_Bros_Mod.API.SwapByName(playerNum, broName);\n        new GameObject(\"UimRespawnLater\").AddComponent<UimRespawnLater>().Player = playerNum;\n        return swapped;\n    }\n\n    public static void Unload()\n    {\n        foreach (var later in Object.FindObjectsOfType<UimRespawnLater>()) Object.Destroy(later.gameObject);\n    }\n}\n\npublic class UimRespawnLater : MonoBehaviour\n{\n    public int Player;\n    private float at;\n\n    void Start() { at = Time.realtimeSinceStartup + 0.2f; }\n\n    void Update()\n    {\n        if (Time.realtimeSinceStartup < at) return;\n        var player = HeroController.players[Player];\n        if (player != null) player.SpawnHero(HeroType.Rambro);\n        Destroy(gameObject);\n    }\n}\n"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nd.SetData(\"uimtest.sbn\", \"1\");\ntypeof(Unity_Inspector_Mod.SwapBrosIntegration).GetField(\"_swapByNameMethod\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).SetValue(null, typeof(UimSwapStub).GetMethod(\"Fake\"));\nreturn \"SwapByName stubbed to do nothing\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "SwapByName stubbed to do nothing"
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Brommando"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Swap Bros Mod reported swapping player 0 to 'Brommando'",
+          "\"reason\": \"swap-failed\"",
+          "\"currentBro\": \""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "typeof(Unity_Inspector_Mod.SwapBrosIntegration).GetField(\"_swapByNameMethod\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).SetValue(null, typeof(UimSwapStub).GetMethod(\"SwapThenRespawn\"));\nreturn \"SwapByName stubbed to swap and respawn\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "SwapByName stubbed to swap and respawn"
+        ]
+      }
+    },
+    {
+      "command": "swap_bro",
+      "params": {
+        "broName": "Brommando"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Player 0 was swapped to 'Brommando'",
+          "\"reason\": \"swap-undone\"",
+          "\"currentBro\": \""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\ntypeof(Unity_Inspector_Mod.SwapBrosIntegration).GetField(\"_swapByNameMethod\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).SetValue(null, typeof(Swap_Bros_Mod.API).GetMethod(\"SwapByName\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static));\nd.SetData(\"uimtest.sbn\", null);\nreturn \"SwapByName restored=\" + (typeof(Unity_Inspector_Mod.SwapBrosIntegration).GetField(\"_swapByNameMethod\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).GetValue(null) == typeof(Swap_Bros_Mod.API).GetMethod(\"SwapByName\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static));"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "SwapByName restored=True"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "uim-swap-stub"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "escape"
+      },
+      "expect": {
+        "success": true
+      },
+      "wait": 1000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nstring log = \"\";\ntry { if (PauseController.pauseStatus != PauseStatus.UnPaused) { PauseController.SetPause(PauseStatus.UnPaused); log += \"unpaused \"; } } catch (System.Exception ex) { log += \"unpause failed: \" + ex.Message + \" \"; }\nif (UnityEngine.Time.timeScale != 1f) { UnityEngine.Time.timeScale = 1f; log += \"speed1 \"; }\ntry { if (d.GetData(\"uimtest.joined\") != null && HeroController.IsPlaying(1)) { HeroController.Dropout(1, false); log += \"dropped1 \"; } } catch (System.Exception ex) { log += \"dropout failed: \" + ex.Message + \" \"; }\nd.SetData(\"uimtest.joined\", null);\nvar hc = d.GetData(\"uimtest.ironbro\") as string;\nd.SetData(\"uimtest.ironbro\", null);\ntry {\n  var save = GameState.Instance.currentWorldmapSave;\n  if (hc != null && save != null) {\n    var parts = hc.Split(':');\n    save.worldMapIsHardcoreCampaign = parts[0] == \"1\";\n    save.hardcoreLives = int.Parse(parts[1]);\n    save.hardcoreModeAvailableBros.Clear();\n    foreach (var n in parts[2].Split(',')) if (n.Length > 0) save.hardcoreModeAvailableBros.Add((HeroType)System.Enum.Parse(typeof(HeroType), n));\n    log += \"ironbro-restored \";\n  }\n} catch (System.Exception ex) { log += \"ironbro restore failed: \" + ex.Message + \" \"; }\nvar lk = d.GetData(\"uimtest.lock\") as string;\nd.SetData(\"uimtest.lock\", null);\ntry {\n  if (lk != null) {\n    var fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\n    var t = System.Type.GetType(\"BroMakerLib.Unlocks.BroUnlockManager, BroMakerLib\");\n    var pd = t.GetField(\"progressData\", fl).GetValue(null);\n    var states = pd.GetType().GetProperty(\"BroStates\").GetValue(pd, null) as System.Collections.IDictionary;\n    var st = states[lk];\n    st.GetType().GetProperty(\"IsUnlocked\").SetValue(st, true, null);\n    st.GetType().GetProperty(\"UnlockedDate\").SetValue(st, d.GetData(\"uimtest.lock.date\"), null);\n    var names = t.GetProperty(\"UnlockedBroNames\", fl).GetValue(null, null) as System.Collections.Generic.List<string>;\n    var bros = t.GetProperty(\"UnlockedBros\", fl).GetValue(null, null) as System.Collections.IList;\n    int ni = (int)d.GetData(\"uimtest.lock.ni\"); if (ni < 0 || ni > names.Count) ni = names.Count;\n    if (!names.Contains(lk)) names.Insert(ni, lk);\n    var hero = d.GetData(\"uimtest.lock.hero\");\n    int hi = (int)d.GetData(\"uimtest.lock.hi\"); if (hi < 0 || hi > bros.Count) hi = bros.Count;\n    if (hero != null && !bros.Contains(hero)) bros.Insert(hi, hero);\n    typeof(BroMakerLib.Storages.BroSpawnManager).GetMethod(\"BroStatusChanged\", fl).Invoke(null, null);\n    log += \"unlocked \" + lk + \" \";\n  }\n} catch (System.Exception ex) { log += \"unlock failed: \" + ex.Message + \" \"; }\ntry {\n  if (d.GetData(\"uimtest.swaphidden\") != null) { typeof(Unity_Inspector_Mod.SwapBrosIntegration).GetField(\"_isAvailable\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).SetValue(null, true); d.SetData(\"uimtest.swaphidden\", null); log += \"swap-bros-shown \"; }\n  if (d.GetData(\"uimtest.swapdisabled\") != null) { Swap_Bros_Mod.Main.enabled = true; d.SetData(\"uimtest.swapdisabled\", null); log += \"swap-bros-enabled \"; }\n  var grid = d.GetData(\"uimtest.selgrid\") as int[];\n  if (grid != null) { Swap_Bros_Mod.Main.settings.selGridInt = grid; d.SetData(\"uimtest.selgrid\", null); log += \"selgrid-restored \"; }\n} catch (System.Exception ex) { log += \"swap bros state restore failed: \" + ex.Message + \" \"; }\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); set.selGridInt[i] = ix < 0 ? 0 : ix; }\n    log += \"swap-settings-restored \";\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\ntry {\n  var bc0 = HeroController.players != null && HeroController.players[0] != null ? HeroController.players[0].character : null;\n  if (d.GetData(\"uimtest.hiding\") != null && bc0 != null) { bc0.HidingPlayer = false; log += \"hiding-cleared \"; }\n  var ul = d.GetData(\"uimtest.unlocks\") as string;\n  if (ul != null) {\n    var pp = PlayerProgress.Instance;\n    if (ul[0] == '1' && !pp.unlockedHeroes.Contains(HeroType.Brominator)) pp.unlockedHeroes.Add(HeroType.Brominator);\n    if (ul[1] == '0') pp.yetToBePlayedUnlockedHeroes.Remove(HeroType.Brominator);\n    log += \"unlocks-restored \";\n  }\n  var fr = d.GetData(\"uimtest.filter\") as object[];\n  if (fr != null) { Swap_Bros_Mod.Main.settings.filterBros = (bool)fr[0]; Swap_Bros_Mod.Main.settings.enabledBros = (System.Collections.Generic.List<string>)fr[1]; Swap_Bros_Mod.Main.CreateBroList(); log += \"filter-restored \"; }\n  var fb = d.GetData(\"uimtest.forced\") as string;\n  if (fb != null && Map.MapData != null) { Map.MapData.forcedBro = (HeroType)System.Enum.Parse(typeof(HeroType), fb); log += \"forced-bro-restored \"; }\n  var cb = d.GetData(\"uimtest.cbl\");\n  if (cb != null) { typeof(Unity_Inspector_Mod.SwapBrosIntegration).GetField(\"_createBroListMethod\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).SetValue(null, cb); log += \"create-bro-list-restored \"; }\n} catch (System.Exception ex) { log += \"bro state restore failed: \" + ex.Message + \" \"; }\nforeach (var k in new[] { \"uimtest.hiding\", \"uimtest.unlocks\", \"uimtest.filter\", \"uimtest.forced\", \"uimtest.cbl\" }) d.SetData(k, null);\ntry {\n  if (d.GetData(\"uimtest.sbn\") != null) { typeof(Unity_Inspector_Mod.SwapBrosIntegration).GetField(\"_swapByNameMethod\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).SetValue(null, typeof(Swap_Bros_Mod.API).GetMethod(\"SwapByName\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)); log += \"swap-by-name-restored \"; }\n  foreach (var tr in Resources.FindObjectsOfTypeAll<Transform>()) if (tr != null && tr.parent == null && tr.name == \"UimRespawnLater\") UnityEngine.Object.Destroy(tr.gameObject);\n} catch (System.Exception ex) { log += \"swap-by-name restore failed: \" + ex.Message + \" \"; }\nd.SetData(\"uimtest.sbn\", null);\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar rec = (d.GetData(\"uimtest.level\") as string) ?? \"0|1\";\nd.SetData(\"uimtest.level\", null);\nvar p = rec.Split('|');\nvar r = Unity_Inspector_Mod.StateModifier.GoToLevel(int.Parse(p[0]), int.Parse(p[1]));\nvar j = Newtonsoft.Json.Linq.JToken.FromObject(r);\nreturn \"loading recorded level \" + rec + \": success=\" + j[\"success\"] + \" \" + j.ToString(Newtonsoft.Json.Formatting.None);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "success=True"
+        ]
+      },
+      "wait": 6000
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar f = d.GetData(\"uimtest.found\") as string;\nvar set = Swap_Bros_Mod.Main.settings;\nSwap_Bros_Mod.API.EnsureBroListUpdated();\nvar l = Swap_Bros_Mod.Main.currentBroList;\nstring now = set.alwaysChosen + \"|\" + set.ignoreCurrentUnlocked;\nfor (int i = 0; i < 4; i++) now += \"|\" + l[set.selGridInt[i]];\nd.SetData(\"uimtest.found\", null);\nvar c = HeroController.players[0] == null ? null : HeroController.players[0].character;\nreturn \"settings \" + (now == f ? \"match\" : \"differ: found \" + f + \" now \" + now) + \" speed=\" + UnityEngine.Time.timeScale + \" pause=\" + PauseController.pauseStatus + \" p1=\" + HeroController.IsPlaying(1) + \" hc=\" + GameModeController.IsHardcoreMode + \" locked=\" + !BroMakerLib.Storages.BroSpawnManager.IsBroUnlocked(\"Cobro\") + \" scene=\" + UnityEngine.SceneManagement.SceneManager.GetActiveScene().name + \" level=\" + LevelSelectionController.CurrentLevelNum + \" bro=\" + (c == null ? \"none\" : c.name);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "settings match",
+          "speed=1 ",
+          "pause=UnPaused",
+          "p1=False",
+          "hc=False",
+          "locked=False",
+          "scene=Test Evan2"
+        ]
+      }
+    }
+  ],
+  "cleanup": [
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nd.SetData(\"uimtest.found\", null);\nd.SetData(\"uimtest.level\", null);\nstring log = \"\";\ntry { if (PauseController.pauseStatus != PauseStatus.UnPaused) { PauseController.SetPause(PauseStatus.UnPaused); log += \"unpaused \"; } } catch (System.Exception ex) { log += \"unpause failed: \" + ex.Message + \" \"; }\nif (UnityEngine.Time.timeScale != 1f) { UnityEngine.Time.timeScale = 1f; log += \"speed1 \"; }\ntry { if (d.GetData(\"uimtest.joined\") != null && HeroController.IsPlaying(1)) { HeroController.Dropout(1, false); log += \"dropped1 \"; } } catch (System.Exception ex) { log += \"dropout failed: \" + ex.Message + \" \"; }\nd.SetData(\"uimtest.joined\", null);\nvar hc = d.GetData(\"uimtest.ironbro\") as string;\nd.SetData(\"uimtest.ironbro\", null);\ntry {\n  var save = GameState.Instance.currentWorldmapSave;\n  if (hc != null && save != null) {\n    var parts = hc.Split(':');\n    save.worldMapIsHardcoreCampaign = parts[0] == \"1\";\n    save.hardcoreLives = int.Parse(parts[1]);\n    save.hardcoreModeAvailableBros.Clear();\n    foreach (var n in parts[2].Split(',')) if (n.Length > 0) save.hardcoreModeAvailableBros.Add((HeroType)System.Enum.Parse(typeof(HeroType), n));\n    log += \"ironbro-restored \";\n  }\n} catch (System.Exception ex) { log += \"ironbro restore failed: \" + ex.Message + \" \"; }\nvar lk = d.GetData(\"uimtest.lock\") as string;\nd.SetData(\"uimtest.lock\", null);\ntry {\n  if (lk != null) {\n    var fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\n    var t = System.Type.GetType(\"BroMakerLib.Unlocks.BroUnlockManager, BroMakerLib\");\n    var pd = t.GetField(\"progressData\", fl).GetValue(null);\n    var states = pd.GetType().GetProperty(\"BroStates\").GetValue(pd, null) as System.Collections.IDictionary;\n    var st = states[lk];\n    st.GetType().GetProperty(\"IsUnlocked\").SetValue(st, true, null);\n    st.GetType().GetProperty(\"UnlockedDate\").SetValue(st, d.GetData(\"uimtest.lock.date\"), null);\n    var names = t.GetProperty(\"UnlockedBroNames\", fl).GetValue(null, null) as System.Collections.Generic.List<string>;\n    var bros = t.GetProperty(\"UnlockedBros\", fl).GetValue(null, null) as System.Collections.IList;\n    int ni = (int)d.GetData(\"uimtest.lock.ni\"); if (ni < 0 || ni > names.Count) ni = names.Count;\n    if (!names.Contains(lk)) names.Insert(ni, lk);\n    var hero = d.GetData(\"uimtest.lock.hero\");\n    int hi = (int)d.GetData(\"uimtest.lock.hi\"); if (hi < 0 || hi > bros.Count) hi = bros.Count;\n    if (hero != null && !bros.Contains(hero)) bros.Insert(hi, hero);\n    typeof(BroMakerLib.Storages.BroSpawnManager).GetMethod(\"BroStatusChanged\", fl).Invoke(null, null);\n    log += \"unlocked \" + lk + \" \";\n  }\n} catch (System.Exception ex) { log += \"unlock failed: \" + ex.Message + \" \"; }\ntry {\n  if (d.GetData(\"uimtest.swaphidden\") != null) { typeof(Unity_Inspector_Mod.SwapBrosIntegration).GetField(\"_isAvailable\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).SetValue(null, true); d.SetData(\"uimtest.swaphidden\", null); log += \"swap-bros-shown \"; }\n  if (d.GetData(\"uimtest.swapdisabled\") != null) { Swap_Bros_Mod.Main.enabled = true; d.SetData(\"uimtest.swapdisabled\", null); log += \"swap-bros-enabled \"; }\n  var grid = d.GetData(\"uimtest.selgrid\") as int[];\n  if (grid != null) { Swap_Bros_Mod.Main.settings.selGridInt = grid; d.SetData(\"uimtest.selgrid\", null); log += \"selgrid-restored \"; }\n} catch (System.Exception ex) { log += \"swap bros state restore failed: \" + ex.Message + \" \"; }\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); set.selGridInt[i] = ix < 0 ? 0 : ix; }\n    log += \"swap-settings-restored \";\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\ntry {\n  var bc0 = HeroController.players != null && HeroController.players[0] != null ? HeroController.players[0].character : null;\n  if (d.GetData(\"uimtest.hiding\") != null && bc0 != null) { bc0.HidingPlayer = false; log += \"hiding-cleared \"; }\n  var ul = d.GetData(\"uimtest.unlocks\") as string;\n  if (ul != null) {\n    var pp = PlayerProgress.Instance;\n    if (ul[0] == '1' && !pp.unlockedHeroes.Contains(HeroType.Brominator)) pp.unlockedHeroes.Add(HeroType.Brominator);\n    if (ul[1] == '0') pp.yetToBePlayedUnlockedHeroes.Remove(HeroType.Brominator);\n    log += \"unlocks-restored \";\n  }\n  var fr = d.GetData(\"uimtest.filter\") as object[];\n  if (fr != null) { Swap_Bros_Mod.Main.settings.filterBros = (bool)fr[0]; Swap_Bros_Mod.Main.settings.enabledBros = (System.Collections.Generic.List<string>)fr[1]; Swap_Bros_Mod.Main.CreateBroList(); log += \"filter-restored \"; }\n  var fb = d.GetData(\"uimtest.forced\") as string;\n  if (fb != null && Map.MapData != null) { Map.MapData.forcedBro = (HeroType)System.Enum.Parse(typeof(HeroType), fb); log += \"forced-bro-restored \"; }\n  var cb = d.GetData(\"uimtest.cbl\");\n  if (cb != null) { typeof(Unity_Inspector_Mod.SwapBrosIntegration).GetField(\"_createBroListMethod\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).SetValue(null, cb); log += \"create-bro-list-restored \"; }\n} catch (System.Exception ex) { log += \"bro state restore failed: \" + ex.Message + \" \"; }\nforeach (var k in new[] { \"uimtest.hiding\", \"uimtest.unlocks\", \"uimtest.filter\", \"uimtest.forced\", \"uimtest.cbl\" }) d.SetData(k, null);\ntry {\n  if (d.GetData(\"uimtest.sbn\") != null) { typeof(Unity_Inspector_Mod.SwapBrosIntegration).GetField(\"_swapByNameMethod\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).SetValue(null, typeof(Swap_Bros_Mod.API).GetMethod(\"SwapByName\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)); log += \"swap-by-name-restored \"; }\n  foreach (var tr in Resources.FindObjectsOfTypeAll<Transform>()) if (tr != null && tr.parent == null && tr.name == \"UimRespawnLater\") UnityEngine.Object.Destroy(tr.gameObject);\n} catch (System.Exception ex) { log += \"swap-by-name restore failed: \" + ex.Message + \" \"; }\nd.SetData(\"uimtest.sbn\", null);\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    }
+  ]
+}

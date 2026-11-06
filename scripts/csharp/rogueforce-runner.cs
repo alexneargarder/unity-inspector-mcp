@@ -1,7 +1,7 @@
 // #name Rogueforce Runner
-// #description Test harness for the Rogueforce mod. Start a run, skip levels, log state, auto-run a full campaign, or trigger game over.
+// #description Test harness for the Rogueforce mod. Start a run, auto-run a full campaign, or trigger game over; with the script loaded, execute_code calls RogueforceRunner.Status(), Skip(), Layout(), Seed() or Seed(n), since rerunning the script restarts it and stops a running autorun
 // #tags rogueforce, testing, procgen
-// #args action: start | park | skip | status | layout | seed | autorun | gameover (default: status), seed: seed value for 'seed' action
+// #args action: start | park | autorun | gameover; none just loads the script for the execute_code calls
 
 using System.Collections.Generic;
 using UnityEngine;
@@ -41,36 +41,69 @@ public class RogueforceRunner : MonoBehaviour
     private bool joinScreenSeen;
     private bool joined;
 
+    private static List<string> collected;
+
     private static void Log(string message)
     {
-        cachedLogger(message);
+        if (collected != null) collected.Add(message);
+        if (cachedLogger != null) cachedLogger(message);
     }
 
     public static void Main()
     {
         cachedLogger = ScriptContext.Logger;
 
-        string action = ScriptContext.GetArg("action", "status");
+        string action = ScriptContext.GetArg("action", "");
 
-        if (action == "start") StartLaunched();
+        if (action == "") Log("Loaded. Start a run with action=start | park | autorun | gameover; with execute_code call RogueforceRunner.Status(), Skip(), Layout(), Seed() or Seed(n).");
+        else if (action == "start") StartLaunched();
         else if (action == "park") StartParked();
-        else if (action == "skip") SkipLevel();
-        else if (action == "status") LogStatus();
-        else if (action == "layout") LogLayout();
-        else if (action == "seed") LogOrSetSeed();
         else if (action == "autorun") StartAutoRun(false);
         else if (action == "gameover") StartAutoRun(true);
-        else Log("Unknown action: " + action + ". Use start | park | skip | status | layout | seed | autorun | gameover");
+        else if (action == "status" || action == "skip" || action == "layout" || action == "seed")
+            Log("action=" + action + " is an execute_code call: RogueforceRunner." + char.ToUpper(action[0]) + action.Substring(1) + "()"
+                + (action == "seed" ? " or RogueforceRunner.Seed(n)" : "") + ". Rerunning this script restarts it, which stops a running autorun.");
+        else Log("Unknown action: " + action + ". Use start | park | autorun | gameover");
+    }
+
+    public static string Status() { return Collect(LogStatus); }
+
+    public static string Skip() { return Collect(SkipLevel); }
+
+    public static string Layout() { return Collect(LogLayout); }
+
+    public static string Seed() { return Collect(LogSeed); }
+
+    public static string Seed(int seed) { return Collect(() => SetSeed(seed)); }
+
+    private static string Collect(System.Action action)
+    {
+        collected = new List<string>();
+        try
+        {
+            action();
+            return string.Join("\n", collected.ToArray());
+        }
+        finally
+        {
+            collected = null;
+        }
+    }
+
+    private static RogueforceRunner CreateRunner()
+    {
+        var go = new GameObject("RogueforceRunner");
+        go.tag = "Unpausable";
+        UnityEngine.Object.DontDestroyOnLoad(go);
+        ScriptContext.GameObjects.Add(go);
+        return go.AddComponent<RogueforceRunner>();
     }
 
     private static void StartLaunched()
     {
         if (!StartRun())
             return;
-        var go = new GameObject("RogueforceRunner");
-        UnityEngine.Object.DontDestroyOnLoad(go);
-        ScriptContext.GameObjects.Add(go);
-        var runner = go.AddComponent<RogueforceRunner>();
+        var runner = CreateRunner();
         runner.launchOnly = true;
         runner.state = StateWaitForAdvantage;
         runner.timer = 0.5f;
@@ -240,30 +273,21 @@ public class RogueforceRunner : MonoBehaviour
         Log("Current segment: " + currentSegment);
     }
 
-    private static void LogOrSetSeed()
+    private static void LogSeed()
     {
-        string seedArg = ScriptContext.GetArg("seed", "");
-        if (string.IsNullOrEmpty(seedArg))
+        if (ProcGenGameMode.isEnabled)
         {
-            if (ProcGenGameMode.isEnabled)
-            {
-                Log("Current seed: " + ProcGenGameMode.GetSeed());
-                Log("Level: " + ProcGenGameMode.GetLevelNum() + " / " + ProcGenGameMode.GetTotalLevels());
-            }
-            else
-            {
-                Log("Not in a Rogueforce run.");
-            }
-            return;
+            Log("Current seed: " + ProcGenGameMode.GetSeed());
+            Log("Level: " + ProcGenGameMode.GetLevelNum() + " / " + ProcGenGameMode.GetTotalLevels());
         }
-
-        int seed;
-        if (!int.TryParse(seedArg, out seed))
+        else
         {
-            Log("ERROR: Invalid seed value: " + seedArg);
-            return;
+            Log("Not in a Rogueforce run.");
         }
+    }
 
+    private static void SetSeed(int seed)
+    {
         var asm = System.Reflection.Assembly.Load("Rogueforce");
         var modeType = asm.GetType("Rogueforce.RogueforceMode");
         var seedField = modeType.GetField("ForcedSeed", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
@@ -279,10 +303,7 @@ public class RogueforceRunner : MonoBehaviour
     private static void StartAutoRun(bool gameOverMode)
     {
         Log(gameOverMode ? "Starting game-over test..." : "Starting auto-run...");
-        var go = new GameObject("RogueforceRunner");
-        UnityEngine.Object.DontDestroyOnLoad(go);
-        ScriptContext.GameObjects.Add(go);
-        var runner = go.AddComponent<RogueforceRunner>();
+        var runner = CreateRunner();
         runner.gameOverMode = gameOverMode;
 
         if (ProcGenGameMode.isEnabled)
@@ -305,17 +326,14 @@ public class RogueforceRunner : MonoBehaviour
             return;
         }
         Log("Starting run and parking on first level...");
-        var go = new GameObject("RogueforceRunner");
-        UnityEngine.Object.DontDestroyOnLoad(go);
-        ScriptContext.GameObjects.Add(go);
-        var runner = go.AddComponent<RogueforceRunner>();
+        var runner = CreateRunner();
         runner.parkOnly = true;
         runner.state = StateStartRun;
     }
 
     private void Update()
     {
-        if (state == StateDone)
+        if (state == StateDone || PauseController.Paused)
             return;
 
         timer -= Time.deltaTime;

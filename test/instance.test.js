@@ -165,10 +165,10 @@ test('UNITY_INSPECTOR_PORT is the user\'s game and never an instance', () => {
   assert.equal(defaultPort({ UNITY_INSPECTOR_PORT: 'nope' }), DEFAULT_PORT);
 });
 
-test('an instance launches through the launcher\'s instance mode, whatever the environment says', () => {
+test('an instance launches through the launcher\'s instance mode, whatever the environment says', async () => {
   const config = instanceConfig(withId(SESSION), options);
 
-  const derived = resolveLaunchCommand([], {}, 'linux', config);
+  const derived = await resolveLaunchCommand({}, {}, 'linux', config);
   assert.equal(derived.source, 'instance');
   assert.equal(derived.command, LAUNCHER);
   assert.deepEqual(derived.args, ['instance', SESSION, 'launch']);
@@ -176,16 +176,16 @@ test('an instance launches through the launcher\'s instance mode, whatever the e
 
   // Both the vanilla flag and any launchArgs land after the subcommand
   assert.deepEqual(
-    resolveLaunchCommand(['--vanilla', '-m'], {}, 'linux', config).args,
+    (await resolveLaunchCommand({ vanilla: true, extraArgs: ['-m'] }, {}, 'linux', config)).args,
     ['instance', SESSION, 'launch', '--vanilla', '-m'],
   );
 
   // BROFORCE_LAUNCH_CMD belongs to the user's game: an instance is never launched by it
-  const overridden = resolveLaunchCommand([], { BROFORCE_LAUNCH_CMD: 'other-launcher' }, 'linux', config);
+  const overridden = await resolveLaunchCommand({}, { BROFORCE_LAUNCH_CMD: 'other-launcher' }, 'linux', config);
   assert.equal(overridden.source, 'instance');
   assert.deepEqual(overridden.args, ['instance', SESSION, 'launch']);
 
-  const steam = resolveLaunchCommand([], { BROFORCE_LAUNCH_CMD: 'other-launcher' }, 'linux', steamConfig());
+  const steam = await resolveLaunchCommand({}, { BROFORCE_LAUNCH_CMD: 'other-launcher' }, 'linux', steamConfig());
   assert.equal(steam.source, 'BROFORCE_LAUNCH_CMD');
   assert.equal(steam.command, 'other-launcher');
 });

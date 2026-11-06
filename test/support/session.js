@@ -15,20 +15,18 @@ export const NO_LISTENER_PORT = '1';
 
 delete process.env.CLAUDE_SESSION_ID;
 delete process.env.BROFORCE_INSTANCE_CMD;
-// Not deleted but neutralised: with it unset, a launch_game on the `steam` target is the Steam
-// protocol launch, and that starts the user's real game. Every test entry point gets a command that
-// does nothing instead, and a test that wants its own sets its own
 process.env.BROFORCE_LAUNCH_CMD = NO_OP_LAUNCH_CMD;
-// The second fence: the server refuses the Steam protocol launch outright while this is set, so a
-// test that unsets BROFORCE_LAUNCH_CMD gets a tool error where it would have started the game
 process.env.UNITY_INSPECTOR_TEST = '1';
 process.env.UNITY_INSPECTOR_PORT = NO_LISTENER_PORT;
 delete process.env.BROFORCE_STOP_CMD;
+delete process.env.BROFORCE_PROFILE;
+delete process.env.BROFORCE_LAUNCH_TYPE;
 delete process.env.STUB_STAGE_ROOT;
 // The wrapper hands its child this path to record the owner.pid it wrote; inherited, it would have
 // the tests writing a claim into a live session's wrapper file
 delete process.env.UNITY_INSPECTOR_MCP_CLAIM_FILE;
 delete process.env.XDG_CONFIG_HOME;
+delete process.env.UNITY_INSPECTOR_HOST;
 export const TEST_RESULTS_SCRATCH = mkdtempSync(path.join(tmpdir(), 'unity-inspector-test-results-'));
 process.env.UNITY_INSPECTOR_TEST_RESULTS_DIR = TEST_RESULTS_SCRATCH;
 process.on('exit', () => rmSync(TEST_RESULTS_SCRATCH, { recursive: true, force: true }));
@@ -38,3 +36,7 @@ process.env.UNITY_INSPECTOR_TOKEN_FILE = NO_TOKEN_FILE;
 export const NO_WSL_USERS_ROOT = path.join(TEST_RESULTS_SCRATCH, 'no-wsl-users');
 const { setWslUsersRoot } = await import('../../lib/unity-client.js');
 setWslUsersRoot(NO_WSL_USERS_ROOT);
+
+export const NOT_WSL = () => false;
+const { setWslProbe } = await import('../../lib/game-process.js');
+setWslProbe(NOT_WSL);

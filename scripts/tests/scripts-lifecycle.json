@@ -1,0 +1,2244 @@
+{
+  "name": "Script compile, execute and unload",
+  "description": "Covers execute_script, with and without compileOnly, and unload_script: clean, repeated and failing compiles with the line numbers they report, a script's own enum, unqualified Object, an internal type, iterator methods and auto-properties, types declared by execute_code (named, missing a member, declared twice, and still there after an unload), first runs, reruns of the same and an edited source with their static state, unload by other case, a Harmony patch removed by an unload by other case, of a name never loaded and after unloading, args of every JSON type, a MonoBehaviour with Update, a coroutine, a Harmony patch through ScriptContext.Harmony, a class-only script and a script naming its types, two files with one name, the second refused, Main() and Unload() throwing, a generic method with a lambda, mod types, a Main() looping past its 15s budget, stopped and left loaded, one whose loop catches every exception, stopped too, a Main() asleep past the budget and its 2s grace, reported still running, an execute_code queued behind it told what holds the main thread, an unload, an execute_code and a script that cannot start within their start budgets while a frame is held, an Unload() asleep past the budget whose teardown finishes once it returns, and a looping Unload() stopped with the teardown finished, ISO date strings in args, foreach over Dictionary Keys, Values and SortedDictionary, an edited script replaced while it uses a type execute_code declared, and a script declaring enum-typed constants, public and private, whose method and public constant execute_code names. It also covers an enum of an unloaded script no longer refused, an enum's name read as a member of another script's type, two scripts declaring one type, the second refused, Main(string[]) and overloaded Main and Unload, a script patching its own method, refused without taking the game down, every other route to a script-compiled method's body refused the same way (PatchAll, execute_code patching its own and a script's method, a script patching execute_code's, a reverse patch, GetOriginalInstructions, GetCurrentInstructions, HasMethodBody, GetMethodBody on a method, a constructor and a generic instance) while the same calls on a game or library method still answer, input naming Harmony or GetMethodBody refused when the guard is recorded as not installed, a component added to an object the script does not track, destroyed by the unload, and nameof. Several steps hold the game's main thread for 11 to 30 seconds; the holds that must outlast an unload or a Main() start wait until that action is queued, and the steps after them wait until the hold is in force. Its first step unloads every lifecycle script, patch and object an earlier failed run left behind; its last step checks nothing is left. Its cleanup runs the first step again whatever ended the steps, so no lifecycle script, patch or object outlives a failed run.",
+  "steps": [
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var f = typeof(Unity_Inspector_Mod.ScriptManager).GetField(\"activeScripts\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);\nvar d = (System.Collections.IDictionary)f.GetValue(null);\nvar names = new List<string>();\nforeach (object k in d.Keys) { var n = (string)k; if (n.StartsWith(\"lifecycle-\")) names.Add(n); }\nstring log = \"\";\nforeach (var n in names) log += n + \":\" + Unity_Inspector_Mod.ScriptManager.UnloadScript(n) + \" \";\nint destroyed = 0;\nforeach (var go in UnityEngine.Object.FindObjectsOfType<GameObject>()) if (go.name.StartsWith(\"Lifecycle\")) { UnityEngine.Object.Destroy(go); destroyed++; }\nforeach (var m in Harmony.GetAllPatchedMethods().ToList()) { var owners = Harmony.GetPatchInfo(m).Owners.ToList(); foreach (var o in owners) if (o.StartsWith(\"script.lifecycle-\")) { new Harmony(o).Unpatch(m, HarmonyPatchType.All, o); log += \"unpatched \" + o + \" \"; } }\nUnityEngine.Time.timeScale = 1f;\nreturn \"unloaded \" + names.Count + \" destroyed \" + destroyed + \" \" + log;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "unloaded "
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "System.AppDomain.CurrentDomain.SetData(\"lifecycle.unloads\", 0);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-clean",
+        "source": "public static class LifecycleClean\n{\n    public static void Main() { ScriptContext.Logger(\"clean main\"); }\n\n    public static void Unload() { }\n}\n",
+        "compileOnly": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"hasMain\": true",
+          "\"hasUnload\": true",
+          "\"LifecycleClean\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-clean",
+        "source": "public static class LifecycleClean\n{\n    public static void Main() { ScriptContext.Logger(\"clean main\"); }\n\n    public static void Unload() { }\n}\n",
+        "compileOnly": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"hasMain\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-clean",
+        "source": "public static class LifecycleClean\n{\n    public static void Main() { ScriptContext.Logger(\"clean main\"); }\n\n    public static void Unload() { }\n}\n",
+        "compileOnly": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"hasMain\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-diag",
+        "source": "public static class LifecycleDiag\n{\n    public static void Main()\n    {\n        int x = \"text\";\n    }\n}\n",
+        "compileOnly": true
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Compilation failed",
+          "CS0029",
+          "(5,17): error CS0029"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-diag2",
+        "source": "public static class LifecycleDiag2\n{\n    public static void Main()\n    {\n        NoSuchLifecycleType.Go();\n    }\n}\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Compilation failed",
+          "(5,9): error CS0103"
+        ],
+        "notContains": [
+          "does not have a method body",
+          "Cause:"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-ownenum",
+        "source": "public enum LifecycleMode { Off, On }\n\npublic static class LifecycleOwnEnum\n{\n    public static int Read() { return (int)LifecycleMode.On; }\n}\n",
+        "compileOnly": true
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Script defines enum 'LifecycleMode'"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-object",
+        "source": "public static class LifecycleObject\n{\n    public static int Count() { return Object.FindObjectsOfType<Camera>().Length; }\n}\n",
+        "compileOnly": true
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-internal",
+        "source": "public static class LifecycleInternal\n{\n    public static object Make() { return new Unity_Inspector_Mod.Splice(); }\n}\n",
+        "compileOnly": true
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "CS0122"
+        ],
+        "notContains": [
+          "Cause:"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-iterator",
+        "source": "public static class LifecycleIterator\n{\n    static IEnumerable<int> Numbers()\n    {\n        yield return 1;\n        yield return 2;\n        yield return 3;\n    }\n\n    public static void Main()\n    {\n        int sum = 0;\n        foreach (var n in Numbers()) sum += n;\n        ScriptContext.Logger(\"sum=\" + sum);\n    }\n}\n",
+        "compileOnly": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"hasMain\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-autoprop",
+        "source": "public class LifecycleAutoProp\n{\n    public static int Count { get; set; }\n\n    public string Label { get; set; }\n\n    public static void Main()\n    {\n        Count = 4;\n        var p = new LifecycleAutoProp { Label = \"lbl\" };\n        ScriptContext.Logger(\"count=\" + Count + \" label=\" + p.Label);\n    }\n}\n",
+        "compileOnly": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"hasMain\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class LifecycleEvalHolder { public const int Answer = 7; public static int Twice(int v) { return v * 2; } }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-evaltype",
+        "source": "public static class LifecycleUsesEval\n{\n    public static void Main() { ScriptContext.Logger(\"eval=\" + LifecycleEvalHolder.Twice(LifecycleEvalHolder.Answer)); }\n}\n",
+        "compileOnly": true
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-evaltype",
+        "source": "public static class LifecycleUsesEval\n{\n    public static void Main() { ScriptContext.Logger(\"eval=\" + LifecycleEvalHolder.Twice(LifecycleEvalHolder.Answer)); }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"eval=14\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-missing",
+        "source": "public static class LifecycleMissing\n{\n    public static int Read() { return LifecycleEvalHolder.NoSuchMember; }\n}\n",
+        "compileOnly": true
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "CS0117"
+        ],
+        "notContains": [
+          "CS0584"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-evaltype"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "LifecycleEvalHolder.Twice(LifecycleEvalHolder.Answer)"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 14,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class LifecycleEvalHolder { public const int Answer = 8; public static int Twice(int v) { return v * 2; } }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-evaltype",
+        "source": "public static class LifecycleUsesEval\n{\n    public static void Main() { ScriptContext.Logger(\"eval=\" + LifecycleEvalHolder.Twice(LifecycleEvalHolder.Answer)); }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"eval=16\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-evaltype"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-static",
+        "source": "public static class LifecycleStatic\n{\n    public static int Runs;\n\n    public static void Main()\n    {\n        Runs++;\n        ScriptContext.Logger(\"runs=\" + Runs);\n    }\n\n    public static void Unload()\n    {\n        var d = System.AppDomain.CurrentDomain;\n        d.SetData(\"lifecycle.unloads\", (int)(d.GetData(\"lifecycle.unloads\") ?? 0) + 1);\n    }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"runs=1\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-static",
+        "source": "public static class LifecycleStatic\n{\n    public static int Runs;\n\n    public static void Main()\n    {\n        Runs++;\n        ScriptContext.Logger(\"runs=\" + Runs);\n    }\n\n    public static void Unload()\n    {\n        var d = System.AppDomain.CurrentDomain;\n        d.SetData(\"lifecycle.unloads\", (int)(d.GetData(\"lifecycle.unloads\") ?? 0) + 1);\n    }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"runs=2\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "System.AppDomain.CurrentDomain.GetData(\"lifecycle.unloads\")"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 1,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-static",
+        "source": "public static class LifecycleStatic\n{\n    public static int Runs;\n\n    public static void Main()\n    {\n        Runs++;\n        ScriptContext.Logger(\"runs=\" + Runs);\n    }\n\n    public static void Unload()\n    {\n        var d = System.AppDomain.CurrentDomain;\n        d.SetData(\"lifecycle.unloads\", (int)(d.GetData(\"lifecycle.unloads\") ?? 0) + 1);\n    }\n}\n// edited\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"runs=1\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "System.AppDomain.CurrentDomain.GetData(\"lifecycle.unloads\")"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "LIFECYCLE-STATIC"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "System.AppDomain.CurrentDomain.GetData(\"lifecycle.unloads\")"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 3,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-static",
+        "source": "public static class LifecycleStatic\n{\n    public static int Runs;\n\n    public static void Main()\n    {\n        Runs++;\n        ScriptContext.Logger(\"runs=\" + Runs);\n    }\n\n    public static void Unload()\n    {\n        var d = System.AppDomain.CurrentDomain;\n        d.SetData(\"lifecycle.unloads\", (int)(d.GetData(\"lifecycle.unloads\") ?? 0) + 1);\n    }\n}\n// edited\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"runs=1\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-static"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-static"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Script not found: lifecycle-static"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-never-loaded"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Script not found: lifecycle-never-loaded"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-args",
+        "source": "public static class LifecycleArgs\n{\n    public static void Main()\n    {\n        string[] keys = { \"s\", \"empty\", \"n\", \"f\", \"b\", \"nested\", \"arr\", \"nul\" };\n        foreach (var k in keys)\n        {\n            string v = ScriptContext.GetArg(k, \"<absent>\");\n            ScriptContext.Logger(k + \"=[\" + v.Replace(\"\\r\", \"\").Replace(\"\\n\", \"\").Replace(\"\\\"\", \"'\").Replace(\" \", \"\") + \"]\");\n        }\n        ScriptContext.Logger(\"count=\" + ScriptContext.Args.Count);\n    }\n}\n",
+        "args": {
+          "s": "text",
+          "empty": ""
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"s=[text]\"",
+          "\"empty=[]\"",
+          "\"n=[<absent>]\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-args",
+        "source": "public static class LifecycleArgs\n{\n    public static void Main()\n    {\n        string[] keys = { \"s\", \"empty\", \"n\", \"f\", \"b\", \"nested\", \"arr\", \"nul\" };\n        foreach (var k in keys)\n        {\n            string v = ScriptContext.GetArg(k, \"<absent>\");\n            ScriptContext.Logger(k + \"=[\" + v.Replace(\"\\r\", \"\").Replace(\"\\n\", \"\").Replace(\"\\\"\", \"'\").Replace(\" \", \"\") + \"]\");\n        }\n        ScriptContext.Logger(\"count=\" + ScriptContext.Args.Count);\n    }\n}\n",
+        "args": {
+          "n": 10,
+          "f": 1.5
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"n=[10]\"",
+          "\"f=[1.5]\"",
+          "\"s=[<absent>]\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-args",
+        "source": "public static class LifecycleArgs\n{\n    public static void Main()\n    {\n        string[] keys = { \"s\", \"empty\", \"n\", \"f\", \"b\", \"nested\", \"arr\", \"nul\" };\n        foreach (var k in keys)\n        {\n            string v = ScriptContext.GetArg(k, \"<absent>\");\n            ScriptContext.Logger(k + \"=[\" + v.Replace(\"\\r\", \"\").Replace(\"\\n\", \"\").Replace(\"\\\"\", \"'\").Replace(\" \", \"\") + \"]\");\n        }\n        ScriptContext.Logger(\"count=\" + ScriptContext.Args.Count);\n    }\n}\n",
+        "args": {
+          "b": true
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"b=[true]\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-args",
+        "source": "public static class LifecycleArgs\n{\n    public static void Main()\n    {\n        string[] keys = { \"s\", \"empty\", \"n\", \"f\", \"b\", \"nested\", \"arr\", \"nul\" };\n        foreach (var k in keys)\n        {\n            string v = ScriptContext.GetArg(k, \"<absent>\");\n            ScriptContext.Logger(k + \"=[\" + v.Replace(\"\\r\", \"\").Replace(\"\\n\", \"\").Replace(\"\\\"\", \"'\").Replace(\" \", \"\") + \"]\");\n        }\n        ScriptContext.Logger(\"count=\" + ScriptContext.Args.Count);\n    }\n}\n",
+        "args": {
+          "nested": {
+            "k": "v"
+          },
+          "arr": [
+            1,
+            2
+          ],
+          "nul": null
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"nested=[{'k':'v'}]\"",
+          "\"arr=[[1,2]]\"",
+          "\"nul=[null]\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-args",
+        "source": "public static class LifecycleArgs\n{\n    public static void Main()\n    {\n        string[] keys = { \"s\", \"empty\", \"n\", \"f\", \"b\", \"nested\", \"arr\", \"nul\" };\n        foreach (var k in keys)\n        {\n            string v = ScriptContext.GetArg(k, \"<absent>\");\n            ScriptContext.Logger(k + \"=[\" + v.Replace(\"\\r\", \"\").Replace(\"\\n\", \"\").Replace(\"\\\"\", \"'\").Replace(\" \", \"\") + \"]\");\n        }\n        ScriptContext.Logger(\"count=\" + ScriptContext.Args.Count);\n    }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"count=0\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-args",
+        "source": "public static class LifecycleArgs\n{\n    public static void Main()\n    {\n        string[] keys = { \"s\", \"empty\", \"n\", \"f\", \"b\", \"nested\", \"arr\", \"nul\" };\n        foreach (var k in keys)\n        {\n            string v = ScriptContext.GetArg(k, \"<absent>\");\n            ScriptContext.Logger(k + \"=[\" + v.Replace(\"\\r\", \"\").Replace(\"\\n\", \"\").Replace(\"\\\"\", \"'\").Replace(\" \", \"\") + \"]\");\n        }\n        ScriptContext.Logger(\"count=\" + ScriptContext.Args.Count);\n    }\n}\n",
+        "args": {
+          "s": "2026-11-04T10:30:00Z",
+          "f": "2026-11-04T10:30:00.5+02:00",
+          "nested": {
+            "when": "2026-11-04"
+          }
+        }
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"s=[2026-11-04T10:30:00Z]\"",
+          "\"f=[2026-11-04T10:30:00.5+02:00]\"",
+          "\"nested=[{'when':'2026-11-04'}]\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-args"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-behaviour",
+        "source": "public class LifecycleTicker : MonoBehaviour\n{\n    public static int Ticks;\n\n    void Update() { Ticks++; }\n}\n\npublic static class LifecycleBehaviour\n{\n    public static void Main()\n    {\n        LifecycleTicker.Ticks = 0;\n        var go = new GameObject(\"LifecycleBehaviourGO\");\n        ScriptContext.GameObjects.Add(go);\n        go.AddComponent<LifecycleTicker>();\n        ScriptContext.Logger(\"ticker added\");\n    }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"ticker added\""
+        ]
+      },
+      "wait": 1000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "LifecycleTicker.Ticks > 5 && GameObject.Find(\"LifecycleBehaviourGO\") != null"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": true,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-behaviour"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ],
+        "contains": [
+          "\"destroyedObjects\": 1"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "GameObject.Find(\"LifecycleBehaviourGO\") == null"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": true,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-coroutine",
+        "source": "public class LifecycleCoroutineRunner : MonoBehaviour\n{\n    public static int Steps;\n\n    void Start() { StartCoroutine(Count()); }\n\n    System.Collections.IEnumerator Count()\n    {\n        while (true)\n        {\n            Steps++;\n            yield return null;\n        }\n    }\n}\n\npublic static class LifecycleCoroutine\n{\n    public static void Main()\n    {\n        LifecycleCoroutineRunner.Steps = 0;\n        var go = new GameObject(\"LifecycleCoroutineGO\");\n        ScriptContext.GameObjects.Add(go);\n        go.AddComponent<LifecycleCoroutineRunner>();\n        ScriptContext.Logger(\"coroutine started\");\n    }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"coroutine started\""
+        ]
+      },
+      "wait": 1000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "LifecycleCoroutineRunner.Steps > 5"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": true,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-coroutine"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "GameObject.Find(\"LifecycleCoroutineGO\") == null"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": true,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-harmony",
+        "source": "public static class LifecycleHarmony\n{\n    public static void Main()\n    {\n        var original = AccessTools.Method(typeof(HeroController), \"GetHeroName\");\n        ScriptContext.Harmony.Patch(original, postfix: new HarmonyMethod(typeof(LifecycleHarmony), \"Postfix\"));\n        ScriptContext.Logger(\"patched\");\n    }\n\n    static void Postfix(HeroType type, ref string __result)\n    {\n        if (type == HeroType.Rambro) __result += \" (lifecycle)\";\n    }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"patched\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "HeroController.GetHeroName(HeroType.Rambro)"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"Rambro (lifecycle)\",",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "LIFECYCLE-HARMONY"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "HeroController.GetHeroName(HeroType.Rambro)"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"Rambro\",",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-shared",
+        "source": "public static class LifecycleShared\n{\n    public static string Greet(string who) { return \"shared hello \" + who; }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": false",
+          "no Main() found",
+          "\"LifecycleShared\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-consumer",
+        "source": "public static class LifecycleConsumer\n{\n    public static void Main() { ScriptContext.Logger(LifecycleShared.Greet(\"consumer\")); }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"shared hello consumer\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-consumer"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-shared"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class LifecycleKeepHolder { public static int Twice(int v) { return v * 2; } }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-keep",
+        "source": "public static class LifecycleKeepUser\n{\n    public static void Main() { ScriptContext.Logger(\"keep v1 \" + LifecycleKeepHolder.Twice(3)); }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"keep v1 6\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-keep",
+        "source": "public static class LifecycleKeepUser\n{\n    public static void Main() { ScriptContext.Logger(\"keep v2 \" + LifecycleKeepHolder.Twice(3)); }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"keep v2 6\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "LifecycleKeepHolder.Twice(5)"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 10,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-keep"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "LifecycleKeepHolder.Twice(6)"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 12,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-dup",
+        "origin": "/a/lifecycle-dup.cs",
+        "source": "public static class LifecycleDupA\n{\n    public static string Who() { return \"dup A\"; }\n\n    public static void Main() { ScriptContext.Logger(\"A loaded\"); }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"A loaded\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-dup",
+        "origin": "/b/lifecycle-dup.cs",
+        "source": "public static class LifecycleDupB\n{\n    public static string Who() { return \"dup B\"; }\n\n    public static void Main() { ScriptContext.Logger(\"B loaded\"); }\n}\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "is already loaded from /a/lifecycle-dup.cs"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "LifecycleDupA.Who()"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"dup A\",",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-dup"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-throws",
+        "source": "public static class LifecycleThrows\n{\n    public static void Main()\n    {\n        ScriptContext.Logger(\"before throw\");\n        Explode();\n    }\n\n    static void Explode() { throw new System.InvalidOperationException(\"lifecycle boom\"); }\n}\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Main() threw an exception: lifecycle boom",
+          "LifecycleThrows.Explode",
+          "\"before throw\"",
+          "\"loaded\": true",
+          "The script stays loaded with whatever Main() did before that"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-throws"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-generic",
+        "source": "public static class LifecycleGeneric\n{\n    static int CountMatches<T>(List<T> items, T wanted) { return items.Count(x => x.Equals(wanted)); }\n\n    static T[] KeepNonNull<T>(T[] items) where T : class { return items.Where(x => x != null).ToArray(); }\n\n    public static void Main()\n    {\n        ScriptContext.Logger(\"count=\" + CountMatches(new List<int> { 1, 2, 2, 3 }, 2));\n        ScriptContext.Logger(\"kept=\" + KeepNonNull(new[] { \"a\", null, \"b\" }).Length);\n    }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "count=2",
+          "kept=2"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-generic"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-modtypes",
+        "source": "public static class LifecycleModTypes\n{\n    public static void Main()\n    {\n        ScriptContext.Logger(\"rocket=\" + RocketLib.Collections.Levels.Challenges.PHEROMONES);\n        ScriptContext.Logger(\"bromaker=\" + (BroMakerLib.Storages.BroSpawnManager.GetAllBros().Count > 0));\n        ScriptContext.Logger(\"swapbros=\" + (Swap_Bros_Mod.Main.settings != null));\n    }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"rocket=Challenge_Alien\"",
+          "\"bromaker=True\"",
+          "\"swapbros=True\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-modtypes"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-iterator",
+        "source": "public static class LifecycleIterator\n{\n    static IEnumerable<int> Numbers()\n    {\n        yield return 1;\n        yield return 2;\n        yield return 3;\n    }\n\n    public static void Main()\n    {\n        int sum = 0;\n        foreach (var n in Numbers()) sum += n;\n        ScriptContext.Logger(\"sum=\" + sum);\n    }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"sum=6\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-iterator"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-foreach",
+        "source": "public static class LifecycleForeach\n{\n    public static void Main()\n    {\n        var d = new Dictionary<string, int> { { \"a\", 1 }, { \"b\", 2 } };\n        string keys = \"\";\n        foreach (var k in d.Keys) keys += k;\n        int sum = 0;\n        foreach (var v in d.Values) sum += v;\n        var sorted = new SortedDictionary<int, string> { { 2, \"two\" }, { 1, \"one\" } };\n        string order = \"\";\n        foreach (var kv in sorted) order += kv.Key + \"=\" + kv.Value + \" \";\n        ScriptContext.Logger(\"keys=\" + keys + \" sum=\" + sum + \" sorted=\" + order.Trim());\n    }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"keys=ab sum=3 sorted=1=one 2=two\""
+        ],
+        "notContains": [
+          "CS0584"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-foreach"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-unloadthrows",
+        "source": "public static class LifecycleUnloadThrows\n{\n    public static void Main() { ScriptContext.Logger(\"loaded\"); }\n\n    public static void Unload() { throw new System.InvalidOperationException(\"unload boom\"); }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"loaded\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-unloadthrows"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Unload() failed",
+          "unload boom"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-slow",
+        "source": "public static class LifecycleSlow\n{\n    public static void Main()\n    {\n        var clock = System.Diagnostics.Stopwatch.StartNew();\n        while (clock.ElapsedMilliseconds < 25000) { }\n        ScriptContext.Logger(\"slow done\");\n    }\n}\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Main() was stopped: it was still running after 15s",
+          "\"loaded\": true"
+        ],
+        "notContains": [
+          "slow done"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "1 + 1"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-slow"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-catchall",
+        "source": "public static class LifecycleCatchAll\n{\n    public static void Main()\n    {\n        while (true)\n        {\n            try { for (;;) { } }\n            catch (System.Exception) { }\n        }\n    }\n}\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Main() was stopped"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-catchall"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-longmain",
+        "source": "public static class LifecycleLongMain\n{\n    public static void Main()\n    {\n        System.Threading.Thread.Sleep(30000);\n        ScriptContext.Logger(\"long main done\");\n    }\n}\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "execute_script lifecycle-longmain is still running after",
+          "did not reach it",
+          "(in Main())",
+          "\"mainThreadAnswered\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "1 + 1"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "did not pick the code up within 9s",
+          "the main thread has been running execute_script lifecycle-longmain for",
+          "The code did not run",
+          "\"mainThreadAnswered\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "((System.Collections.IDictionary)typeof(Unity_Inspector_Mod.ScriptManager).GetField(\"activeScripts\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).GetValue(null)).Contains(\"lifecycle-longmain\")"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": true,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-longmain"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-busy",
+        "source": "public class LifecycleBusyBehaviour : MonoBehaviour\n{\n    public static bool SleepNext;\n    public static int HoldMs;\n\n    void Update()\n    {\n        if (!SleepNext) return;\n        SleepNext = false;\n        var queue = (System.Collections.ICollection)typeof(Unity_Inspector_Mod.MainThreadDispatcher)\n            .GetField(\"executionQueue\", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);\n        var start = System.DateTime.UtcNow;\n        System.DateTime queued = System.DateTime.MinValue;\n        while (true)\n        {\n            var now = System.DateTime.UtcNow;\n            if (queued == System.DateTime.MinValue && queue.Count > 0) queued = now;\n            if (queued != System.DateTime.MinValue && (now - queued).TotalMilliseconds >= HoldMs) break;\n            if ((now - start).TotalMilliseconds >= HoldMs + 20000) break;\n            System.Threading.Thread.Sleep(10);\n        }\n    }\n}\n\npublic static class LifecycleBusy\n{\n    public static void Main()\n    {\n        var go = new GameObject(\"LifecycleBusyGO\");\n        ScriptContext.GameObjects.Add(go);\n        go.AddComponent<LifecycleBusyBehaviour>();\n        ScriptContext.Logger(\"busy ready\");\n    }\n\n    public static void Unload() { }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"busy ready\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "LifecycleBusyBehaviour.HoldMs = 13000;\nLifecycleBusyBehaviour.SleepNext = true;"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "ping",
+      "params": {},
+      "until": {
+        "timeout": 10,
+        "interval": 0.2
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"mainThreadAnswered\": false"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-busy"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "unload_script lifecycle-busy did not start",
+          "the main thread has not finished a frame",
+          "nothing was compiled, run or unloaded",
+          "\"mainThreadAnswered\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "LifecycleBusyBehaviour.HoldMs = 13000;\nLifecycleBusyBehaviour.SleepNext = true;"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "ping",
+      "params": {},
+      "until": {
+        "timeout": 10,
+        "interval": 0.2
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"mainThreadAnswered\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "1 + 1"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "did not pick the code up within 9s",
+          "the main thread has not finished a frame",
+          "The code did not run",
+          "\"mainThreadAnswered\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "LifecycleBusyBehaviour.HoldMs = 13000;\nLifecycleBusyBehaviour.SleepNext = true;"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "ping",
+      "params": {},
+      "until": {
+        "timeout": 10,
+        "interval": 0.2
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"mainThreadAnswered\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-nostart",
+        "source": "public static class LifecycleNoStart\n{\n    public static void Main() { ScriptContext.Logger(\"nostart ran\"); }\n}\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "execute_script lifecycle-nostart did not start",
+          "timed out after 10000ms",
+          "\"mainThreadAnswered\": false"
+        ],
+        "notContains": [
+          "nostart ran"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-nostart"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Script not found: lifecycle-nostart"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-busy"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"destroyedObjects\": 1"
+        ],
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "GameObject.Find(\"LifecycleBusyGO\") == null"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": true,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-stalled",
+        "source": "public static class LifecycleStalled\n{\n    public static void Main() { ScriptContext.Logger(\"stalled ready\"); }\n\n    public static void Unload() { System.Threading.Thread.Sleep(21000); }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"stalled ready\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-stalled"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "unload_script lifecycle-stalled is still running after",
+          "(in Unload())",
+          "\"mainThreadAnswered\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "((System.Collections.IDictionary)typeof(Unity_Inspector_Mod.ScriptManager).GetField(\"activeScripts\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).GetValue(null)).Contains(\"lifecycle-stalled\")"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": false,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-stalled"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Script not found: lifecycle-stalled"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-stallthrows",
+        "source": "public static class LifecycleStallThrows\n{\n    public static void Main() { ScriptContext.Logger(\"stallthrows ready\"); }\n\n    public static void Unload()\n    {\n        var clock = System.Diagnostics.Stopwatch.StartNew();\n        while (clock.ElapsedMilliseconds < 25000) { }\n        throw new System.InvalidOperationException(\"stalled unload boom\");\n    }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"stallthrows ready\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-stallthrows"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "Unload() was stopped: it was still running after 15s"
+        ],
+        "notContains": [
+          "stalled unload boom"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "((System.Collections.IDictionary)typeof(Unity_Inspector_Mod.ScriptManager).GetField(\"activeScripts\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).GetValue(null)).Contains(\"lifecycle-stallthrows\")"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": false,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-goneenum",
+        "source": "public enum LifecycleGoneMode { A, B }\n\npublic static class LifecycleGoneEnum { }\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "no Main() found",
+          "\"scriptName\": \"lifecycle-goneenum\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var LifecycleGoneMode = 2;\nreturn LifecycleGoneMode;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Enum 'LifecycleGoneMode' is defined by a script"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-goneenum"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var LifecycleGoneMode = 2;\nreturn LifecycleGoneMode;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-memberholder",
+        "source": "public static class LifecycleMemberHolder { public static int LifecycleMemberMode = 3; }\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "no Main() found"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-memberenum",
+        "source": "public enum LifecycleMemberMode { A, B }\n\npublic static class LifecycleMemberEnum { }\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "no Main() found"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return LifecycleMemberHolder.LifecycleMemberMode;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 3,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-memberenum"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-memberholder"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-collide-a",
+        "source": "public static class LifecycleCollide { public static string Who() { return \"a\"; } }\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "no Main() found"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-collide-b",
+        "source": "public static class LifecycleCollide { public static string Who() { return \"b\"; } }\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Type 'LifecycleCollide' is already declared by loaded script 'lifecycle-collide-a'"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "LifecycleCollide.Who()"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"a\",",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-collide-b"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Script not found: lifecycle-collide-b"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-collide-a"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-argsmain",
+        "source": "public static class LifecycleArgsMain { public static void Main(string[] args) { } }\n",
+        "compileOnly": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"hasMain\": false",
+          "\"hasUnload\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-overload",
+        "source": "public static class LifecycleOverload\n{\n    public static void Main() { ScriptContext.Logger(\"overload main ran\"); }\n    public static void Main(string which) { }\n    public static void Unload() { System.AppDomain.CurrentDomain.SetData(\"lifecycle.overload\", \"unloaded\"); }\n    public static void Unload(int code) { }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"overload main ran\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-overload"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "System.AppDomain.CurrentDomain.GetData(\"lifecycle.overload\")"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"unloaded\","
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-patchscript",
+        "source": "public static class LifecyclePatchTarget { public static int Run() { return 1; } }\n\npublic static class LifecyclePatchScript\n{\n    static void Prefix() { }\n\n    public static void Main()\n    {\n        ScriptContext.Harmony.Patch(typeof(LifecyclePatchTarget).GetMethod(\"Run\"),\n            prefix: new HarmonyMethod(typeof(LifecyclePatchScript).GetMethod(\"Prefix\", BindingFlags.Static | BindingFlags.NonPublic)));\n    }\n}\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Main() threw an exception",
+          "LifecyclePatchTarget.Run is compiled by the script system"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "LifecyclePatchTarget.Run()"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 1,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-patchscript"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-untracked",
+        "source": "public class LifecycleUntrackedBehaviour : MonoBehaviour\n{\n    public static int Ticks;\n    void Update() { Ticks++; }\n}\n\npublic static class LifecycleUntracked\n{\n    public static void Main()\n    {\n        new GameObject(\"LifecycleUntrackedGO\").AddComponent<LifecycleUntrackedBehaviour>();\n        ScriptContext.Logger(\"untracked added\");\n    }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"untracked added\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-untracked"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"destroyedObjects\": 0",
+          "\"destroyedComponents\": 1"
+        ],
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var go = GameObject.Find(\"LifecycleUntrackedGO\");\nvar gone = go != null && go.GetComponent(\"LifecycleUntrackedBehaviour\") == null;\nUnityEngine.Object.DestroyImmediate(go);\nreturn gone;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": true,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-nameof",
+        "source": "public static class LifecycleNameOf\n{\n    public static void Main() { ScriptContext.Logger(\"nameof=\" + nameof(LifecycleNameOf)); }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"nameof=LifecycleNameOf\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-nameof"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-nested",
+        "source": "public class LifecycleNested\n{\n    public class Inner { public int V = 5; }\n\n    public static Inner Shared = new Inner();\n\n    public Inner Mine = new Inner();\n\n    public static void Main()\n    {\n        ScriptContext.Logger(\"nested=\" + (Shared.V + new LifecycleNested().Mine.V));\n    }\n}\n",
+        "compileOnly": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"hasMain\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-nested",
+        "source": "public class LifecycleNested\n{\n    public class Inner { public int V = 5; }\n\n    public static Inner Shared = new Inner();\n\n    public Inner Mine = new Inner();\n\n    public static void Main()\n    {\n        ScriptContext.Logger(\"nested=\" + (Shared.V + new LifecycleNested().Mine.V));\n    }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"nested=10\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-nested"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-enumconst",
+        "source": "public static class LifecycleEnumConst\n{\n    public const BindingFlags F = BindingFlags.Public | BindingFlags.Static;\n    const BindingFlags Hidden = BindingFlags.NonPublic | BindingFlags.Static;\n\n    public static string Describe()\n    {\n        return typeof(HeroController).GetMethod(\"GetHeroName\", F).Name + \" \" + (int)F + \" \" + (int)Hidden;\n    }\n\n    public static void Main() { ScriptContext.Logger(\"enumconst \" + Describe()); }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"enumconst GetHeroName 24 40\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "LifecycleEnumConst.Describe()"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"GetHeroName 24 40\",",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return LifecycleEnumConst.F;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"type\": \"System.Reflection.BindingFlags\"",
+          "\"value\": \"Static, Public\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-enumconst"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var f = typeof(Unity_Inspector_Mod.ScriptManager).GetField(\"activeScripts\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);\nvar d = (System.Collections.IDictionary)f.GetValue(null);\nstring left = \"\";\nforeach (object k in d.Keys) if (((string)k).StartsWith(\"lifecycle-\")) left += \"script \" + k + \" \";\nforeach (var go in UnityEngine.Object.FindObjectsOfType<GameObject>()) if (go.name.StartsWith(\"Lifecycle\")) left += \"object \" + go.name + \" \";\nforeach (var m in Harmony.GetAllPatchedMethods().ToList()) foreach (var o in Harmony.GetPatchInfo(m).Owners.ToList()) if (o.StartsWith(\"script.lifecycle-\")) left += \"patch \" + o + \" on \" + m.Name + \" \";\nif (UnityEngine.Time.timeScale != 1f) left += \"timeScale \" + UnityEngine.Time.timeScale + \" \";\nif (HeroController.GetHeroName(HeroType.Rambro) != \"Rambro\") left += \"GetHeroName patched \";\nreturn left.Length == 0 ? \"clean\" : \"left: \" + left;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"clean\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-bareenumerator",
+        "compileOnly": true,
+        "source": "public static class LifecycleBareEnumerator\n{\n    public static void Main()\n    {\n        IEnumerator items = new[] { 1 }.GetEnumerator();\n        items.MoveNext();\n    }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"hasMain\": true"
+        ],
+        "notContains": [
+          "CS0246"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-body-self",
+        "source": "public static class LifecycleBodyTarget { public static int Run() { return 1; } }\n\n[HarmonyPatch(typeof(LifecycleBodyTarget), \"Run\")]\npublic static class LifecycleBodyAttributePatch\n{\n    static void Prefix() { }\n}\n\npublic static class LifecycleBodySelf\n{\n    public static void Main()\n    {\n        ScriptContext.Harmony.PatchAll(typeof(LifecycleBodySelf).Assembly);\n    }\n}\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Main() threw an exception",
+          "LifecycleBodyTarget.Run is compiled by the script system"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "LifecycleBodyTarget.Run()"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 1,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class LifecycleBodyEval { public static int Run() { return 2; } public static void Prefix() { } }\nnew HarmonyLib.Harmony(\"lifecycle-body\").Patch(typeof(LifecycleBodyEval).GetMethod(\"Run\"), prefix: new HarmonyLib.HarmonyMethod(typeof(LifecycleBodyEval).GetMethod(\"Prefix\")));"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "LifecycleBodyEval.Run is compiled by the script system"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "LifecycleBodyEval.Run()"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "new HarmonyLib.Harmony(\"lifecycle-body\").Patch(typeof(LifecycleBodyTarget).GetMethod(\"Run\"), prefix: new HarmonyLib.HarmonyMethod(typeof(LifecycleBodyEval).GetMethod(\"Prefix\")));"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "LifecycleBodyTarget.Run is compiled by the script system"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-body-cross",
+        "source": "public static class LifecycleBodyCross\n{\n    static void Prefix() { }\n\n    public static void Main()\n    {\n        ScriptContext.Harmony.Patch(typeof(LifecycleBodyEval).GetMethod(\"Run\"),\n            prefix: new HarmonyMethod(typeof(LifecycleBodyCross).GetMethod(\"Prefix\", BindingFlags.Static | BindingFlags.NonPublic)));\n    }\n}\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Main() threw an exception",
+          "LifecycleBodyEval.Run is compiled by the script system"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class LifecycleBodyStandin { public static int Copy() { return 0; } }\nnew HarmonyLib.Harmony(\"lifecycle-body\").CreateReversePatcher(typeof(LifecycleBodyEval).GetMethod(\"Run\"), new HarmonyLib.HarmonyMethod(typeof(LifecycleBodyStandin).GetMethod(\"Copy\"))).Patch();"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "LifecycleBodyEval.Run is compiled by the script system"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "HarmonyLib.PatchProcessor.GetOriginalInstructions(typeof(LifecycleBodyEval).GetMethod(\"Run\")).Count"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "LifecycleBodyEval.Run is compiled by the script system"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "HarmonyLib.PatchProcessor.GetCurrentInstructions(typeof(LifecycleBodyEval).GetMethod(\"Run\")).Count"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "LifecycleBodyEval.Run is compiled by the script system"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "HarmonyLib.MethodBaseExtensions.HasMethodBody(typeof(LifecycleBodyEval).GetMethod(\"Run\"))"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "LifecycleBodyEval.Run is compiled by the script system"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "typeof(LifecycleBodyEval).GetMethod(\"Run\").GetMethodBody()"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "LifecycleBodyEval.Run is compiled by the script system"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class LifecycleBodyCtor { public LifecycleBodyCtor() { } }\nreturn typeof(LifecycleBodyCtor).GetConstructor(System.Type.EmptyTypes).GetMethodBody();"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "LifecycleBodyCtor..ctor is compiled by the script system"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class LifecycleBodyGeneric { public static T Id<T>(T x) { return x; } }\nreturn typeof(LifecycleBodyGeneric).GetMethod(\"Id\").MakeGenericMethod(typeof(int)).GetMethodBody();"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "LifecycleBodyGeneric.Id is compiled by the script system"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "typeof(System.Linq.Enumerable).GetMethods().First(m => m.Name == \"Count\").GetMethodBody() != null"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "HarmonyLib.PatchProcessor.GetOriginalInstructions(typeof(HeroController).GetMethod(\"IsPlaying\")).Count > 0"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "new HarmonyLib.Harmony(\"lifecycle-body\").UnpatchAll(\"lifecycle-body\");\nreturn \"unpatched\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"unpatched\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var f = typeof(Unity_Inspector_Mod.ScriptCompiler).GetField(\"ScriptMethodBodyGuardFailure\", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);\nf.SetValue(null, \"forced by the test\");\nreturn f.GetValue(null);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "forced by the test"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "typeof(LifecycleBodyEval).GetMethod(\"Run\").GetMethodBody()"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "names GetMethodBody",
+          "could not be installed (forced by the test)",
+          "nothing was compiled or run"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "lifecycle-body-refused",
+        "source": "public static class LifecycleBodyRefused { public static void Main() { ScriptContext.Harmony.UnpatchSelf(); } }\n"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Compilation failed",
+          "names Harmony",
+          "could not be installed (forced by the test)"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "1 + 1"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 2,",
+          "\"resultSet\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "typeof(Unity_Inspector_Mod.ScriptCompiler).GetField(\"ScriptMethodBodyGuardFailure\", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic).SetValue(null, null);\nreturn \"guard failure cleared\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "guard failure cleared"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-body-self"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "lifecycle-body-cross"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    }
+  ],
+  "cleanup": [
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "typeof(Unity_Inspector_Mod.ScriptCompiler).GetField(\"ScriptMethodBodyGuardFailure\", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic).SetValue(null, null);\nreturn \"guard failure cleared\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "guard failure cleared"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var f = typeof(Unity_Inspector_Mod.ScriptManager).GetField(\"activeScripts\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);\nvar d = (System.Collections.IDictionary)f.GetValue(null);\nvar names = new List<string>();\nforeach (object k in d.Keys) { var n = (string)k; if (n.StartsWith(\"lifecycle-\")) names.Add(n); }\nstring log = \"\";\nforeach (var n in names) log += n + \":\" + Unity_Inspector_Mod.ScriptManager.UnloadScript(n) + \" \";\nint destroyed = 0;\nforeach (var go in UnityEngine.Object.FindObjectsOfType<GameObject>()) if (go.name.StartsWith(\"Lifecycle\")) { UnityEngine.Object.Destroy(go); destroyed++; }\nforeach (var m in Harmony.GetAllPatchedMethods().ToList()) { var owners = Harmony.GetPatchInfo(m).Owners.ToList(); foreach (var o in owners) if (o.StartsWith(\"script.lifecycle-\")) { new Harmony(o).Unpatch(m, HarmonyPatchType.All, o); log += \"unpatched \" + o + \" \"; } }\nUnityEngine.Time.timeScale = 1f;\nreturn \"unloaded \" + names.Count + \" destroyed \" + destroyed + \" \" + log;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "unloaded "
+        ]
+      }
+    }
+  ]
+}

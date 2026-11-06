@@ -32,6 +32,9 @@ public static class MyScript
 - **`Main()`** — Called when the script is executed. Optional — scripts without Main() just register their types.
 - **`Unload()`** — Called when the script is unloaded via `unload_script`. Optional but recommended for scripts that apply patches or create GameObjects.
 
+`Main()` and `Unload()` are each stopped at their next loop iteration once they have run 15 seconds.
+An unload also destroys every component in the scene whose type the script declares, on any GameObject.
+
 Re-running `execute_script` **restarts** the script: `Unload()` runs, patches are removed and
 tracked GameObjects are destroyed, then `Main()` runs again. Unchanged source still skips
 recompilation. `Main()` is never entered twice on top of its own state, so it does not need
@@ -44,7 +47,7 @@ Available as static fields/methods during `Main()` and `Unload()`:
 - `ScriptContext.Harmony` — Isolated Harmony instance for this script. Patches are auto-unpatched on unload.
 - `ScriptContext.Logger(string msg)` — Log to the mod logger. Output prefixed with `[Script:name]`.
 - `ScriptContext.GameObjects` — `List<GameObject>`. Add GameObjects here for auto-cleanup on unload.
-- `ScriptContext.Args` — `Dictionary<string, string>` of arguments passed from the MCP tool.
+- `ScriptContext.Args` — `Dictionary<string, string>` of arguments passed from the MCP tool. A string value arrives as sent; any other value arrives as its JSON text (`5`, `true`, `{"a":1}`, `null`).
 - `ScriptContext.GetArg(string key, string defaultValue)` — Safe argument getter (.NET 3.5 compatible).
 
 `ScriptContext` describes the script whose `Main()` or `Unload()` is currently running, and
@@ -73,9 +76,14 @@ assembly is compiled in memory.
 ## The Pause Menu
 
 Opening the pause menu offline deactivates every active GameObject not tagged `Unpausable`,
-`DontDestroyOnLoad` ones included, so their MonoBehaviours stop updating until it closes. A
-script whose MonoBehaviour must keep running under the pause menu tags its GameObject
-`go.tag = "Unpausable";`, as `scenario-menus.cs` does.
+`DontDestroyOnLoad` ones included, so their MonoBehaviours stop updating until it closes.
+"Return to world map" from the pause menu loads the map without closing it, and the next pause
+forgets every object the first one deactivated, so an untagged `DontDestroyOnLoad` object is
+lost for good. A script whose GameObject outlives a scene tags it `go.tag = "Unpausable";`,
+and its `Update` returns while `PauseController.Paused` unless it means to run under the menu,
+as `scenario-menus.cs` does. The pause sets `Time.timeScale` to 1, so `Time.time` and
+`Time.realtimeSinceStartup` both keep counting through it; a timer that should not counts its
+own `Time.deltaTime` or `Time.unscaledDeltaTime` in the frames it runs.
 
 ## .NET 3.5 Constraints
 
@@ -83,14 +91,12 @@ The game runs on .NET 3.5. Key limitations:
 - No `Dictionary.GetValueOrDefault()` — use `ScriptContext.GetArg()` or `TryGetValue`
 - No `string.IsNullOrWhiteSpace()` — use `string.IsNullOrEmpty(s) || s.Trim().Length == 0`
 - No `async/await`
-- No `nameof()`
-- No iterator methods (`yield return`), the whole file fails to compile
 - LINQ is available (`System.Linq`)
 
 ## Auto-Imported Namespaces
 
 The following are automatically imported — no `using` statements needed:
-`System`, `System.Collections.Generic`, `System.Linq`, `System.Reflection`, `UnityEngine`, `HarmonyLib`, `Unity_Inspector_Mod`
+`System`, `System.Collections`, `System.Collections.Generic`, `System.Linq`, `System.Reflection`, `UnityEngine`, `HarmonyLib`, `Unity_Inspector_Mod`
 
 Add additional `using` statements as needed for other namespaces.
 
