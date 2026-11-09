@@ -2259,3 +2259,34 @@ test('a shutdown during a brand-new instance\'s launch waits for its creation cl
   assert.equal(claimedAtExit, true, 'the server exited before the brand-new instance was claimed');
   assert.match((await fs.readFile(ownerFile, 'utf8')).trim(), OWNER_LINE_RE);
 });
+
+test('a launch record still being written never holds back the creation claim a shutdown waits for', { timeout: 30000, skip: !isLinux }, async (t) => {
+  const { shutdownServer } = await import('../index.js');
+  const { setLaunchRecordWriter } = await import('../lib/launch-record.js');
+  let writing = false;
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  setLaunchRecordWriter(async () => {
+    writing = true;
+    await held;
+  });
+  t.after(() => {
+    release();
+    setLaunchRecordWriter();
+  });
+  await control('create-late', '1');
+  await resolveTarget();
+
+  const launching = launch();
+  while (!writing || !(await launcherCalls()).includes(`instance ${SESSION} launch`)) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  let claimedAtExit = null;
+  await shutdownServer('SIGTERM', {
+    exit: () => { claimedAtExit = existsSync(ownerFile); },
+  });
+  release();
+  await launching;
+
+  assert.equal(claimedAtExit, true, 'the record write kept the creation claim from being watched');
+});

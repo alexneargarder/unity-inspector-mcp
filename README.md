@@ -1,5 +1,7 @@
 # unity-inspector-mcp
 
+> The Unity Inspector Mod isn't released yet. Until it is, its source is in the [Unity Inspector Mod folder](https://github.com/alexneargarder/BroforceMods/tree/master/Unity%20Inspector%20Mod) of BroforceMods.
+
 This lets an MCP client inspect and change things in Broforce while the game is running. It's mainly for modding and debugging. It works with the Unity Inspector Mod, a C# mod loaded by Unity Mod Manager, and the two talk over TCP on localhost, port 9999 by default. The server runs on Linux, Windows and macOS.
 
 ## Requirements
@@ -107,10 +109,11 @@ All of these are optional and go in the `env` block (the `[mcp_servers.unity-ins
 | `UNITY_INSPECTOR_HOST` | `127.0.0.1`, or on WSL that and then the Windows host | Host your own game runs on. A game on another machine needs the mod's "Allow remote connections (LAN)" setting on, and a copy of its token file named in `UNITY_INSPECTOR_TOKEN_FILE`, taken again each time the mod's server starts; the server can't see or stop that game's process. A loopback host here means this machine, so a game behind an ssh tunnel goes through `launch_game`'s `remote` instead ([docs/remote-game.md](docs/remote-game.md)). |
 | `UNITY_INSPECTOR_TEST_RESULTS_DIR` | `$XDG_STATE_HOME/unity-inspector-mcp/test-results`, else `~/.local/state/unity-inspector-mcp/test-results` | Folder `run_test_script` writes each session's full results under. |
 | `UNITY_INSPECTOR_REMOTE_DIR` | `$XDG_STATE_HOME/unity-inspector-mcp/remote`, else `~/.local/state/unity-inspector-mcp/remote` | Folder the files fetched from a game on another machine go under, one folder per session. |
+| `UNITY_INSPECTOR_LAUNCHES_DIR` | `$XDG_STATE_HOME/unity-inspector-mcp/launches`, else `~/.local/state/unity-inspector-mcp/launches` | Folder each session's record of its last launch goes in. |
 
-Apart from `BROFORCE_INSTANCE_CMD`, `UNITY_INSPECTOR_TEST_RESULTS_DIR` and `UNITY_INSPECTOR_REMOTE_DIR`, these are about your own game, never about a session's instance, which takes its port, its logs and its token from `BROFORCE_INSTANCE_CMD`'s launcher instead.
+Apart from `BROFORCE_INSTANCE_CMD`, `UNITY_INSPECTOR_TEST_RESULTS_DIR`, `UNITY_INSPECTOR_REMOTE_DIR` and `UNITY_INSPECTOR_LAUNCHES_DIR`, these are about your own game, never about a session's instance, which takes its port, its logs and its token from `BROFORCE_INSTANCE_CMD`'s launcher instead.
 
-`launch_game` goes through Steam by default. `BROFORCE_LAUNCH_CMD` replaces that with a full command line, like a Proton launcher script, parsed into a command plus arguments with shell-style quoting. It runs exactly as you configured it, with `--vanilla` added for a vanilla launch and whatever `launchArgs` holds appended. `launchArgs` reach whichever launch the call runs, this command with `steam: true` and the instance launcher's `instance <id> launch` by default, so an option of one is not an option of the other.
+`launch_game` goes through Steam by default. `BROFORCE_LAUNCH_CMD` replaces that with a full command line, like a Proton launcher script, parsed into a command plus arguments with shell-style quoting. It runs exactly as you configured it, with `--vanilla` added for a vanilla launch and whatever `launchArgs` holds appended. `launchArgs` reach whichever launch the call runs, this command with `steam: true` and the instance launcher's `instance <id> launch` by default, so an option of one is not an option of the other. A launch that leaves out the `launchArgs` or `vanilla` the same game's last launch in this session carried is refused, for your own game and an instance alike, and `launchArgs: ""` or `vanilla: false` launches without them.
 
 If your launch command's `--help` lists `--args-help`, the server runs the command again with that flag and quotes what it prints in `launch_game`'s description. The instance launcher is asked the same way once its `--help` has shown it runs instances and this session has an instance of its own, and each answer is quoted under the launch it belongs to, 1 KB of each. A program that runs both launches can label what each one takes, in the form [the launcher contract](docs/launcher-contract.md) gives. A command whose `--help` doesn't list the flag is never handed it, and the description says instead that no argument help is published and `launchArgs` pass through as given.
 

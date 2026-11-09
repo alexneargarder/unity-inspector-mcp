@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from 'fs';
+import { beforeEach } from 'node:test';
 import { tmpdir } from 'os';
 import path from 'path';
 
@@ -32,6 +33,14 @@ process.env.UNITY_INSPECTOR_TEST_RESULTS_DIR = TEST_RESULTS_SCRATCH;
 process.on('exit', () => rmSync(TEST_RESULTS_SCRATCH, { recursive: true, force: true }));
 export const REMOTE_FILES_SCRATCH = path.join(TEST_RESULTS_SCRATCH, 'remote');
 process.env.UNITY_INSPECTOR_REMOTE_DIR = REMOTE_FILES_SCRATCH;
+export const LAUNCH_RECORDS_SCRATCH = path.join(TEST_RESULTS_SCRATCH, 'launches');
+process.env.UNITY_INSPECTOR_LAUNCHES_DIR = LAUNCH_RECORDS_SCRATCH;
+// A launch a test made would otherwise refuse the next test's launch that leaves its arguments out
+const { forgetLaunchRecords } = await import('../../lib/launch-record.js');
+beforeEach(() => {
+  rmSync(LAUNCH_RECORDS_SCRATCH, { recursive: true, force: true });
+  forgetLaunchRecords();
+});
 export const NO_TOKEN_FILE = path.join(TEST_RESULTS_SCRATCH, 'no-inspector-token');
 process.env.UNITY_INSPECTOR_TOKEN_FILE = NO_TOKEN_FILE;
 

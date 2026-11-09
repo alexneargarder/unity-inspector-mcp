@@ -36,6 +36,7 @@ import {
 import { START_TIME_TOLERANCE_MS, fileIdOf, isPlayerLogName, linesBackward, readGuard, sameLogRun, sameRun } from './lib/log-delta.js';
 import { changedSince, serverCodeFiles } from './lib/stale-code.js';
 import { logMirrorPaths, withLogMirrors } from './lib/remote-files.js';
+import { forgetLaunchRecords, lastLaunch, launchRecordsWritten, recordLaunch } from './lib/launch-record.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1282,6 +1283,7 @@ export function resetTargetResolution() {
   startupClaimPending = false;
   boundCalls.length = 0;
   vanillaGames.clear();
+  forgetLaunchRecords();
   launcherReadiness = { settled: false, value: UNSETTLED, promise: null };
 }
 
@@ -2067,14 +2069,14 @@ function toolDefinitions({ launchHelp = "" } = {}) {
       },
       {
         name: "launch_game",
-        description: "Launch Broforce, wait for it to answer and point this server at it: by default this session's game instance (its own profile, saves and port), or the user's game in a session without one. steam: true targets the user's game instead, launching it (the configured launch command, else Steam) only when it is not running; a window on screen needs that command's placement option. A game already running is pointed at and reported, never relaunched, unless restart is true, which stops only the target's game and launches it again." + launchHelp,
+        description: "Launch Broforce, wait for it to answer and point this server at it: by default this session's game instance (own profile, saves, port), else the user's game. steam: true targets the user's game, launched (its launch command, else Steam) only if not running; a visible window needs that command's placement option. A running game is pointed at, not relaunched, unless restart: true, which stops and relaunches only the target's game. Omitting launchArgs or vanilla its last launch carried is refused; launchArgs: \"\" and vanilla: false drop them." + launchHelp,
         inputSchema: {
           type: "object",
           properties: {
             steam: { type: "boolean" },
             vanilla: {
               type: "boolean",
-              description: "Launch without mods. No inspector loads, so the call returns once the game has started",
+              description: "Launch without mods; with no inspector, the call returns once the game has started",
             },
             restart: { type: "boolean" },
             launchArgs: {
@@ -2084,7 +2086,7 @@ function toolDefinitions({ launchHelp = "" } = {}) {
             remote: {
               type: "object",
               properties: { host: { type: "string" }, port: { type: "integer" }, tokenFile: { type: "string" } },
-              description: "Point at a game on another machine instead, launching nothing; tokenFile is a local copy of its token",
+              description: "Point at a game on another machine, launching nothing; tokenFile is a local copy of its token",
             },
           },
         },
@@ -2250,6 +2252,29 @@ export function setLaunchResolver(resolver = resolveLaunchCommand) {
 
 export function vanillaTookEffect(launch) {
   return launch?.vanilla === true;
+}
+
+function carriedByLaunch(launch, requested, launchArgs) {
+  const ignored = new Set(launch.ignoredArgs ?? []);
+  const argsTookEffect = requested.extraArgs.some((arg) => !ignored.has(arg));
+  return { launchArgs: argsTookEffect ? launchArgs : null, vanilla: vanillaTookEffect(launch) };
+}
+
+async function repeatRefusal(target, args, requested) {
+  const last = await lastLaunch(target);
+  if (last === null) return null;
+  const dropsArgs = args.launchArgs === undefined && last.launchArgs !== null;
+  const dropsVanilla = args.vanilla === undefined && !requested.vanilla && last.vanilla;
+  if (!dropsArgs && !dropsVanilla) return null;
+  const carried = [
+    ...(last.launchArgs !== null ? [`launchArgs: ${JSON.stringify(last.launchArgs)}`] : []),
+    ...(last.vanilla ? ['vanilla: true'] : []),
+  ];
+  const missing = [...(dropsArgs ? ['launchArgs'] : []), ...(dropsVanilla ? ['vanilla'] : [])];
+  const without = [...(dropsArgs ? ['launchArgs: ""'] : []), ...(dropsVanilla ? ['vanilla: false'] : [])];
+  return `Nothing was launched or stopped: this session's last launch of ${targetDescription(target)} carried ` +
+    `${carried.join(' and ')}, and this call gives no ${missing.join(' or ')}. Pass ${carried.join(', ')} to launch ` +
+    `it the same way, or ${without.join(' and ')} to launch ${dropsVanilla ? (dropsArgs ? 'with neither' : 'with mods') : 'without them'}.`;
 }
 
 // The launch command's own exit is the instance's verdict: the port it allocated is only readable
@@ -2710,10 +2735,11 @@ async function launchGame(args, signal = null) {
   try {
     await setTarget(nextTarget);
     if (config.isAgentInstance) release = await acquireInstanceOp();
-    return await launchOnTarget({ args, signal, config, nextTarget, launch, vanilla, withTargetNotes, beforeSwitch, releaseInstance });
+    return await launchOnTarget({ args, signal, config, nextTarget, launch, requested, vanilla, withTargetNotes, beforeSwitch, releaseInstance });
   } finally {
     await withdrawWrapperArgs(launch.prepare);
     releaseInstance();
+    await launchRecordsWritten();
     boundCalls.splice(boundCalls.indexOf('launch_game'), 1);
   }
 }
@@ -2730,7 +2756,7 @@ function likelyCauses(launch, state) {
   return named.length > 0 ? ` Likely causes: ${named.join('; ')}.` : '';
 }
 
-async function launchOnTarget({ args, signal, config, nextTarget, launch, vanilla, withTargetNotes, beforeSwitch, releaseInstance }) {
+async function launchOnTarget({ args, signal, config, nextTarget, launch, requested, vanilla, withTargetNotes, beforeSwitch, releaseInstance }) {
   // On an instance the cwd rule decides whether a game of ours is running: a ping answered by
   // somebody else's game on a port we no longer own must never refuse this launch
   const ownsGame = config.isAgentInstance ? (await isGameRunning(config)) === true : true;
@@ -2800,6 +2826,12 @@ async function launchOnTarget({ args, signal, config, nextTarget, launch, vanill
         `a launch could start a second copy beside a game that is already up. Start or stop it yourself, ` +
         `then use wait_for_game.`,
     });
+  }
+
+  const repeat = await repeatRefusal(nextTarget, args, requested);
+  if (repeat !== null) {
+    await restoreTarget(beforeSwitch);
+    throw new Error(repeat);
   }
 
   try {
@@ -2888,6 +2920,8 @@ async function launchOnTarget({ args, signal, config, nextTarget, launch, vanill
   const ignoredArgsNote = noteParts.length > 0 ? noteParts.join(' ') : null;
 
   let watcher = launcherExitWatcher(await spawnLauncher());
+  // Not awaited: the launcher's exit and a brand-new id's creation claim are watched from here on
+  recordLaunch(nextTarget, carriedByLaunch(launch, requested, args.launchArgs));
   // The port this launch's launcher allocated, which the wait may use before its game is up
   let launchedPort = null;
   let launchedPortUntil = -Infinity;
