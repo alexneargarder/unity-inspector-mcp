@@ -104,7 +104,7 @@
     }
   ],
   "cleanup": [
-    { "command": "unload_script", "params": { "name": "scenario-level-run" } },
+    { "command": "unload_script", "params": { "path": "scenario-level-run" } },
     {
       "command": "execute_code",
       "params": {

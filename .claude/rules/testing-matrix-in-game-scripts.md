@@ -18,6 +18,7 @@ paths:
 | C | a step call (`RunGun`, `StartHanging`, `AttachToZipline`), the `written` flags and `gunFrame`; a provided ladder or zipline | not produced by any step: only a live sweep reaches it |
 | N | a box whose strip passes the GPU texture limit; `capture.json` after an unload mid-sweep | not produced by any step: only a live sweep reaches it |
 | C | `backdrop`: strips on the flat colour, the contribution check's second render through it too, a blank capture against the colour | not produced by any step: only a live sweep reaches it |
+| S | a sweep on a remote target: strips and `capture.json` fetched into `out` matching a local sweep's, the `hold` lease | not produced by any step: a step cannot declare a remote target, since `run_test_script` refuses `launch_game`; RC covers the server's side |
 
 ## execute_code
 
@@ -62,9 +63,22 @@ paths:
 | C | user code throws: explicit, cast, null reference | execute-code-shapes 50, 52; execute-code-errors 3-4, 7-8 |
 | C | a stack trace through user methods | execute-code-shapes 51 |
 | C | a compiler diagnostic | execute-code-shapes 53; execute-code-errors 9 |
-| C | a compiler crash: built once and not retried, the Evaluator rebuilt after it | execute-code-shapes 88-91 |
+| C | a compiler crash: built once and not retried, the Evaluator rebuilt after it, while the mod's number-pattern fix is taken away | execute-code-shapes 88-91 |
 | C | an internal compiler error (CS0584) with its `Cause:` lines, in execute_code and in a script compile, while the mod's nested-type import fix is taken away | execute-code-shapes 92-98 |
-| C | an inaccessible type | execute-code-errors 2 |
+| C | a top-level internal type of the mod's own assembly, by full name | execute-code-errors 2 |
+| C | a top-level internal type of another loaded mod by full name (`Utility_Mod.Main`, `BroMakerLib.ModUI`, `BroMakerLib.Unlocks.BroUnlockManager`, `RocketLib.UMM.Main`) | compiler-access 5-6 |
+| C | a game type outside any namespace, `SteamManager`, beside an internal type with an object initializer | compiler-access 9 |
+| C | a public type winning over an internal one: of the same full name (`System.Tuple` from mcs over 0Harmony's), and through a `using` over an internal global type of its simple name (`Rewired.Consts` over the global `Consts`) | compiler-access 9, 14 |
+| C | a `using` alias to an internal type | compiler-access 14 |
+| C | a `System.IO` and a `System.Text` type with no `using` | compiler-access 7, 14 |
+| C | the game's global `Math` still resolving beside the default imports | compiler-access 8 |
+| C | an `is` operand naming a type that does not exist: a plain test and a pattern, in a namespace that exists, answered with the missing type's own CS0234 and no internal compiler error; the same for `as` | compiler-access 10-12 |
+| C | a top-level internal type by simple name: the mod's own through the default imports, beside `Main`, which gives the mod's own `Main` | compiler-access 18 |
+| C | an `is` operand that is a simple name naming nothing, answered with CS0246 at its own column, not CS0150 | compiler-access 22 |
+| C | a constant pattern naming a member its type lacks, answered with CS0117, not CS0426 | compiler-access 23 |
+| C | a number and an enum constant pattern on an `object`, true and false | compiler-access 24 |
+| C | a number pattern after a compile that failed with one in it, the next call running | compiler-access 25-26 |
+| C | a wildcard pattern (`*`) and a `var` pattern as the `is` operand, running with no CS0584 or internal compiler error | compiler-access 27-28 |
 | C | the compiler's limits: `string.Join` over IEnumerable, a value tuple | execute-code-shapes 54-55 |
 | M | types from RocketLib, BroMakerLib, Swap Bros Mod | execute-code-shapes 56-58 |
 | C | types of a loaded class-only script, by name and by reflection | execute-code-shapes 59-61 |
@@ -108,6 +122,9 @@ paths:
 | C | `compileOnly`: the script's own enum | scripts-lifecycle 8 |
 | C | `compileOnly`: unqualified `Object` | scripts-lifecycle 9 |
 | C | `compileOnly`: an internal mod type | scripts-lifecycle 10 |
+| C | `compileOnly`: an `is` operand naming a type that does not exist: its CS0234 at the script's own line and column, no internal compiler error | compiler-access 13 |
+| C | `compileOnly`: an internal mod type by simple name through a `using` | compiler-access 19 |
+| C | `compileOnly`: a simple name two `using`s supply as internal types (`Main` with `using Utility_Mod;`), CS0104 naming both | compiler-access 20 |
 | C | `compileOnly`: an iterator method; an auto-property | scripts-lifecycle 11-12 |
 | C | `compileOnly`: a type execute_code declared | scripts-lifecycle 13-14 |
 | C | `compileOnly`: a member a script type lacks | scripts-lifecycle 16 |
@@ -118,6 +135,9 @@ paths:
 | C | `args` of strings; int and float; bool; object, array and null; none | scripts-lifecycle 33-37 |
 | C | `args` strings shaped like ISO dates, at the top level and nested | scripts-lifecycle 38 |
 | C | a first run; a rerun of the same source; of an edited source; after an unload | scripts-lifecycle 22-26, 29 |
+| C | a script naming internal mod types, an alias to one and `System.IO`/`System.Text` types without a `using`, and one in a namespace naming a global game type | compiler-access 14-15 |
+| C | a script whose internal class derives from another mod's internal class through an alias, with a `using static` of an internal type | compiler-access 21 |
+| C | a script with a number constant pattern on an `object` | compiler-access 29 |
 | C | an edited source replacing a script that uses a type execute_code declared; that type afterwards | scripts-lifecycle 56-61 |
 | C | a compile error | scripts-lifecycle 7 |
 | C | `Main()` throws: reported loaded | scripts-lifecycle 66 |
@@ -163,7 +183,7 @@ paths:
 
 | | class | covered by |
 |---|---|---|
-| C | a loaded script | scripts-lifecycle 17, 21, 30, 139; execute-code-shapes 68 |
+| C | a loaded script | scripts-lifecycle 17, 21, 30, 139; execute-code-shapes 68; compiler-access 16-17, 30-31 |
 | C | another case; another case after a Harmony patch, the patch removed | scripts-lifecycle 27, 50-51 |
 | C | already unloaded; never loaded | scripts-lifecycle 31-32 |
 | C | a MonoBehaviour, a coroutine, a Harmony patch | scripts-lifecycle 42-51 |

@@ -6,7 +6,8 @@ import fs from 'fs/promises';
 import { instanceConfig, steamConfig, withRoot } from '../lib/instance.js';
 import {
   LINUX_GAME_COMM,
-  detectActiveProfile,
+  activeUmmLog,
+  forgetGameDataLocations,
   gameStartTime,
   isGameRunning,
   isUnder,
@@ -40,11 +41,11 @@ const agentOne = rooted({ CLAUDE_SESSION_ID: SESSION_ONE, BROFORCE_INSTANCE_CMD:
 const agentTwo = rooted({ CLAUDE_SESSION_ID: SESSION_TWO, BROFORCE_INSTANCE_CMD: LAUNCHER });
 
 // pid 100 is the user's Steam game, 101 and 102 are agent instances 1 and 2, 103 is not the game.
-// The wrapper eats --r2profile and run_umm.sh eats --doorstop-target-assembly, so the profile path
-// is on the shells that started the game, never on the game's own argv.
+// run_umm.sh eats --doorstop-target-assembly, so the Doorstop target is on the shells that started the
+// game, never on the game's own argv.
 const PROCESSES = {
   90: { comm: 'bash', cwd: '/home/u', startTicks: 90000, cmdline: 'bash /nix/store/x-launch/bin/launch-game' },
-  95: { comm: 'reaper', cwd: '/home/u', ppid: 90, startTicks: 95000, cmdline: '/home/u/.local/share/Steam/ubuntu12_32/reaper SteamLaunch AppId=274190 -- /home/u/.config/r2modmanPlus-local/Broforce/profiles/Default/run_umm.sh /home/u/.local/share/broforce-linux/Broforce.x86_64' },
+  95: { comm: 'reaper', cwd: '/home/u', ppid: 90, startTicks: 95000, cmdline: '/home/u/.local/share/Steam/ubuntu12_32/reaper SteamLaunch AppId=274190 -- /home/u/.config/r2modmanPlus-local/Broforce/profiles/Default/run_umm.sh /home/u/.local/share/broforce-linux/Broforce.x86_64 --doorstop-enabled true --doorstop-target-assembly /home/u/.config/r2modmanPlus-local/Broforce/profiles/Default/UMM/Core/UnityModManager.dll' },
   100: { comm: LINUX_GAME_COMM, cwd: '/home/u/.local/share/broforce-linux', ppid: 95, startTicks: 100000, cmdline: '/home/u/.local/share/broforce-linux/Broforce.x86_64 -screen-fullscreen 0' },
   101: { comm: LINUX_GAME_COMM, cwd: `${INSTANCES_ROOT}/${SESSION_ONE}/work`, ppid: 90, startTicks: 200000, cmdline: `${INSTANCES_ROOT}/${SESSION_ONE}/profile/run_umm.sh --doorstop-enabled true` },
   102: { comm: LINUX_GAME_COMM, cwd: `${INSTANCES_ROOT}/${SESSION_TWO}/work`, startTicks: 300000 },
@@ -52,7 +53,10 @@ const PROCESSES = {
 };
 
 const reader = () => fakeProcReader(PROCESSES);
-beforeEach(() => resetInstanceModeProbe());
+beforeEach(() => {
+  resetInstanceModeProbe();
+  forgetGameDataLocations();
+});
 const pidsOf = (procs) => procs.map(proc => proc.pid).sort((a, b) => a - b);
 
 test('the scan finds every Broforce process and nothing else', async () => {
@@ -239,39 +243,44 @@ test('gameStartTime takes the earliest start among owned processes only', { skip
   assert.equal(await gameStartTime(rooted({ CLAUDE_SESSION_ID: 'session-nine', BROFORCE_INSTANCE_CMD: LAUNCHER }), reader()), null);
 });
 
-test('the launched profile is read from the process chain that started the game', { skip: !isLinux }, async () => {
-  assert.equal(await detectActiveProfile(userGame, reader()), 'Default');
-  // An agent instance runs from its own profile directory, which is not an r2modman profile
-  assert.equal(await detectActiveProfile(agentOne, reader()), null);
+const DEFAULT_UMM_LOG = '/home/u/.config/r2modmanPlus-local/Broforce/profiles/Default/UMM/Core/Log.txt';
+const ummTarget = (profile) => `/home/u/.config/r2modmanPlus-local/Broforce/profiles/${profile}/UMM/Core/UnityModManager.dll`;
 
-  // A chain that never names a profile must not borrow one from a sibling process
+test('the active UMM log sits beside the Doorstop target on the process chain that started the game', { skip: !isLinux }, async () => {
+  assert.equal(await activeUmmLog(userGame, { reader: reader() }), DEFAULT_UMM_LOG);
+  // An agent instance has its own two logs and is never asked
+  assert.equal(await activeUmmLog(agentOne, { reader: reader() }), null);
+
+  // A chain that never names a target must not borrow one from a sibling process
   const orphan = fakeProcReader({
     100: { comm: LINUX_GAME_COMM, cwd: '/home/u/game', startTicks: 100, cmdline: '/home/u/game/Broforce.x86_64' },
   });
-  assert.equal(await detectActiveProfile(userGame, orphan), null);
+  assert.equal(await activeUmmLog(userGame, { reader: orphan }), null);
 });
 
-test('two games under different profiles resolve to no profile at all', { skip: !isLinux }, async () => {
+test('two games given different Doorstop targets have no active UMM log', { skip: !isLinux }, async () => {
   const both = fakeProcReader({
-    100: { comm: LINUX_GAME_COMM, cwd: '/home/u/game', startTicks: 100, environ: 'DOORSTOP_TARGET_ASSEMBLY=/home/u/.config/r2modmanPlus-local/Broforce/profiles/Default/UMM/Core/UnityModManager.dll' },
-    200: { comm: LINUX_GAME_COMM, cwd: '/home/u/game2', startTicks: 200, environ: 'DOORSTOP_TARGET_ASSEMBLY=/home/u/.config/r2modmanPlus-local/Broforce/profiles/Testing/UMM/Core/UnityModManager.dll' },
+    100: { comm: LINUX_GAME_COMM, cwd: '/home/u/game', startTicks: 100, environ: `DOORSTOP_TARGET_ASSEMBLY=${ummTarget('Default')}` },
+    200: { comm: LINUX_GAME_COMM, cwd: '/home/u/game2', startTicks: 200, environ: `DOORSTOP_TARGET_ASSEMBLY=${ummTarget('Testing')}` },
   });
 
-  assert.equal(await detectActiveProfile(userGame, both), null);
+  assert.equal(await activeUmmLog(userGame, { reader: both }), null);
 });
 
-test('the profile is also read from the doorstop environment variable', { skip: !isLinux }, async () => {
-  const environ = fakeProcReader({
+test('the Doorstop target is read from the environment, Doorstop 4 and 3 alike', { skip: !isLinux }, async () => {
+  const environ = (variable) => fakeProcReader({
     100: {
       comm: LINUX_GAME_COMM,
       cwd: '/home/u/game',
       startTicks: 100,
       cmdline: '/home/u/game/Broforce.x86_64',
-      environ: 'HOME=/home/u DOORSTOP_TARGET_ASSEMBLY=/home/u/.config/r2modmanPlus-local/Broforce/profiles/UMM_Local_Install/UMM/Core/UnityModManager.dll LANG=C',
+      environ: `HOME=/home/u ${variable}=${ummTarget('UMM_Local_Install')} LANG=C`,
     },
   });
 
-  assert.equal(await detectActiveProfile(userGame, environ), 'UMM_Local_Install');
+  const expected = '/home/u/.config/r2modmanPlus-local/Broforce/profiles/UMM_Local_Install/UMM/Core/Log.txt';
+  assert.equal(await activeUmmLog(userGame, { reader: environ('DOORSTOP_TARGET_ASSEMBLY') }), expected);
+  assert.equal(await activeUmmLog(userGame, { reader: environ('DOORSTOP_INVOKE_DLL_PATH') }), expected);
 });
 
 test('a pidfile whose process no longer matches is never trusted, and pruned only on request', async () => {

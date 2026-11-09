@@ -12,6 +12,7 @@ import { WRAPPER_CODE_FILES } from '../lib/stale-code.js';
 const posix = process.platform !== 'win32';
 const repo = fileURLToPath(new URL('..', import.meta.url));
 const SUBAGENT_NOTE = 'A subagent already running keeps the tool list it started with, so a changed tool reaches only a new subagent.';
+const FORGOTTEN_TARGET = 'A game target declared with launch_game { remote } is forgotten by a restart and has to be declared again.';
 
 test('the wrapper replays initialize after the child dies unexpectedly', { timeout: 20000, skip: !posix }, async (t) => {
   const w = startWrapper();
@@ -37,6 +38,25 @@ test('the wrapper replays initialize after the child dies unexpectedly', { timeo
   assert.ok(afterRespawn, 'the wrapper went silent after the child died');
   assert.ok(!afterRespawn.error, `expected a live server, got ${JSON.stringify(afterRespawn.error)}`);
   assert.equal(afterRespawn.result.tools.length, 2);
+});
+
+test('the first tool reply after a crash respawn says a declared remote target was forgotten, and only the first', { timeout: 20000, skip: !posix }, async (t) => {
+  const w = startWrapper();
+  t.after(() => w.stop());
+  await w.initialize(0);
+
+  const callTool = async (id) => {
+    w.send({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'stub_tool', arguments: {} } });
+    return (await w.waitFor((m) => m.id === id)).result.content.map((item) => item.text);
+  };
+  assert.deepEqual(await callTool(1), ['called stub_tool'], 'a server that never crashed has nothing to tell');
+
+  process.kill(Number(w.childPids()[0]), 'SIGKILL');
+  assert.ok(await w.waitFor((m) => m.method === 'notifications/tools/list_changed', 15000), 'the child was never respawned');
+  w.send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
+  assert.equal((await w.waitFor((m) => m.id === 2)).result.tools.length, 2, 'a tool list is no tool reply');
+  assert.deepEqual(await callTool(3), ['called stub_tool', FORGOTTEN_TARGET]);
+  assert.deepEqual(await callTool(4), ['called stub_tool']);
 });
 
 test('restart_server fails requests that were still in flight', { timeout: 20000, skip: !posix }, async (t) => {
@@ -334,7 +354,7 @@ test('restart_server succeeds only once the new server has listed its tools, and
   assert.deepEqual(JSON.parse(restarted.result.content[0].text), {
     success: true,
     message: 'MCP server restarted successfully, listing 1 tools',
-    note: SUBAGENT_NOTE,
+    note: `${SUBAGENT_NOTE} ${FORGOTTEN_TARGET}`,
   });
   assert.equal(w.messages.filter((m) => m.result?.tools).length, 0);
 });
@@ -350,7 +370,7 @@ test("restart_server's note adds the reconnect only once the wrapper's own code 
     return JSON.parse((await w.waitFor((m) => m.id === id, 15000)).result.content[0].text);
   };
 
-  assert.equal((await restart(1)).note, SUBAGENT_NOTE);
+  assert.equal((await restart(1)).note, `${SUBAGENT_NOTE} ${FORGOTTEN_TARGET}`);
 
   const now = new Date();
   utimesSync(path.join(dir, 'wrapper.js'), now, now);
@@ -360,7 +380,7 @@ test("restart_server's note adds the reconnect only once the wrapper's own code 
   assert.equal(outcome.message, 'MCP server restarted successfully, listing 1 tools');
   assert.equal(
     outcome.note,
-    `${SUBAGENT_NOTE} wrapper.js, lib/instance.js changed after this wrapper started and a restart does not reload the wrapper: reconnect the server in the client (/mcp in Claude Code) to load it.`,
+    `${SUBAGENT_NOTE} ${FORGOTTEN_TARGET} wrapper.js, lib/instance.js changed after this wrapper started and a restart does not reload the wrapper: reconnect the server in the client (/mcp in Claude Code) to load it.`,
   );
 });
 

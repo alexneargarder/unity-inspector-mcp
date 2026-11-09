@@ -20,11 +20,12 @@ process.env.UNITY_INSPECTOR_PORT = String(stub.port);
 const { handleToolCall, targetLogPaths } = await import('../index.js');
 const { UnityInspectorClient } = await import('../lib/unity-client.js');
 const {
-  runTestScript, compactTestScriptReply, testResultsDir, resultsSession, RESULTS_SESSION_IDLE_MS, CSHARP_SCRIPTS_DIR, UMM_FLUSH_WAIT_MS,
+  runTestScript, compactTestScriptReply, testResultsDir, RESULTS_SESSION_IDLE_MS, CSHARP_SCRIPTS_DIR, UMM_FLUSH_WAIT_MS,
   STEP_PREVIEW_MAX_CHARS, TEST_REPLY_MAX_CHARS, TEST_RESULTS_KEEP, REPORT_FIELD_MAX_CHARS,
 } = await import('../lib/script-library.js');
 
 const { setProcReader } = await import('../lib/game-process.js');
+const { sessionFolder } = await import('../lib/instance.js');
 
 setProcReader(fakeProcReader({}));
 
@@ -96,6 +97,45 @@ test('a library script step sends the file\'s source, by bare name, .cs name and
   assert.deepEqual(run.results[0].params, { path: 'watch-field', args: { field: 'health' } },
     'the record shows the step as written, not the whole source');
   assert.ok(!('compileOnly' in sent('compile_script')[0].params), 'the flag never reaches the mod');
+});
+
+test('an unload_script step takes path as the tool does: a library name, a .cs name, a catalog name, an absolute path or a loaded script\'s name', async (t) => {
+  startRecording();
+  answer = (request, socket) => reply(socket, request.id, { success: true });
+  const dir = await tempDir(t);
+  const probe = path.join(dir, 'Probe.cs');
+  await writeFile(probe, 'public static class Probe {}', 'utf-8');
+  const scriptPath = await writeScript(t, {
+    steps: [
+      { command: 'unload_script', params: { path: 'watch-field' } },
+      { command: 'unload_script', params: { path: 'watch-field.cs' } },
+      { command: 'unload_script', params: { path: 'Watch Field' } },
+      { command: 'unload_script', params: { path: probe } },
+      { command: 'unload_script', params: { path: 'lifecycle-inline' } },
+    ],
+    cleanup: [{ command: 'unload_script', params: { path: path.join(CSHARP_SCRIPTS_DIR, 'watch-field.cs') } }],
+  });
+
+  const response = await handleToolCall({ params: { name: 'run_test_script', arguments: { script: scriptPath } } });
+  const payload = JSON.parse(response.content.map((c) => c.text).join('\n'));
+  assert.equal(payload.passed, true, JSON.stringify(payload));
+  assert.deepEqual(sent('unload_script').map((r) => r.params), [
+    { name: 'watch-field' }, { name: 'watch-field' }, { name: 'watch-field' }, { name: 'Probe' }, { name: 'lifecycle-inline' }, { name: 'watch-field' },
+  ]);
+});
+
+test('an unload_script step naming name is refused, in steps and cleanup steps alike', async (t) => {
+  for (const [script, words] of [
+    [{ steps: [{ command: 'ping' }, { command: 'unload_script', params: { name: 'watch-field' } }] }, /step 2: unload_script has no argument "name"; its arguments are path/],
+    [{ steps: [{ command: 'ping' }], cleanup: [{ command: 'unload_script', params: { name: 'watch-field' } }] }, /cleanup step 1: unload_script has no argument "name"; its arguments are path/],
+  ]) {
+    startRecording();
+    const response = await handleToolCall({ params: { name: 'run_test_script', arguments: { script: await writeScript(t, script) } } });
+    const payload = JSON.parse(response.content.map((c) => c.text).join('\n'));
+    assert.equal(payload.passed, false);
+    assert.match(payload.error, words);
+    assert.equal(requests.length, 0);
+  }
 });
 
 test('a step reaches the mod the way the tool does, with the flag stripped and the record as written', async (t) => {
@@ -248,7 +288,7 @@ test('cleanup runs after a failed step and every cleanup step runs even when one
   const scriptPath = await writeScript(t, {
     steps: [{ command: 'execute_code', params: { code: 'x' } }, { command: 'ping' }],
     cleanup: [
-      { command: 'unload_script', params: { name: 'a' } },
+      { command: 'unload_script', params: { path: 'a' } },
       { command: 'set_game_speed', params: { speed: 1 } },
     ],
   });
@@ -272,7 +312,7 @@ test('cleanup runs after a step whose command threw while the game is still up',
   };
   const scriptPath = await writeScript(t, {
     steps: [{ command: 'go_to_level', params: { levelIndex: 0 } }],
-    cleanup: [{ command: 'unload_script', params: { name: 'runner' } }],
+    cleanup: [{ command: 'unload_script', params: { path: 'runner' } }],
   });
 
   const run = await runTestScript(scriptPath, client, { isRunning: async () => true });
@@ -291,7 +331,7 @@ test('cleanup is skipped when the game died under a step', async (t) => {
   };
   const scriptPath = await writeScript(t, {
     steps: [{ command: 'execute_code', params: { code: 'crash()' } }, { command: 'ping' }],
-    cleanup: [{ command: 'unload_script', params: { name: 'runner' } }],
+    cleanup: [{ command: 'unload_script', params: { path: 'runner' } }],
   });
 
   const run = await runTestScript(scriptPath, client, { isRunning: async () => false });
@@ -310,7 +350,7 @@ test('a crash-like error with the game still running does not skip cleanup', asy
   };
   const scriptPath = await writeScript(t, {
     steps: [{ command: 'execute_code', params: { code: 'x' } }],
-    cleanup: [{ command: 'unload_script', params: { name: 'runner' } }],
+    cleanup: [{ command: 'unload_script', params: { path: 'runner' } }],
   });
 
   const run = await runTestScript(scriptPath, client, { isRunning: async () => true });
@@ -327,7 +367,7 @@ test('cleanup stops once the game dies under a cleanup step', async (t) => {
   const scriptPath = await writeScript(t, {
     steps: [{ command: 'ping' }],
     cleanup: [
-      { command: 'unload_script', params: { name: 'a' } },
+      { command: 'unload_script', params: { path: 'a' } },
       { command: 'set_game_speed', params: { speed: 1 } },
     ],
   });
@@ -532,7 +572,7 @@ test('continueOnFailure runs past an unmet expectation and a thrown command, lis
       { command: 'go_to_level', params: { levelIndex: 0 } },
       { command: 'ping' },
     ],
-    cleanup: [{ command: 'unload_script', params: { name: 'runner' } }],
+    cleanup: [{ command: 'unload_script', params: { path: 'runner' } }],
   });
 
   const run = await runTestScript(scriptPath, client, { isRunning: async () => true });
@@ -557,7 +597,7 @@ test('continueOnFailure stops at a step the game died under, and cleanup is skip
   const scriptPath = await writeScript(t, {
     continueOnFailure: true,
     steps: [{ command: 'execute_code', params: { code: 'crash()' } }, { command: 'ping' }],
-    cleanup: [{ command: 'unload_script', params: { name: 'runner' } }],
+    cleanup: [{ command: 'unload_script', params: { path: 'runner' } }],
   });
 
   const run = await runTestScript(scriptPath, client, { isRunning: async () => false });
@@ -578,7 +618,7 @@ test('continueOnFailure lists failed cleanup steps too, and is empty on a clean 
   const failing = await writeScript(t, {
     continueOnFailure: true,
     steps: [{ command: 'ping' }],
-    cleanup: [{ command: 'unload_script', params: { name: 'a' } }],
+    cleanup: [{ command: 'unload_script', params: { path: 'a' } }],
   });
   const run = await runTestScript(failing, client, { isRunning: async () => true });
   assert.deepEqual(run.failures, [{ step: 1, command: 'unload_script', error: 'no such script', cleanup: true }]);
@@ -589,7 +629,7 @@ test('continueOnFailure lists failed cleanup steps too, and is empty on a clean 
   assert.deepEqual(ok.failures, []);
   assert.equal(ok.passed, true);
 
-  const without = await writeScript(t, { steps: [{ command: 'unload_script', params: { name: 'a' } }, { command: 'ping' }] });
+  const without = await writeScript(t, { steps: [{ command: 'unload_script', params: { path: 'a' } }, { command: 'ping' }] });
   const stopped = await runTestScript(without, client);
   assert.equal(stopped.completedSteps, 1, 'without the flag the run still stops at the first failure');
   assert.equal(stopped.failures, undefined);
@@ -685,7 +725,7 @@ test('the final log read waits out UMM\'s write buffer while the game runs', asy
   answer = (request, socket) => reply(socket, request.id, { success: true });
   const scriptPath = await writeScript(t, {
     steps: [{ command: 'ping' }],
-    cleanup: [{ command: 'unload_script', params: { name: 'runner' } }],
+    cleanup: [{ command: 'unload_script', params: { path: 'runner' } }],
   });
 
   const clock = fakeClock();
@@ -1071,8 +1111,8 @@ test('the results directory is the session\'s own, in the user\'s state director
   assert.equal(testResultsDir({ ...id, XDG_STATE_HOME: 'relative' }, '/home/u'), '/home/u/.local/state/unity-inspector-mcp/test-results/abc-123');
   assert.equal(testResultsDir({ ...id, UNITY_INSPECTOR_TEST_RESULTS_DIR: '/x', XDG_STATE_HOME: '/state' }, '/home/u'), '/x/abc-123');
   assert.equal(testResultsDir({ ...id, TMPDIR: '/tmp/nix-shell-1' }, '/home/u'), '/home/u/.local/state/unity-inspector-mcp/test-results/abc-123');
-  assert.equal(resultsSession({ CLAUDE_SESSION_ID: 'not a valid id' }, 4242), 'pid-4242');
-  assert.equal(resultsSession({}, 4242), 'pid-4242');
+  assert.equal(sessionFolder({ CLAUDE_SESSION_ID: 'not a valid id' }, 4242), 'pid-4242');
+  assert.equal(sessionFolder({}, 4242), 'pid-4242');
 });
 
 test('one session\'s pruning never touches another\'s results, and a session idle for a week is cleared', async (t) => {

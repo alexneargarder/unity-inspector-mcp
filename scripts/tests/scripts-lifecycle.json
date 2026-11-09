@@ -137,12 +137,12 @@
         "compileOnly": true
       },
       "expect": {
-        "success": false,
+        "success": true,
         "contains": [
-          "CS0122"
+          "\"LifecycleInternal\""
         ],
         "notContains": [
-          "Cause:"
+          "CS0122"
         ]
       }
     },
@@ -231,7 +231,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-evaltype"
+        "path": "lifecycle-evaltype"
       },
       "expect": {
         "success": true,
@@ -282,7 +282,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-evaltype"
+        "path": "lifecycle-evaltype"
       },
       "expect": {
         "success": true,
@@ -362,7 +362,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "LIFECYCLE-STATIC"
+        "path": "LIFECYCLE-STATIC"
       },
       "expect": {
         "success": true,
@@ -401,7 +401,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-static"
+        "path": "lifecycle-static"
       },
       "expect": {
         "success": true,
@@ -413,7 +413,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-static"
+        "path": "lifecycle-static"
       },
       "expect": {
         "success": false,
@@ -425,7 +425,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-never-loaded"
+        "path": "lifecycle-never-loaded"
       },
       "expect": {
         "success": false,
@@ -557,7 +557,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-args"
+        "path": "lifecycle-args"
       },
       "expect": {
         "success": true,
@@ -597,7 +597,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-behaviour"
+        "path": "lifecycle-behaviour"
       },
       "expect": {
         "success": true,
@@ -653,7 +653,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-coroutine"
+        "path": "lifecycle-coroutine"
       },
       "expect": {
         "success": true,
@@ -705,7 +705,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "LIFECYCLE-HARMONY"
+        "path": "LIFECYCLE-HARMONY"
       },
       "expect": {
         "success": true,
@@ -759,7 +759,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-consumer"
+        "path": "lifecycle-consumer"
       },
       "expect": {
         "success": true,
@@ -771,7 +771,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-shared"
+        "path": "lifecycle-shared"
       },
       "expect": {
         "success": true,
@@ -836,7 +836,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-keep"
+        "path": "lifecycle-keep"
       },
       "expect": {
         "success": true,
@@ -903,7 +903,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-dup"
+        "path": "lifecycle-dup"
       },
       "expect": {
         "success": true,
@@ -932,7 +932,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-throws"
+        "path": "lifecycle-throws"
       },
       "expect": {
         "success": true,
@@ -959,7 +959,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-generic"
+        "path": "lifecycle-generic"
       },
       "expect": {
         "success": true,
@@ -987,7 +987,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-modtypes"
+        "path": "lifecycle-modtypes"
       },
       "expect": {
         "success": true,
@@ -1013,7 +1013,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-iterator"
+        "path": "lifecycle-iterator"
       },
       "expect": {
         "success": true,
@@ -1042,7 +1042,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-foreach"
+        "path": "lifecycle-foreach"
       },
       "expect": {
         "success": true,
@@ -1068,7 +1068,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-unloadthrows"
+        "path": "lifecycle-unloadthrows"
       },
       "expect": {
         "success": true,
@@ -1111,7 +1111,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-slow"
+        "path": "lifecycle-slow"
       },
       "expect": {
         "success": true,
@@ -1136,7 +1136,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-catchall"
+        "path": "lifecycle-catchall"
       },
       "expect": {
         "success": true,
@@ -1192,7 +1192,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-longmain"
+        "path": "lifecycle-longmain"
       },
       "expect": {
         "success": true,
@@ -1241,7 +1241,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-busy"
+        "path": "lifecycle-busy"
       },
       "expect": {
         "success": false,
@@ -1335,7 +1335,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-nostart"
+        "path": "lifecycle-nostart"
       },
       "expect": {
         "success": false,
@@ -1347,7 +1347,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-busy"
+        "path": "lifecycle-busy"
       },
       "expect": {
         "success": true,
@@ -1389,7 +1389,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-stalled"
+        "path": "lifecycle-stalled"
       },
       "expect": {
         "success": false,
@@ -1416,7 +1416,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-stalled"
+        "path": "lifecycle-stalled"
       },
       "expect": {
         "success": false,
@@ -1442,7 +1442,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-stallthrows"
+        "path": "lifecycle-stallthrows"
       },
       "expect": {
         "success": true,
@@ -1496,7 +1496,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-goneenum"
+        "path": "lifecycle-goneenum"
       },
       "expect": {
         "success": true,
@@ -1560,7 +1560,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-memberenum"
+        "path": "lifecycle-memberenum"
       },
       "expect": {
         "success": true,
@@ -1572,7 +1572,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-memberholder"
+        "path": "lifecycle-memberholder"
       },
       "expect": {
         "success": true,
@@ -1623,7 +1623,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-collide-b"
+        "path": "lifecycle-collide-b"
       },
       "expect": {
         "success": false,
@@ -1635,7 +1635,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-collide-a"
+        "path": "lifecycle-collide-a"
       },
       "expect": {
         "success": true,
@@ -1676,7 +1676,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-overload"
+        "path": "lifecycle-overload"
       },
       "expect": {
         "success": true,
@@ -1727,7 +1727,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-patchscript"
+        "path": "lifecycle-patchscript"
       },
       "expect": {
         "success": true,
@@ -1753,7 +1753,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-untracked"
+        "path": "lifecycle-untracked"
       },
       "expect": {
         "success": true,
@@ -1796,7 +1796,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-nameof"
+        "path": "lifecycle-nameof"
       },
       "expect": {
         "success": true,
@@ -1836,7 +1836,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-nested"
+        "path": "lifecycle-nested"
       },
       "expect": {
         "success": true,
@@ -1888,7 +1888,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-enumconst"
+        "path": "lifecycle-enumconst"
       },
       "expect": {
         "success": true,
@@ -2193,7 +2193,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-body-self"
+        "path": "lifecycle-body-self"
       },
       "expect": {
         "success": true,
@@ -2205,7 +2205,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "lifecycle-body-cross"
+        "path": "lifecycle-body-cross"
       },
       "expect": {
         "success": true,

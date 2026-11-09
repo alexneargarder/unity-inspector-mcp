@@ -17,7 +17,10 @@ const {
   runChild,
   storeOfGameDir,
   summarizeInstanceList,
-  windowsActiveProfile,
+  activeUmmLog,
+  POSIX_DOORSTOP_SCAN_CMD,
+  doorstopTargetsIn,
+  windowsActiveUmmLog,
   windowsGameStartTime,
   windowsProcesses,
 } = await import('../lib/game-process.js');
@@ -133,10 +136,70 @@ test('Windows processes are read through CIM, and wmic only when PowerShell cann
   });
   assert.equal(await windowsGameStartTime(noPowershell), Date.parse('2026-03-04T05:06:07Z'));
 
-  const profile = fakeRun({
-    powershell: { stdout: JSON.stringify({ start, commandLine: '"C:\\r2\\run.exe" --doorstop-target "C:\\Users\\u\\AppData\\Roaming\\r2modmanPlus-local\\Broforce\\profiles\\Testing\\UMM\\x.dll"', path: null }) },
+});
+
+const PROFILE_DLL = 'C:\\Users\\Some One\\AppData\\Roaming\\r2modmanPlus-local\\Broforce\\profiles\\My Profile\\UMM\\Core\\UnityModManager.dll';
+const PROFILE_LOG = 'C:\\Users\\Some One\\AppData\\Roaming\\r2modmanPlus-local\\Broforce\\profiles\\My Profile\\UMM\\Core\\Log.txt';
+
+test('the Doorstop target is the argument after its flag: quoted, unquoted up to the .dll ending a token, Doorstop 4 and 3', () => {
+  assert.deepEqual(doorstopTargetsIn(`C:\\Games\\Broforce\\Broforce.exe --doorstop-enabled true --doorstop-target-assembly "${PROFILE_DLL}"`), [PROFILE_DLL]);
+  assert.deepEqual(doorstopTargetsIn('"C:\\Steam\\steam.exe" -applaunch 274190 "--doorstop-enable" "true" "--doorstop-target" "D:\\UMM\\UnityModManager.dll"'), ['D:\\UMM\\UnityModManager.dll']);
+  assert.deepEqual(doorstopTargetsIn('Broforce.exe --doorstop-target D:\\UMM\\UnityModManager.dll --r2profile Default'), ['D:\\UMM\\UnityModManager.dll']);
+  // The backslashes stay: a shell tokenizer would eat them
+  assert.deepEqual(doorstopTargetsIn('Broforce.exe --doorstop-target-assembly C:\\a\\b.dll'), ['C:\\a\\b.dll']);
+  assert.deepEqual(doorstopTargetsIn(`Broforce.exe --doorstop-target-assembly ${PROFILE_DLL} --r2profile My Profile`), [PROFILE_DLL], 'an unquoted path with spaces');
+  assert.deepEqual(doorstopTargetsIn('Broforce.exe --doorstop-target-assembly C:\\x.dll.d\\UMM.DLL'), ['C:\\x.dll.d\\UMM.DLL'], 'a .dll inside a token does not end it');
+  assert.deepEqual(doorstopTargetsIn('Broforce.exe --doorstop-enabled true'), []);
+  assert.deepEqual(doorstopTargetsIn("wmic process where \"CommandLine like '%--doorstop-target%'\" get CommandLine"), []);
+});
+
+test('on Windows the active UMM log is beside the Doorstop target CIM names, and wmic answers when PowerShell cannot', async () => {
+  const start = '2026-03-04T05:06:07.0000000Z';
+  // Stands in for CIM's own filtering: a process is listed only when the filter would match it
+  const game = { start, commandLine: `"C:\\Games\\Broforce.exe" --doorstop-target-assembly "${PROFILE_DLL}"`, path: 'C:\\Games\\Broforce.exe' };
+  const steam = { start, commandLine: '"C:\\Steam\\steam.exe" -applaunch 274190 --doorstop-target-assembly "D:\\Other\\UnityModManager.dll"', path: 'C:\\Steam\\steam.exe' };
+  const scripts = [];
+  const cim = fakeRun({ powershell: (args) => {
+    const script = Buffer.from(args[args.indexOf('-EncodedCommand') + 1], 'base64').toString('utf16le');
+    scripts.push(script);
+    const byName = script.includes("(Name='Broforce.exe' OR Name='Broforce_beta.exe') AND CommandLine LIKE '%--doorstop-target%'");
+    return { stdout: JSON.stringify(byName ? [game] : [game, steam]) };
+  } });
+  assert.equal(await windowsActiveUmmLog(cim), PROFILE_LOG, 'another program carrying the flag is never asked about');
+  assert.equal(scripts.length, 1);
+
+  const two = fakeRun({ powershell: { stdout: JSON.stringify([
+    { start, commandLine: `Broforce.exe --doorstop-target-assembly "${PROFILE_DLL}"`, path: null },
+    { start, commandLine: 'Broforce.exe --doorstop-target D:\\Other\\UnityModManager.dll', path: null },
+  ]) } });
+  assert.equal(await windowsActiveUmmLog(two), null, 'two targets name no active log');
+
+  const wmic = fakeRun({
+    powershell: { code: null, error: new Error('spawn powershell ENOENT') },
+    wmic: (args) => ({ stdout: `CommandLine\r\n\0B\0roforce.exe --doorstop-target-assembly "${PROFILE_DLL}"\r\n` +
+      (args[2].startsWith("(name='Broforce.exe' or name='Broforce_beta.exe') and ") ? '' : `${steam.commandLine}\r\n`) }),
   });
-  assert.equal(await windowsActiveProfile(profile), 'Testing');
+  assert.equal(await windowsActiveUmmLog(wmic), PROFILE_LOG, 'wmic is asked about the game alone too');
+
+  assert.equal(await activeUmmLog(steamConfig(), { platform: 'win32', run: fakeRun({
+    tasklist: { stdout: 'Broforce.exe   4242 Console' },
+    powershell: { stdout: JSON.stringify({ start, commandLine: `Broforce.exe --doorstop-target-assembly "${PROFILE_DLL}"`, path: null }) },
+  }) }), PROFILE_LOG);
+  assert.equal(await activeUmmLog(steamConfig(), { platform: 'win32', run: fakeRun({ tasklist: { stdout: 'INFO: No tasks' } }) }), null, 'no game, no log');
+});
+
+test('on macOS the Doorstop target comes from pgrep, whose bracketed pattern never matches its own shell', async () => {
+  assert.match(POSIX_DOORSTOP_SCAN_CMD, /'\[d\]oorstop-target'/);
+  assert.deepEqual(doorstopTargetsIn(`sh -c ${POSIX_DOORSTOP_SCAN_CMD}`), []);
+
+  assert.match(POSIX_DOORSTOP_SCAN_CMD, /^pgrep -lf /, "macOS pgrep's -a lists ancestors, not command lines");
+  const profile = '/Users/u/Library/Application Support/r2modmanPlus-local/Broforce/profiles/Default';
+  // What macOS pgrep -lf prints: the pid, then the arguments joined by single spaces
+  const listing = `4242 /bin/sh ${profile}/run_umm.sh /Users/u/Broforce/Broforce.app --doorstop-enabled true --doorstop-target-assembly ${profile}/UMM/Core/UnityModManager.dll --r2profile Default\n` +
+    '4300 vim /Users/u/notes/doorstop-target.md\n';
+  const run = fakeRun({ sh: (args) => (args[1] === POSIX_DOORSTOP_SCAN_CMD ? { stdout: listing } : { code: 0 }) });
+  assert.equal(await activeUmmLog(steamConfig(), { platform: 'darwin', run }), `${profile}/UMM/Core/Log.txt`);
+  assert.deepEqual(run.calls.map(call => call.at(-1)).at(-1), POSIX_DOORSTOP_SCAN_CMD);
 });
 
 test('a Windows or macOS kill counts only once the process has left', async () => {

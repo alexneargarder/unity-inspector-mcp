@@ -41,6 +41,11 @@ paths:
 | N | the startup claim: a directory and no game; no directory until a launch elsewhere creates it | IL `at startup the id is taken whenever the instance directory exists, game or none`, `a startup with no instance directory takes the id once a launch elsewhere creates it` |
 | N | a vanilla game: every command says it runs no inspector | LV `a vanilla launch the command carries out reports the game started without mods` |
 | N | a `/proc` read that hangs | PP `a /proc read that hangs is given up on and not asked again while it hangs` |
+| N | the user's game's moved data folders on a remote target, the `UNITY_INSPECTOR_HOST` path and WSL: no process read; on an instance: none derived | GD `a remote target, the UNITY_INSPECTOR_HOST path and WSL read no process, and an instance derives nothing` |
+| N | a remote target: no process read, signal or launch on any tool | RT `no tool on a remote target reads the process table, signals or launches anything`, `runningGameDir names no directory for a remote config, on Linux and on Windows` |
+| N | a remote target's failures: nothing listening on a loopback port, a direct host's connect error, a close during the hello, a close under a command on loopback and direct | RT `nothing listening on a loopback port is a tunnel that is not running`, `a direct host's connect error names the code, the remote-connections setting and the firewall`, `a close during the hello says nothing is behind the tunnel`, `a close under a command says the command may have run, and names the tunnel only on a loopback host` |
+| N | the stale-code notice on a declared remote target | RT `the stale-code notice says a restart forgets the declared remote` |
+| N | a remote transfer: the code's shape; a set and a file past 2 MiB; a missing file; a write past one chunk; a folder removal; the local root, its override and the week-idle prune | RF `the transfer code writes System.IO names in full, declares no generic type or enum, and quotes paths as string literals`, `a set past 2 MiB takes more calls, a file past 2 MiB is read in chunks, and a missing file is named`, `a file is written in chunks of about 96 KiB, and a folder is removed whole`, `remote copies live under the override root, else the state directory, and a session idle for a week is pruned` |
 
 ## Connection handshake
 
@@ -55,9 +60,13 @@ paths:
 | N | the socket closed during the hello | HS `a socket closed during the hello is the closed-connection path, not a refusal` |
 | N | the token search on the instance | IT `an instance's hello carries the token from its own data folder, never UNITY_INSPECTOR_TOKEN_FILE` |
 | N | the token search on the user's game: `XDG_CONFIG_HOME`, `~/.config` | HS `the user's game is searched for in every data folder, XDG_CONFIG_HOME first when absolute`, `the newest token file wins` |
+| N | the token search on the user's game whose launcher moved its data folders: `XDG_CONFIG_HOME` on a native game, `STEAM_COMPAT_DATA_PATH` under Proton, the moved token newer than a stale one in `~/.config` | GD `a native game with its data folders moved: its token, its player log and its UMM log`, `a Proton game with its prefix moved: its token, its output_log.txt and the UMM log of its Z: target` |
+| N | the token search on a desktop run and a Proton run under r2modman's profile folder: the same folders as before | GD `an ordinary desktop run and a Proton run under r2modman's profile folder resolve the same log and token folders as before` |
 | N | the token search on the user's game: the Proton prefix, WSL | HS `the search reaches the Proton prefix and, on WSL, every Windows user` |
 | N | the game in a second Steam library; under Flatpak Steam, its own libraries included; no Steam at all | HS `libraryfolders.vdf names every library, escapes undone`, `the game and its Proton prefix are found in a second Steam library, and the token search reaches that prefix`, `a game under Flatpak Steam is found, its own libraries included, and its data folders are searched`, `no Steam install finds no game` |
 | N | `UNITY_INSPECTOR_TOKEN_FILE` set, the file there or missing | HS `UNITY_INSPECTOR_TOKEN_FILE is the file, with no search`, `the user's game names UNITY_INSPECTOR_TOKEN_FILE when that file is missing` |
+| N | a remote target's token: the declared file reread on every connect, never `UNITY_INSPECTOR_TOKEN_FILE`; a refused one | RT `the declared token file is read again on every connect, never UNITY_INSPECTOR_TOKEN_FILE, and a refusal names it`, `a token refusal names tokenFile and says to copy the token again` |
+| N | a token file holding anything but 64 lowercase hex characters, on every target | RT `a token file holding anything but 64 lowercase hex characters sends no token, on every target, and the refusal names it` |
 
 ## execute_code
 
@@ -65,6 +74,7 @@ paths:
 |---|---|---|
 | N | `code` missing or empty | TH `a missing required argument is refused before anything reaches the game` |
 | N | the code reaches the game byte for byte | TH `execute_code sends the code byte for byte` |
+| N | the imports, namespaces, reachable members, `Math` and `string.Join` in the description; `execute_script`'s pointer to them | TL `execute_code names its imports and the compile rules a caller in another repo would trip on`, `execute_script takes an optional compileOnly flag and points at list_scripts` |
 | N | a reply past the run budget and grace; past a start at the end of its start budget | UC `execute_code.long-running: the mod's own late answer reaches the caller`, `execute_code.long-running, started at the end of its start budget: the mod's own late answer reaches the caller` |
 
 ## execute_script
@@ -93,6 +103,7 @@ paths:
 | N | `runningInstances` on either target; `instance.port` with and without a game of ours | IT `game_state merges the server's fields over the game's own answer`, `game_state carries the target, the instance and the logs with no game answering` |
 | N | `build` on a hung game, and on one that answers later; a version query that fails | IL `a hung game is asked for no version, and one that answers later gets its version` |
 | N | `build`: GOG and Steam depots, Proton, no game, Windows | IL `game_state names the store and build of the game it is pointed at`; PP `the store of a game directory is read from the file each store leaves`, `the running game's directory comes from its executable, or from Proton's Windows path`, `Windows processes are read through CIM, and wmic only when PowerShell cannot answer` |
+| N | a remote target: `target`, `remote`, `port`, the mirror `logs` with no sync, `build` with no `gameDir` | RT `a declaration points the server at the remote game, launches nothing, and game_state names it`, `runningGameDir names no directory for a remote config, on Linux and on Windows`; RF `game_state names the mirrors and sends no sync` |
 
 ## go_to_level
 
@@ -224,10 +235,12 @@ paths:
 | N | the path on WSL, Proton and other drives; `Z:` with no prefix found | TH `take_screenshot translates the game-side path the way the platform needs` |
 | N | a WSL automount root from `/etc/wsl.conf`, or none | TH `WSL drives sit under the automount root /etc/wsl.conf names, /mnt/ without one` |
 | N | a game in another Steam library or under Flatpak Steam | HS `the game and its Proton prefix are found in a second Steam library, and the token search reaches that prefix`, `a game under Flatpak Steam is found, its own libraries included, and its data folders are searched` |
+| N | a drive other than `Z:` from a game with a Wine prefix of its own, `WINEPREFIX` over `STEAM_COMPAT_DATA_PATH`; from one with none | GD `WINEPREFIX wins over STEAM_COMPAT_DATA_PATH, and a drive other than Z: translates through it` |
 | N | a path from a game under Flatpak Steam, native and `Z:`; one in a folder granted to the sandbox; the instance target | HS `a screenshot from a game under Flatpak Steam is translated to where the sandbox put it, only when it is there` |
 | N | `backdrop` true or a colour: the render sent as one `execute_code`, the path translated, the colour answered; false, null, false with a highlight | TH `take_screenshot with backdrop sends the render as one execute_code and answers its path and colour`, `take_screenshot with backdrop false or absent is the ordinary shot`; UC `toolCommand sends a take_screenshot backdrop as the render on execute_code, and refuses it with a highlight`; TL `take_screenshot and capture_animations advertise backdrop as a boolean or a colour` |
 | N | `backdrop` no colour, of another type, or with a highlight | TH `take_screenshot refuses a backdrop that is no colour, and one with a highlight, before the game` |
 | N | a backdrop render that throws, returns no path, or meets a main thread that does not answer | TH `a failed backdrop render is a plain error naming it, never the render source's position` |
+| N | a remote target: a plain shot, a backdrop shot and a test-script step fetched, never a local file at the same path; a `C:/` game path; a fetch that fails; past 50 fetched | RF `a plain shot, a backdrop shot and a test-script step each land the game's bytes here, never the decoy's`, `a C:/ game path is fetched as the game names it, never through this machine's Proton prefix`, `a screenshot that cannot be fetched is a tool error naming the game's own path`, `only the newest 50 fetched screenshots are kept` |
 
 ## teleport_player
 
@@ -247,6 +260,6 @@ paths:
 
 | | class | covered by |
 |---|---|---|
-| N | `name` missing; `path` sent instead | TH `a missing required argument is refused before anything reaches the game`, `the misnamed keys real calls sent are refused, never run without them` |
-| C | a catalog name, a `.cs` name, a file name, a name no file has | TH `unload_script sends the name the script was loaded under, from its catalog or file name` |
+| N | `path` missing; `name` sent instead, as a tool argument or in a test-script step or cleanup step | TH `a missing required argument is refused before anything reaches the game`, `the misnamed keys real calls sent are refused, never run without them`; RTS `an unload_script step naming name is refused, in steps and cleanup steps alike`; TL `unload_script takes path, as execute_script does` |
+| C | a catalog name, a `.cs` name, a file name, an absolute path, a name no file has; the same as a test-script step | TH `unload_script takes execute_script's path and sends the name the script was loaded under`; RTS `an unload_script step takes path as the tool does: a library name, a .cs name, a catalog name, an absolute path or a loaded script's name` |
 

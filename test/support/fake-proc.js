@@ -5,6 +5,8 @@ function statLine(pid, comm, ppid, startTicks, state = 'S') {
   return `${pid} (${comm}) ${state} ${ppid} ${Array(17).fill(0).join(' ')} ${startTicks} 0 0\n`;
 }
 
+const nulJoined = (value) => (Array.isArray(value) ? value.join('\0') : value.replace(/ /g, '\0'));
+
 export function fakeProcReader(processes, { bootTimeMs = FAKE_BOOT_TIME_MS } = {}) {
   const entry = (pid) => processes[String(pid)] ?? null;
 
@@ -22,11 +24,11 @@ export function fakeProcReader(processes, { bootTimeMs = FAKE_BOOT_TIME_MS } = {
     },
     async cmdline(pid) {
       const proc = entry(pid);
-      return proc?.cmdline ? proc.cmdline.replace(/ /g, '\0') : null;
+      return proc?.cmdline ? nulJoined(proc.cmdline) : null;
     },
     async environ(pid) {
       const proc = entry(pid);
-      return proc?.environ ? proc.environ.replace(/ /g, '\0') : null;
+      return proc?.environ ? nulJoined(proc.environ) : null;
     },
     async cwd(pid) {
       return entry(pid)?.cwd ?? null;
@@ -38,6 +40,17 @@ export function fakeProcReader(processes, { bootTimeMs = FAKE_BOOT_TIME_MS } = {
       return bootTimeMs;
     },
   };
+}
+
+// Every call a proc reader takes, recorded: a reader that threw would prove nothing, since callers swallow it
+export function recordingProcReader(processes = {}) {
+  const calls = [];
+  const base = fakeProcReader(processes);
+  const reader = Object.fromEntries(Object.entries(base).map(([name, read]) => [name, (...args) => {
+    calls.push(name);
+    return read(...args);
+  }]));
+  return { reader, calls };
 }
 
 export function conditionalProcReader(processes, { when, extra }, options = {}) {

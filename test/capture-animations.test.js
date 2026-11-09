@@ -697,6 +697,7 @@ test('runCapture drives the documented command sequence against a stub game', { 
   assert.equal(scriptArgs.outDir, 'Z:\\out');
   assert.equal(scriptArgs.statesFile, 'Z:\\out\\states.json', 'the state file is passed as the game sees it');
   assert.equal(scriptArgs.player, '1');
+  assert.equal(scriptArgs.hold, undefined, 'a local sweep has no fetch for the slot to be held for');
   assert.equal(seen[6].params.name, SCRIPT_NAME);
   assert.match(seen[6].params.source, /class AnimationCapture : MonoBehaviour/, 'the script source is sent, not a path');
 
@@ -3238,6 +3239,11 @@ test('a sweep in progress refuses a second sweep and a launch, and releases them
   assert.match(launch, /capture_animations sweep into/);
   assert.doesNotMatch(launch, /disconnect the client/, 'a sweep does not drop the socket; it holds the game');
 
+  const declare = textOf(await handleToolCall({
+    params: { name: 'launch_game', arguments: { remote: { host: '127.0.0.1', port: 1, tokenFile: path.join(dir, 'remote.token') } } },
+  }));
+  assert.match(declare, /capture_animations sweep into/, 'a remote declaration moved the game under the sweep');
+
   const wait = textOf(await handleToolCall({ params: { name: 'wait_for_game', arguments: { timeout: 1 } } }));
   assert.match(wait, /capture_animations sweep into/);
 
@@ -4072,7 +4078,7 @@ test('a sweep holds the game: every tool that could change it is refused, and th
     ['spawn_entity', { type: 'Mook', x: 1, y: 2 }],
     ['execute_code', { code: 'return 1;' }],
     ['execute_script', { path: 'find-by-type' }],
-    ['unload_script', { name: SCRIPT_NAME }],
+    ['unload_script', { path: SCRIPT_NAME }],
     ['trace_spawns', { action: 'start' }],
     ['run_test_script', { script: 'inspection' }],
     ['take_screenshot', { highlight: '/Player' }],

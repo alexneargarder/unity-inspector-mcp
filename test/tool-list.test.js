@@ -269,7 +269,8 @@ test('read_log advertises onlyNew, reset and what a baseline is', async () => {
   const { onlyNew, reset } = tool.inputSchema.properties;
   assert.equal(onlyNew?.type, 'boolean');
   assert.match(onlyNew.description, /isBaseline: true/);
-  assert.match(onlyNew.description, /Not with lines or filter/);
+  assert.match(onlyNew.description, /lines and filter applying to them/);
+  assert.match(tool.inputSchema.properties.lines.description, /20 on a baseline/);
   assert.equal(reset?.type, 'boolean');
   assert.match(reset.description, /With onlyNew/);
   assert.match(tool.description, /`stale: true`/);
@@ -284,6 +285,23 @@ test('execute_script takes an optional compileOnly flag and points at list_scrip
   assert.match(flag.description, /Not with args/);
   assert.deepEqual(tool.inputSchema.required, ['path']);
   assert.match(tool.description, /list_scripts/);
+  assert.match(tool.description, /under execute_code's rules/, 'a script compiles under the rules execute_code lists');
+});
+
+test('execute_code names its imports and the compile rules a caller in another repo would trip on', async () => {
+  const { description } = await toolNamed('execute_code');
+  assert.match(description, /System, System\.\{Collections, Collections\.Generic, IO, Linq, Reflection, Text\}, UnityEngine, HarmonyLib, Unity_Inspector_Mod/);
+  assert.match(description, /other namespaces need a using or full name/);
+  assert.match(description, /Private and internal members and types are reachable/);
+  assert.match(description, /Math is the game's class: use System\.Math or Mathf/);
+  assert.match(description, /string\.Join takes a string\[\]: call \.ToArray\(\)/);
+});
+
+test('unload_script takes path, as execute_script does', async () => {
+  const tool = await toolNamed('unload_script');
+  assert.deepEqual(Object.keys(tool.inputSchema.properties), ['path']);
+  assert.deepEqual(tool.inputSchema.required, ['path']);
+  assert.match(tool.inputSchema.properties.path.description, /execute_script's path, or a loaded script's name/);
 });
 
 test('the merged tools are gone from the list', async () => {

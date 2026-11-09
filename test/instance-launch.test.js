@@ -33,7 +33,7 @@ const {
   unityClient,
   userGame,
 } = await import('../index.js');
-const { LINUX_GAME_COMM, instanceModeChecked, invalidateGameProcessScan, lastSpawnOptions, resetInstanceModeProbe, setKillSignaller, setProcReader } = await import('../lib/game-process.js');
+const { LINUX_GAME_COMM, forgetGameDataLocations, gameDataLocations, instanceModeChecked, invalidateGameProcessScan, lastSpawnOptions, resetInstanceModeProbe, setKillSignaller, setProcReader } = await import('../lib/game-process.js');
 
 const inspector = await fakeInspector();
 test.after(() => inspector.close());
@@ -714,6 +714,43 @@ test('a list the launcher cannot print leaves the session with no target until i
   assert.equal(settled.target, 'instance');
   assert.equal(activeTarget(), 'instance');
   assert.deepEqual(settled.instance, { id: SESSION, port: null, root: instanceDir, stage: stagePath });
+});
+
+test("the user's game derives no data folders while the instances root is unknown, and its own once it is", { timeout: 30000, skip: !isLinux }, async (t) => {
+  const games = fakeProcReader({
+    4300: {
+      comm: LINUX_GAME_COMM,
+      cwd: path.join(root, 'other-session/work'),
+      startTicks: 100,
+      environ: [`XDG_CONFIG_HOME=${root}/other-session/home`, `DOORSTOP_TARGET_ASSEMBLY=${root}/other-session/profile/UMM/Core/UnityModManager.dll`],
+    },
+    4400: {
+      comm: LINUX_GAME_COMM,
+      cwd: '/srv/user game',
+      startTicks: 100,
+      environ: ['XDG_CONFIG_HOME=/srv/user config', 'DOORSTOP_TARGET_ASSEMBLY=/srv/user profile/UMM/Core/UnityModManager.dll'],
+    },
+  });
+  forgetGameDataLocations();
+  t.after(() => forgetGameDataLocations());
+  const nothing = { configHomes: [], winePrefixes: [], ummLog: null, ummLogs: [] };
+
+  // Another session's instance reads as the user's game while its root is unknown
+  await control('list-fails-after', '0');
+  setProcReader(games);
+  assert.deepEqual(await gameDataLocations(userGame()), nothing);
+  setProcReader(fakeProcReader({}));
+  assert.deepEqual(await gameDataLocations(userGame()), nothing, 'nothing was remembered from that window');
+
+  await clearControl('list-fails-after');
+  configureLaunchTiming({ rootRetryMs: 0 });
+  setProcReader(games);
+  assert.deepEqual(await gameDataLocations(userGame()), {
+    configHomes: ['/srv/user config'],
+    winePrefixes: [],
+    ummLog: '/srv/user profile/UMM/Core/Log.txt',
+    ummLogs: ['/srv/user profile/UMM/Core/Log.txt'],
+  });
 });
 
 test('a launcher that answers after startup has its running instance claimed and served', { timeout: 30000, skip: !isLinux }, async (t) => {
@@ -2177,7 +2214,7 @@ for (const [name, args] of [['simulate_input', { action: 'jump' }], ['run_test_s
   });
 }
 
-for (const [name, argsFor] of [['execute_script', (file) => ({ path: file })], ['unload_script', (file) => ({ name: file })]]) {
+for (const name of ['execute_script', 'unload_script']) {
   test(`${name} held reading its script file while a sweep starts is refused`, { timeout: 30000, skip: !isLinux }, async (t) => {
     setProcReader(fakeProcReader(await runningInstanceGame()));
     t.after(() => setProcReader(null));
@@ -2192,7 +2229,7 @@ for (const [name, argsFor] of [['execute_script', (file) => ({ path: file })], [
     const release = () => (released ??= fs.writeFile(fifo, 'public static class Held {}', { flag: 'r+' }));
     t.after(release);
 
-    const held = handleToolCall({ params: { name, arguments: argsFor(fifo) } });
+    const held = handleToolCall({ params: { name, arguments: { path: fifo } } });
     await new Promise((resolve) => setTimeout(resolve, 100));
     const { sweep, sentSince } = await startSweepBehind(t, release);
 

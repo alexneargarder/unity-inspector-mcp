@@ -8,13 +8,13 @@ import {
   POSIX_GAME_CHECK_CMD,
   POSIX_GAME_CMDLINE_PID_CMD,
   POSIX_GAME_PID_CMD,
-  POSIX_PROFILE_SCAN_CMD,
+  POSIX_DOORSTOP_SCAN_CMD,
   startFromEtimes,
   startFromLstart,
   composeExtraLaunchArgs,
   createProcReader,
   defaultProcReader,
-  extractProfileName,
+  doorstopTargetsIn,
   invalidateGameProcessScan,
   isGameRunning,
   killGame,
@@ -247,35 +247,18 @@ test('parseWmicCreationDate reads wmic timestamps and rejects anything else', ()
   }
 });
 
-test('extractProfileName resolves the launched profile from process listings', () => {
+test('a process listing names the Doorstop target after its flag, and the scan never matches itself', () => {
   const reaper =
     '202905 /home/u/.local/share/Steam/ubuntu12_32/reaper SteamLaunch AppId=274190 -- ' +
     '/home/u/.config/r2modmanPlus-local/Broforce/profiles/Default/run_umm.sh ' +
     '/home/u/.local/share/broforce-linux/Broforce.x86_64 --doorstop-enabled true ' +
     '--doorstop-target-assembly /home/u/.config/r2modmanPlus-local/Broforce/profiles/Default/UMM/Core/UnityModManager.dll';
-  assert.equal(extractProfileName(reaper), 'Default');
+  assert.deepEqual(doorstopTargetsIn(reaper), ['/home/u/.config/r2modmanPlus-local/Broforce/profiles/Default/UMM/Core/UnityModManager.dll']);
 
-  const windows =
-    'C:\\Broforce\\Broforce.exe --doorstop-target-assembly ' +
-    '"C:\\Users\\u\\AppData\\Roaming\\r2modmanPlus-local\\Broforce\\profiles\\UMM_Local_Install\\UMM\\Core\\UnityModManager.dll"';
-  assert.equal(extractProfileName(windows), 'UMM_Local_Install');
-
-  const secondLauncher =
-    '888 /home/u/.config/r2modmanPlus-local/Broforce/profiles/UMM_Local_Install/run_umm.sh';
-  assert.equal(extractProfileName(reaper + '\n' + secondLauncher), null);
-
-  const strayShell =
-    '999 tail -f /home/u/.config/r2modmanPlus-local/Broforce/profiles/UMM_Local_Install/UMM/Core/Log.txt';
-  assert.equal(extractProfileName(strayShell), null);
-  assert.equal(extractProfileName(reaper + '\n' + strayShell), 'Default');
-
-  const spaced =
-    '777 /home/u/.config/r2modmanPlus-local/Broforce/profiles/Default Backup/run_umm.sh --doorstop-enabled true';
-  assert.equal(extractProfileName(spaced), null);
-
-  assert.equal(extractProfileName(''), null);
-  // The scan command's own bracketed pattern must never match itself
-  assert.equal(extractProfileName(POSIX_PROFILE_SCAN_CMD), null);
+  const strayShell = '999 tail -f /home/u/.config/r2modmanPlus-local/Broforce/profiles/Other/UMM/Core/Log.txt';
+  assert.deepEqual(doorstopTargetsIn(strayShell), []);
+  assert.deepEqual(doorstopTargetsIn(''), []);
+  assert.deepEqual(doorstopTargetsIn(POSIX_DOORSTOP_SCAN_CMD), []);
 });
 
 test('tokenizeCommand handles quoting', () => {

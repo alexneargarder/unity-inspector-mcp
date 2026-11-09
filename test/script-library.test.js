@@ -79,6 +79,7 @@ test('readScriptSource loads a library script by bare name', async () => {
 
 const SHIPPED_TEST_SCRIPTS = [
   'bros.json',
+  'compiler-access.json',
   'example-combat-test.json',
   'example-level-sequence.json',
   'example-movement-test.json',

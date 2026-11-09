@@ -8,6 +8,7 @@
 // #args suppress: "false" to let the swept animations fire their real specials and attacks (default true)
 // #args claim: The token of the claim capture_animations took for this run, which Main() may replace (default none)
 // #args backdrop: A colour as #RRGGBB to render the strips on, with the level's scenery hidden (default none)
+// #args hold: Seconds a finished sweep keeps the game claimed under claim, for the server to fetch outDir (default 0)
 
 using System.Globalization;
 using System.IO;
@@ -37,6 +38,8 @@ public class AnimationCapture : MonoBehaviour
     private JObject sweepParams;
     private float box;
     private int cellPx;
+    private string claimToken;
+    private float holdSeconds;
     private JObject broDescription;
     private bool captureWriteLogged;
 
@@ -238,6 +241,7 @@ public class AnimationCapture : MonoBehaviour
         bool suppress = ScriptContext.GetArg("suppress", "true") != "false";
         string claim = ScriptContext.GetArg("claim", "");
         string backdrop = ScriptContext.GetArg("backdrop", "");
+        float hold = ParseFloat(ScriptContext.GetArg("hold", "0"), 0f);
 
         AnimationCapture created = null;
         try
@@ -286,6 +290,8 @@ public class AnimationCapture : MonoBehaviour
             instance.states = stateList;
             instance.box = boxSize;
             instance.cellPx = cellSize;
+            instance.claimToken = claim;
+            instance.holdSeconds = hold;
             instance.sweepParams = parameters ?? new JObject();
             instance.sweepParams["allowSideEffects"] = !suppress;
             instance.sweepParams["box"] = boxSize;
@@ -346,6 +352,15 @@ public class AnimationCapture : MonoBehaviour
         {
             AppDomain.CurrentDomain.SetData(LiveSlot, null);
         }
+    }
+
+    private void HoldLiveSlot()
+    {
+        object[] live = AppDomain.CurrentDomain.GetData(LiveSlot) as object[];
+        if (live == null || live.Length != 2 || live[0] as GameObject != gameObject) return;
+        AppDomain.CurrentDomain.SetData(LiveSlot, holdSeconds > 0f && claimToken != ""
+            ? new object[] { claimToken, outDir, Time.realtimeSinceStartup + holdSeconds }
+            : null);
     }
 
     private static void CheckStripSize(JArray stateList, int cellSize, float boxSize)
@@ -1569,7 +1584,7 @@ public class AnimationCapture : MonoBehaviour
         RestoreOverlays();
         ReleaseBubbles();
         ReleaseCaptureTexture();
-        ReleaseLiveSlot();
+        HoldLiveSlot();
 
         if (!WriteCapture(true)) fatal = fatal ?? "writing " + CaptureFile + " failed";
 

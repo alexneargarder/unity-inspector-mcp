@@ -82,6 +82,8 @@ process.stdin.on('data', (chunk) => {
         id,
         result: { tools: [{ name: 'stub_tool', description: 'stub', inputSchema: { type: 'object', properties: {} } }] },
       });
+    } else if (method === 'tools/call') {
+      send({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: `called ${request.params?.name}` }] } });
     } else if (method === 'test/echo') {
       send({ jsonrpc: '2.0', id, result: { echo: request.params ?? null } });
     } else if (method === 'test/notify') {

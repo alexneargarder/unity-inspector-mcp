@@ -1,0 +1,457 @@
+{
+  "name": "Compiler access: internal types, default imports, unresolved is",
+  "description": "Checks that execute_code and scripts name a loaded assembly's top-level internal types (Utility_Mod.Main, BroMakerLib.ModUI, BroMakerLib.Unlocks.BroUnlockManager, RocketLib.UMM.Main, the game's global SteamManager), by full name and through a using, that a public type keeps winning over an internal one of the same full name (System.Tuple from mcs over 0Harmony's) and over an internal global type a simple name would otherwise find first (Rewired.Consts through a using over the global internal Consts), that two internal types a simple name finds through usings are ambiguous (Main with using Utility_Mod) while the default imports alone give the mod's own Main, that a using alias and a using static to an internal type work and an internal script class can derive from one, that System.IO and System.Text are imported by default, that the game's global Math still resolves, that an is operand naming a type that does not exist reports the missing type, qualified and simple, in execute_code and in a script, instead of an internal compiler error, that a typo in a constant pattern reports the missing member, and that a number or enum constant pattern on an object runs in execute_code, also after a failed compile, and in a script, and that a wildcard and a var pattern as the operand run in execute_code. Needs Utility Mod, BroMakerLib and RocketLib installed and enabled in the profile. Its first steps unload the scripts an earlier failed run left loaded.",
+  "steps": [
+    {
+      "command": "unload_script",
+      "params": {
+        "path": "compiler-access-using"
+      },
+      "expect": {
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "path": "compiler-access-ns"
+      },
+      "expect": {
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "path": "compiler-access-alias"
+      },
+      "expect": {
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "path": "compiler-access-pattern"
+      },
+      "expect": {
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return Utility_Mod.Main.settings != null ? \"reached\" : \"null settings\";"
+      },
+      "until": {
+        "timeout": 60,
+        "interval": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"reached\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "object x = null;\nreturn typeof(BroMakerLib.ModUI).FullName + \"|\" + typeof(BroMakerLib.ModUI).IsPublic + \"|\" + typeof(BroMakerLib.Unlocks.BroUnlockManager).FullName + \"|\" + (x is BroMakerLib.CustomObjects.ICustomHero) + \"|\" + typeof(RocketLib.UMM.Main).IsPublic;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"BroMakerLib.ModUI|False|BroMakerLib.Unlocks.BroUnlockManager|False|False\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return File.Exists(\"/nonexistent/compiler-access\") + \"|\" + new StringBuilder(\"sb\").Append(Path.GetFileName(\"/a/b.txt\")).ToString() + \"|\" + Encoding.UTF8.GetByteCount(\"abc\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"False|sbb.txt|3\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return Math.Sin(0f) + \"|\" + typeof(Math).Assembly.GetName().Name + \"|\" + Mathf.Abs(-2);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"0|Assembly-CSharp|2\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return typeof(System.Tuple).Assembly.GetName().Name + \"|\" + typeof(SteamManager).Assembly.GetName().Name + \"|\" + new Unity_Inspector_Mod.Splice { Row = 2 }.Row;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"mcs|Assembly-CSharp|2\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "object x = null; return x is BroMakerLib.ICustomHero;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "(1,42): error CS0234: The type or namespace name `ICustomHero' does not exist in the namespace `BroMakerLib'"
+        ],
+        "notContains": [
+          "CS0584",
+          "Internal compiler error"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "object x = 3; if (x is BroMakerLib.ICustomHero h) return 1; return 0;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "error CS0234: The type or namespace name `ICustomHero' does not exist in the namespace `BroMakerLib'"
+        ],
+        "notContains": [
+          "CS0584",
+          "Internal compiler error"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "object x = null; return x as BroMakerLib.ICustomHero;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "error CS0234: The type or namespace name `ICustomHero' does not exist in the namespace `BroMakerLib'"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "compiler-access-is",
+        "source": "public static class CompilerAccessIs\n{\n    public static bool Check( object x )\n    {\n        return x is BroMakerLib.ICustomHero;\n    }\n}\n",
+        "compileOnly": true
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "(5,33): error CS0234: The type or namespace name `ICustomHero' does not exist in the namespace `BroMakerLib'"
+        ],
+        "notContains": [
+          "Internal compiler error"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "compiler-access-using",
+        "source": "using Rewired;\nusing UM = Utility_Mod.Main;\n\npublic static class CompilerAccessUsing\n{\n    public static void Main()\n    {\n        ScriptContext.Logger( \"Consts=\" + typeof( Consts ).AssemblyQualifiedName );\n        ScriptContext.Logger( \"alias=\" + typeof( UM ).FullName + \" settings=\" + ( UM.settings != null ) );\n        ScriptContext.Logger( \"io=\" + File.Exists( \"/nonexistent\" ) + \" sb=\" + new StringBuilder( \"ok\" ) );\n        ScriptContext.Logger( \"modui=\" + typeof( BroMakerLib.ModUI ).FullName + \" unlocks=\" + typeof( BroMakerLib.Unlocks.BroUnlockManager ).FullName );\n    }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"Consts=Rewired.Consts, Rewired_Core",
+          "\"alias=Utility_Mod.Main settings=True\"",
+          "\"io=False sb=ok\"",
+          "\"modui=BroMakerLib.ModUI unlocks=BroMakerLib.Unlocks.BroUnlockManager\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "compiler-access-ns",
+        "source": "namespace CompilerAccessNs\n{\n    public static class Probe\n    {\n        public static void Main()\n        {\n            ScriptContext.Logger( \"global Steam=\" + typeof( SteamManager ).Assembly.GetName().Name );\n        }\n    }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"global Steam=Assembly-CSharp\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "path": "compiler-access-using"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "path": "compiler-access-ns"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return typeof(Splice).FullName + \"|\" + typeof(Main).FullName;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"Unity_Inspector_Mod.Splice|Unity_Inspector_Mod.Main\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "compiler-access-unlocks",
+        "source": "using BroMakerLib.Unlocks;\n\npublic static class CompilerAccessUnlocks\n{\n    public static string Name()\n    {\n        return typeof( BroUnlockManager ).FullName;\n    }\n}\n",
+        "compileOnly": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"CompilerAccessUnlocks\""
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "compiler-access-ambiguous",
+        "source": "using Utility_Mod;\n\npublic static class CompilerAccessAmbiguous\n{\n    public static string Name()\n    {\n        return typeof( Main ).FullName;\n    }\n}\n",
+        "compileOnly": true
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "(7,24): error CS0104: `Main' is an ambiguous reference between `Unity_Inspector_Mod.Main' and `Utility_Mod.Main'"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "compiler-access-alias",
+        "source": "using B = RocketLib.Loggers.Logger;\nusing static Utility_Mod.Main;\n\nclass CompilerAccessAliasBase : B\n{\n}\n\npublic static class CompilerAccessAlias\n{\n    public static void Main()\n    {\n        ScriptContext.Logger( \"base=\" + typeof( CompilerAccessAliasBase ).BaseType.FullName + \" made=\" + ( new CompilerAccessAliasBase() != null ) + \" static=\" + ( settings != null ) );\n    }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"base=RocketLib.Loggers.Logger made=True static=True\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "object x = 3; return x is NoSuchTypeAnywhere;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "(1,27): error CS0246: The type or namespace name `NoSuchTypeAnywhere' could not be found"
+        ],
+        "notContains": [
+          "CS0150",
+          "CS0584",
+          "Internal compiler error"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "object x = 3; return x is GameState.Typo;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "(1,37): error CS0117: `GameState' does not contain a definition for `Typo'"
+        ],
+        "notContains": [
+          "CS0426",
+          "CS0584"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "object n = int.MaxValue; object e = HeroType.Rambro; return (n is int.MaxValue) + \"|\" + (e is HeroType.Rambro) + \"|\" + (n is 3);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"True|True|False\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "object o = 3; return (o is 3) + NoSuchCompilerAccessName;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "error CS0103: The name `NoSuchCompilerAccessName' does not exist in the current context"
+        ],
+        "notContains": [
+          "CS0584",
+          "InternalErrorException"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "object o = 3; return o is 3;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "object o = 3; return o is *;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": true"
+        ],
+        "notContains": [
+          "CS0584",
+          "Internal compiler error"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "object o = 3; return o is var v;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": true"
+        ],
+        "notContains": [
+          "CS0584",
+          "Internal compiler error"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "compiler-access-pattern",
+        "source": "public static class CompilerAccessPattern\n{\n    static bool IsThree( object x )\n    {\n        return x is 3;\n    }\n\n    public static void Main()\n    {\n        ScriptContext.Logger( \"pattern=\" + IsThree( 3 ) + \"|\" + IsThree( 4 ) );\n    }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"pattern=True|False\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "path": "compiler-access-alias"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "path": "compiler-access-pattern"
+      },
+      "expect": {
+        "success": true
+      }
+    }
+  ],
+  "cleanup": [
+    {
+      "command": "unload_script",
+      "params": {
+        "path": "compiler-access-using"
+      },
+      "expect": {
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "path": "compiler-access-ns"
+      },
+      "expect": {
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "path": "compiler-access-alias"
+      },
+      "expect": {
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "path": "compiler-access-pattern"
+      },
+      "expect": {
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    }
+  ]
+}

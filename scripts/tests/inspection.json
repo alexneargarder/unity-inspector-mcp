@@ -815,7 +815,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "uim-const-probe"
+        "path": "uim-const-probe"
       },
       "expect": {
         "success": true
@@ -2285,7 +2285,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "uim-stale"
+        "path": "uim-stale"
       },
       "expect": {
         "success": true
@@ -2814,7 +2814,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "uim-late"
+        "path": "uim-late"
       },
       "expect": {
         "success": true

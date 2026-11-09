@@ -137,7 +137,7 @@
     }
   ],
   "cleanup": [
-    { "command": "unload_script", "params": { "name": "scenario-menus" } },
+    { "command": "unload_script", "params": { "path": "scenario-menus" } },
     {
       "command": "execute_code",
       "params": {

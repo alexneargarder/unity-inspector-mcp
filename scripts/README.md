@@ -76,7 +76,7 @@ A script that arms a library script, polls it and collects its report:
       "until": { "timeout": 300, "interval": 2 }, "expect": { "contains": ["done"] } },
     { "command": "execute_code", "params": { "code": "return MyRunner.ReportJson;" }, "report": true }
   ],
-  "cleanup": [ { "command": "unload_script", "params": { "name": "my-runner" } } ]
+  "cleanup": [ { "command": "unload_script", "params": { "path": "my-runner" } } ]
 }
 ```
 
@@ -125,7 +125,7 @@ You can use any game-side Unity Inspector MCP tool in your scripts:
 - `list_bros` - List the bros players can swap to
 - `swap_bro` - Swap a player's bro, or with `nextSpawn` choose the bro they spawn as next
 - `execute_script` - Run a C# script, or with `compileOnly` only compile it
-- `unload_script` - Unload a C# script
+- `unload_script` - Unload a C# script by its `path`: the `execute_script` step's `path`, or the `name` an inline script loaded under
 
 ### Utilities
 - `take_screenshot` - Capture game screenshot

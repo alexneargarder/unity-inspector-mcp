@@ -21,7 +21,8 @@ paths:
 | N | already running; running with its mod silent | IL `a launch that finds the instance already running names the game it would have started`; WG `launch_game finding the game already running keeps the live socket`; LV `a game whose mod does not answer is reported, not launched over` |
 | N | already running, its mod refusing the hello | HT `launch_game counts a game that refused the hello as running and launches nothing` |
 | N | a live pidfile | IL `a live pidfile refuses a second game on the instance` |
-| N | process detection unavailable and nothing answering; the user's game on another host | LV `a launch that cannot see processes and gets no answer from the inspector starts nothing`, `a launch of the user's game on another host, with nothing answering, starts nothing` |
+| N | process detection unavailable and nothing answering | LV `a launch that cannot see processes and gets no answer from the inspector starts nothing` |
+| N | the user's game at a non-loopback `UNITY_INSPECTOR_HOST`: `{ steam: true }` points and pings, never launches, `restart` and `vanilla` refused; a loopback host, and any host under WSL, stays this machine's | RT `a non-loopback UNITY_INSPECTOR_HOST gives the steam target the remote flag, and { steam: true } there only points and pings`, `a loopback UNITY_INSPECTOR_HOST stays this machine's game, and so does any host under WSL` |
 | N | already running, owner.pid naming a dead wrapper or a newer live one | IL `a launch that finds its instance running claims it, whoever launched it`, `a live claim of a newer wrapper of the session is never written over` |
 | N | a shutdown while a brand-new instance is being created, its wrapper alive or already killed | IL `a shutdown during a brand-new instance's launch waits for its creation claim`, `a shutdown whose wrapper the client has already killed still claims a brand-new instance for its reaper` |
 | N | a claim read while another is being written | IL `a claim being written never leaves owner.pid a truncated line for another server to read` |
@@ -74,6 +75,13 @@ paths:
 | N | an instances root reported through a symlink | IL `an instances root reported through a symlink is the path the game's working directory reads` |
 | N | a launcher that cannot be spawned | IL `a launcher that cannot be run says why, not only that it did not answer` |
 | N | the launcher's argument help in the description | LH (all) |
+| N | `remote` declared: nothing launched, the target and `game_state` name it | RT `a declaration points the server at the remote game, launches nothing, and game_state names it` |
+| N | `remote` not an object, each malformed field, a nested null, an unknown nested key, beside `steam`, `vanilla`, `restart` or `launchArgs`: the target unchanged | RT `each malformed remote field, a nested null, an unknown key and each launch flag is refused, with the target unchanged` |
+| C | a `remote` host that is an IPv6 literal, bracketed or bare | RT `an IPv6 literal is taken with or without its brackets` |
+| N | a `remote` declaration while a command is in flight, while a bound call runs (one on a remote target included), during a sweep | RT `a declaration is refused while a command is in flight and while a bound call runs, one on a remote target included`; CA `a sweep in progress refuses a second sweep and a launch, and releases them when it throws` |
+| N | a re-declaration: the same port on another host; any re-declaration | RT `re-declaring the same port on another host gets a fresh socket, and re-declaring at all drops it` |
+| N | `{}` and `{ steam: true }` from a remote target | RT `{} and { steam: true } switch back, saying the remote game was left as it was` |
+| N | the `remote` object in the tool list, and `remote` among `game_state`'s targets | RT `launch_game lists its remote object and game_state its remote target` |
 
 ## stop_game
 
@@ -99,6 +107,7 @@ paths:
 | N | macOS and Windows | GP `killGame reports honestly when nothing was killed`, `killGame says so when pkill is unavailable`; PP `a Windows or macOS kill counts only once the process has left` |
 | N | mid-sweep | CA `stop_game during a sweep is let through, and the sweep ends game-gone without a teardown` |
 | N | the fenced real kill under the test marker: a signal refused, the liveness probe answered; a by-name kill without an injected runner | GP `a real kill under UNITY_INSPECTOR_TEST refuses without signalling, and the liveness probe still answers`, `a by-name kill under UNITY_INSPECTOR_TEST refuses unless the test injected run` |
+| N | a remote target, a local game on the same port | RT `stop_game is refused on a remote target, and a local game on the same port is left untouched` |
 
 ## wait_for_game
 
@@ -113,3 +122,4 @@ paths:
 | N | main-thread-hung | WG `a game whose main thread does not answer is main-thread-hung, not ready` |
 | N | cancelled | WG `a cancelled wait_for_game stops polling and frees the connection for the next call` |
 | N | the old game still answering after a restart | LV `a restart never takes the old game, still answering as it shuts down, for the new one`, for a restart through launch_game; not produced by any step for a restart made outside the server, which wait_for_game cannot tell from the game it waits for |
+| N | a remote target with nothing answering | RT `wait_for_game on a remote target never answers no-process` |

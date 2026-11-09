@@ -1,6 +1,7 @@
 import { NO_TOKEN_FILE } from './support/session.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'crypto';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
@@ -30,6 +31,9 @@ async function tokenDir() {
   return dir;
 }
 
+// The mod's own form: 32 random bytes as lowercase hex
+const tokenOf = (seed) => createHash('sha256').update(seed).digest('hex');
+
 const echo = (request, socket) => reply(socket, request.id, { from: request.method });
 
 function clientFor(stub, { dir = null, connectTimeoutMs = 2000 } = {}) {
@@ -51,7 +55,7 @@ async function stubWith(hello, onRequest = echo) {
 test('a connection opens with a hello carrying the token, and a command follows only once it is accepted', { timeout: 10000 }, async (t) => {
   const stub = await stubWith('accept');
   const dir = await tokenDir();
-  await writeToken(dir, stub.port, '  secret-1  ');
+  await writeToken(dir, stub.port, `  ${tokenOf('secret-1')}  `);
   const client = clientFor(stub, { dir });
   t.after(async () => { client.disconnect(); await stub.close(); });
 
@@ -60,7 +64,7 @@ test('a connection opens with a hello carrying the token, and a command follows 
   assert.equal(stub.firstLines.length, 1);
   assert.equal(stub.firstLines[0].method, 'hello', 'the first line on the wire must be the hello');
   assert.match(String(stub.firstLines[0].id), /^\d+-\d+$/);
-  assert.deepEqual(stub.hellos, [{ token: 'secret-1', protocol: HANDSHAKE_PROTOCOL }]);
+  assert.deepEqual(stub.hellos, [{ token: tokenOf('secret-1'), protocol: HANDSHAKE_PROTOCOL }]);
   assert.equal(client.isConnected(), true);
 });
 
@@ -134,7 +138,7 @@ test('a protocol mismatch says which side to update', { timeout: 10000 }, async 
 test('a refused token names the file it came from and the mod\'s own words', { timeout: 10000 }, async (t) => {
   const stub = await stubWith('refuse');
   const dir = await tokenDir();
-  const file = await writeToken(dir, stub.port, 'stale');
+  const file = await writeToken(dir, stub.port, tokenOf('stale'));
   const client = clientFor(stub, { dir });
   t.after(async () => { client.disconnect(); await stub.close(); });
 
@@ -142,7 +146,7 @@ test('a refused token names the file it came from and the mod\'s own words', { t
     code: HANDSHAKE_REFUSED,
     message: `The Unity Inspector Mod refused the token in ${file}. Invalid token`,
   });
-  assert.deepEqual(stub.hellos, [{ token: 'stale', protocol: HANDSHAKE_PROTOCOL }]);
+  assert.deepEqual(stub.hellos, [{ token: tokenOf('stale'), protocol: HANDSHAKE_PROTOCOL }]);
 });
 
 test('with no token file the hello carries none and the refusal names where it looked', { timeout: 10000 }, async (t) => {
@@ -203,21 +207,21 @@ test('a socket closed during the hello is the closed-connection path, not a refu
 });
 
 test('the token is read again on every connect', { timeout: 10000 }, async (t) => {
-  let current = 'first';
+  let current = tokenOf('first');
   const stub = await stubWith((params) => (params.token === current ? 'accept' : 'refuse'));
   const dir = await tokenDir();
-  await writeToken(dir, stub.port, 'first');
+  await writeToken(dir, stub.port, tokenOf('first'));
   const client = clientFor(stub, { dir });
   t.after(async () => { client.disconnect(); await stub.close(); });
 
   assert.deepEqual(await client.sendCommand('ping', {}, 3000), { from: 'ping' });
   client.disconnect();
 
-  current = 'second';
-  await writeToken(dir, stub.port, 'second');
+  current = tokenOf('second');
+  await writeToken(dir, stub.port, tokenOf('second'));
   assert.deepEqual(await client.sendCommand('ping', {}, 3000), { from: 'ping' });
 
-  assert.deepEqual(stub.hellos.map((hello) => hello.token), ['first', 'second']);
+  assert.deepEqual(stub.hellos.map((hello) => hello.token), [tokenOf('first'), tokenOf('second')]);
 });
 
 async function fakeHome() {
@@ -378,13 +382,13 @@ test('the newest token file wins', async () => {
   const search = await steamTokenSearch(7777, { env: { XDG_CONFIG_HOME: xdg }, home });
   const [older, newer] = [search.files[0], search.files[1]];
   for (const file of [older, newer]) await fs.mkdir(path.dirname(file), { recursive: true });
-  await fs.writeFile(older, 'old-token');
-  await fs.writeFile(newer, 'new-token\n');
+  await fs.writeFile(older, tokenOf('old'));
+  await fs.writeFile(newer, `${tokenOf('new')}\n`);
   const past = new Date(Date.now() - 60000);
   await fs.utimes(older, past, past);
 
   assert.deepEqual(await readTokenFile(search), {
-    path: newer, token: 'new-token', searched: search.searched, override: false,
+    path: newer, token: tokenOf('new'), searched: search.searched, override: false,
   });
 
   const none = await readTokenFile(await steamTokenSearch(1, { env: {}, home: await fakeHome() }));
@@ -396,13 +400,13 @@ test('UNITY_INSPECTOR_TOKEN_FILE is the file, with no search', async () => {
   const home = await fakeHome();
   const elsewhere = await steamTokenSearch(5555, { env: {}, home });
   await fs.mkdir(path.dirname(elsewhere.files[0]), { recursive: true });
-  await fs.writeFile(elsewhere.files[0], 'found-by-search');
+  await fs.writeFile(elsewhere.files[0], tokenOf('found-by-search'));
 
   const named = path.join(scratch, 'named.token');
-  await fs.writeFile(named, 'named-token');
+  await fs.writeFile(named, tokenOf('named'));
   const search = await steamTokenSearch(5555, { env: { UNITY_INSPECTOR_TOKEN_FILE: named }, home });
   assert.deepEqual(search, { files: [named], searched: [named], override: true });
-  assert.equal((await readTokenFile(search)).token, 'named-token');
+  assert.equal((await readTokenFile(search)).token, tokenOf('named'));
 
   const missing = path.join(scratch, 'missing.token');
   const absent = await readTokenFile(await steamTokenSearch(5555, { env: { UNITY_INSPECTOR_TOKEN_FILE: missing }, home }));

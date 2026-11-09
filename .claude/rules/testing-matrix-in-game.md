@@ -374,6 +374,7 @@ paths:
 | S | two captures from two connections in one frame | not produced by any step: a test script sends one command at a time; the capture lock is code review only |
 | C | `backdrop` true and a colour | inspection 182-183 |
 | S | a backdrop render on the starting level: over half its PNG exactly `#FF00FF`, and the enabled renderers the same before and after it | inspection 184 |
+| S | a remote target, through a tunnel and at a LAN address: plain, highlighted and backdrop shots whose fetched copies match the game's files | not produced by any step: a step cannot declare a remote target, since `run_test_script` refuses `launch_game`; RF covers the fetch |
 
 ## teleport_player
 
@@ -426,3 +427,4 @@ Classes of no single tool.
 | a native crash's lines in `logs` and `crashLog` | RTS `the run carries the log delta after the game died, and when the baseline could not be taken`; LD `a native crash report is an error`; the crash text itself is unconfirmed |
 | an inspection read racing the main thread's object creation | none: every inspection handler now reads on the main thread, so no step can race it |
 | library scripts: `menu-tweaker` and `rogueforce-runner`, a traced argument whose `ToString` throws, a name only a prefab asset carries; the level-run driver piloting a mech, on an IronBro save, at a refusing teleport door, on a super-checkpoint reload or under the pause menu | none: the set has no FlexMenu, Rogueforce, level or save that produces them |
+| every tool on a remote target, through a tunnel and at a LAN address: the transfer code compiled and run in the game (the log candidates, UMM's `Logger.filepath`, the cache listing, chunked writes), a stale token then a recopy, an unused port | not produced by any step: a step cannot declare a remote target, since `run_test_script` refuses `launch_game`; RT, RF and RC cover the server's side against a stub mod |

@@ -343,7 +343,7 @@ test('the misnamed keys real calls sent are refused, never run without them', as
     ['teleport_player', { x: 1, y: 2, player: '0' }, '"player"', 'playerNum'],
     ['simulate_input', { action: 'fire', run_in_background: true }, '"run_in_background"', 'action'],
     ['execute_script', { script: 'class X {}' }, '"script"', 'path'],
-    ['unload_script', { path: 'watch-field' }, '"path"', 'name'],
+    ['unload_script', { name: 'watch-field' }, '"name"', 'path'],
     ['spawn_entity', { entity: 'Mook', x: 1, y: 2 }, '"entity"', 'type'],
     ['inspect_component', { path: '/Player', component: 'Transform' }, '"component"', 'componentType'],
   ];
@@ -509,7 +509,7 @@ test('a missing required argument is refused before anything reaches the game', 
     ['spawn_entity', { type: 'Mook', x: 1 }, /Entity type and coordinates are required/],
     ['teleport_player', { x: 1 }, /X and Y coordinates are required/],
     ['teleport_player', { y: 1 }, /X and Y coordinates are required/],
-    ['unload_script', {}, /Script name is required/],
+    ['unload_script', {}, /Script path is required/],
     ['run_test_script', {}, /Script name or path is required/],
   ];
   for (const [name, args, pattern] of cases) await assertRefusedBeforeTheGame(name, args, pattern);
@@ -839,11 +839,19 @@ test('execute_script names a missing absolute path, and says how it took it, ins
   assert.doesNotMatch(text, /ENOENT: no such file/);
 });
 
-test('unload_script sends the name the script was loaded under, from its catalog or file name', async () => {
+test('unload_script takes execute_script\'s path and sends the name the script was loaded under', async (t) => {
   for (const given of ['Watch Field', 'watch-field.cs', 'watch-field']) {
-    await call('unload_script', { name: given });
-    assert.equal(lastRequest('unload_script').params.name, 'watch-field', given);
+    await call('unload_script', { path: given });
+    assert.deepEqual(lastRequest('unload_script').params, { name: 'watch-field' }, given);
   }
-  await call('unload_script', { name: 'lifecycle-inline' });
-  assert.equal(lastRequest('unload_script').params.name, 'lifecycle-inline', 'a name no file has goes as given');
+
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'unload-path-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'Probe.cs');
+  await fs.writeFile(file, 'public static class Probe {}');
+  await call('unload_script', { path: file });
+  assert.deepEqual(lastRequest('unload_script').params, { name: 'Probe' }, 'an absolute path unloads that file\'s script');
+
+  await call('unload_script', { path: 'lifecycle-inline' });
+  assert.deepEqual(lastRequest('unload_script').params, { name: 'lifecycle-inline' }, 'a name no file has goes as given');
 });

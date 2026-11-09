@@ -1,6 +1,7 @@
 import { NO_LISTENER_PORT } from './support/session.js';
 import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'crypto';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
@@ -107,14 +108,15 @@ test('the recorded port is only this instance\'s while a game of its own is runn
 });
 
 test('an instance\'s hello carries the token from its own data folder, never UNITY_INSPECTOR_TOKEN_FILE', { timeout: 30000, skip: !isLinux }, async (t) => {
-  const inspector = await fakeInspector({ hello: (params) => (params.token === 'instance-token' ? 'accept' : 'refuse') });
+  const instanceToken = createHash('sha256').update('instance').digest('hex');
+  const inspector = await fakeInspector({ hello: (params) => (params.token === instanceToken ? 'accept' : 'refuse') });
   t.after(() => inspector.close());
   const dataDir = path.join(instanceDir, 'home/unity3d/Free Lives/Broforce');
   await fs.mkdir(dataDir, { recursive: true });
   await fs.writeFile(portFile, String(inspector.port));
-  await fs.writeFile(path.join(dataDir, `unity-inspector-${inspector.port}.token`), 'instance-token\n');
+  await fs.writeFile(path.join(dataDir, `unity-inspector-${inspector.port}.token`), `${instanceToken}\n`);
   const userGameToken = path.join(root, 'user-game.token');
-  await fs.writeFile(userGameToken, 'user-game-token');
+  await fs.writeFile(userGameToken, createHash('sha256').update('user-game').digest('hex'));
   const previous = process.env.UNITY_INSPECTOR_TOKEN_FILE;
   process.env.UNITY_INSPECTOR_TOKEN_FILE = userGameToken;
   t.after(() => { process.env.UNITY_INSPECTOR_TOKEN_FILE = previous; });
@@ -124,7 +126,7 @@ test('an instance\'s hello carries the token from its own data folder, never UNI
   assert.equal(activeConfig().unityDataDir, dataDir);
   payload(await handleToolCall({ params: { name: 'ping', arguments: {} } }));
   assert.equal(unityClient.connected, true);
-  assert.deepEqual(inspector.hellos.map((hello) => hello.token), ['instance-token']);
+  assert.deepEqual(inspector.hellos.map((hello) => hello.token), [instanceToken]);
 });
 
 test('an instance with no allocated port has no port to connect to',{ timeout: 30000, skip: !isLinux }, async () => {

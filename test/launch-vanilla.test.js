@@ -645,30 +645,6 @@ test('a launch that cannot see processes and gets no answer from the inspector s
   await assert.rejects(fs.access(marker), 'a launch ran with no way to tell whether the game was already up');
 });
 
-test('a launch of the user\'s game on another host, with nothing answering, starts nothing', { timeout: 30000, skip: !isLinux }, async (t) => {
-  noGame();
-  process.env.UNITY_INSPECTOR_HOST = '192.0.2.1';
-  const connectTimeoutMs = unityClient.connectTimeoutMs;
-  unityClient.connectTimeoutMs = 300;
-  const marker = path.join(scratch, 'launched-remote');
-  const script = path.join(scratch, 'remote-launcher.sh');
-  await fs.writeFile(script, `: > '${marker}'\nexit 0\n`);
-  process.env.BROFORCE_LAUNCH_CMD = `sh ${script}`;
-  t.after(() => {
-    delete process.env.UNITY_INSPECTOR_HOST;
-    unityClient.connectTimeoutMs = connectTimeoutMs;
-    clearStubs();
-  });
-
-  for (const args of [{}, { restart: true }, { vanilla: true }]) {
-    const payload = JSON.parse(textOf(await launch(args)));
-    assert.equal(payload.success, false, payload.message);
-    assert.equal(payload.state, 'unknown');
-    assert.match(payload.message, /runs on 192\.0\.2\.1 \(UNITY_INSPECTOR_HOST\)/);
-  }
-  await assert.rejects(fs.access(marker), 'a launch ran beside a game whose host this server cannot see');
-});
-
 test('a launch of the user\'s game from WSL starts nothing', { timeout: 30000, skip: !isLinux }, async (t) => {
   noGame();
   setWslProbe(() => true);

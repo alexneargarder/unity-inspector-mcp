@@ -21,6 +21,14 @@
 - **The hide rule** (`HiddenRenderers()`): walking up from each enabled renderer, the first object whose markers decide settles it. A placed throwable decides only under the map root, where it is hidden; otherwise keep markers decide before hide markers on the same object, and with no deciding object the renderer is kept. Types match by name along each component's type chain, so a type a game build lacks is skipped.
 - **Restore**: exactly the renderers the render disabled are enabled again in a `finally`, before the readback and in the same main-thread action, so no frame runs while anything is hidden.
 
+## Remote file transfers
+
+`remote-files.js` moves files to and from a game on another machine (`.claude/rules/remote.md`) through server-sent `execute_code`, a transfer taking as many calls as its bounds need, each under its own command timeout.
+
+- The code writes `System.IO` names in full, quotes every path through `csString()`, declares no generic type or enum, and opens the game files it reads with `FileShare.ReadWrite` (`openShared()`).
+- A read's result is one string, a JSON object of index → base64 (null for a file it could not read), never an array, since a result array is cut at 100 items. A call carries at most `TRANSFER_MAX_BYTES` (2 MiB) of file bytes, a larger file going in 2 MiB segments, and a write at most `WRITE_CHUNK_BYTES` (96 KiB).
+- The code's first line is `CODE_MARK`, the operation and its JSON parameters. The stub mod in `test/support/remote-fs.js` rebuilds the code from those parameters (a write's data read back from the body) with the same builder, refuses code that differs, then answers from its own model: the check catches a parameter missing from the header and code no builder made, not a change to what the C# does, so changing a builder's behaviour needs the same change in the stub's answers.
+
 ## Shared helpers
 
 - `tokenizeCommand()` is the one splitter for every setting holding a command plus arguments.

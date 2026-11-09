@@ -192,8 +192,8 @@
       "params": { "code": "var d = System.AppDomain.CurrentDomain;\nstring log = \"\";\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); set.selGridInt[i] = ix < 0 ? 0 : ix; }\n    log += \"swap-settings-restored \";\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;" },
       "expect": { "notContains": ["failed"] }
     },
-    { "command": "unload_script", "params": { "name": "scenario-bro-lock" } },
-    { "command": "unload_script", "params": { "name": "scenario-level-run" } },
+    { "command": "unload_script", "params": { "path": "scenario-bro-lock" } },
+    { "command": "unload_script", "params": { "path": "scenario-level-run" } },
     {
       "command": "execute_code",
       "params": {

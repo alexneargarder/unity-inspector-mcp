@@ -47,7 +47,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "trace-method-calls"
+        "path": "trace-method-calls"
       },
       "expect": {
         "success": true
@@ -75,7 +75,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "trace-method-calls"
+        "path": "trace-method-calls"
       },
       "expect": {
         "success": true
@@ -102,7 +102,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "spawn-capture"
+        "path": "spawn-capture"
       },
       "expect": {
         "success": true
@@ -185,7 +185,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "trace-method-calls"
+        "path": "trace-method-calls"
       },
       "expect": {
         "success": true
@@ -235,7 +235,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "spawn-capture"
+        "path": "spawn-capture"
       },
       "expect": {
         "success": true
@@ -359,7 +359,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "watch-field"
+        "path": "watch-field"
       },
       "expect": {
         "success": true
@@ -453,7 +453,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "trace-method-calls"
+        "path": "trace-method-calls"
       },
       "expect": {
         "success": true,
@@ -479,7 +479,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "trace-method-calls"
+        "path": "trace-method-calls"
       },
       "expect": {
         "notContains": [
@@ -490,7 +490,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "spawn-capture"
+        "path": "spawn-capture"
       },
       "expect": {
         "notContains": [
@@ -501,7 +501,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "watch-field"
+        "path": "watch-field"
       },
       "expect": {
         "notContains": [
@@ -512,7 +512,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "dump-harmony-patches"
+        "path": "dump-harmony-patches"
       },
       "expect": {
         "notContains": [
@@ -523,7 +523,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "inspect-private-fields"
+        "path": "inspect-private-fields"
       },
       "expect": {
         "notContains": [
@@ -534,7 +534,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "diff-component"
+        "path": "diff-component"
       },
       "expect": {
         "notContains": [

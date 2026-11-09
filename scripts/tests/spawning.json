@@ -1728,7 +1728,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "utility-mod-save-guard"
+        "path": "utility-mod-save-guard"
       },
       "expect": {
         "success": true,
@@ -1775,7 +1775,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "utility-mod-save-guard"
+        "path": "utility-mod-save-guard"
       },
       "expect": {
         "notContains": [

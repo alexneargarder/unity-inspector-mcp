@@ -1,6 +1,6 @@
 {
   "name": "execute_code error contract",
-  "description": "Checks what execute_code reports for an inaccessible type, a throw inside a multi-statement block, a throw inside a single expression, two calls that must succeed, a throw in the statement after a block, a throw in the second statement of a single line, and a compiler diagnostic in the second statement of a single line, whose column is reported against the submitted input. Needs BroMakerLib and RocketLib installed in the profile. Five calls that never return on their own are stopped at the 9s budget and the game answers after them: a bare while(true), a loop inside a lazily enumerated result, a loop in a method of a type the same input declares, a loop whose body catches every exception, and a loop whose catch wraps the stop in another exception. Code whose method ends in a try statement with an unreachable end, once with nothing looping, answers with its exception and the game alive: try/catch, try/finally, lock, using, a lambda, a declared method returning a value, an else branch. Every loop shape is stopped too, in execute_code at 9s and in execute_script's Main() at 15s: inside try, catch and finally, in both try and finally, nested, do, for, while and foreach, a back-edge that is a leave out of a try and out of a catch, a continue through a finally, lock, using, a lambda, a declared method and an iterator, and in Unload(). A loop in a static initializer comes back as a TypeInitializationException naming the abort. Runaway recursion comes back as a RunawayRecursionException with the game alive, in a method, mutually, in a lambda, a property, a constructor, a static initializer, an iterator and a using, and legitimately deep recursion runs. A catch when filter is honoured, true, false, throwing and in a script, and stopped with the rest. A stop runs the compiled calls in the finally and catch blocks it unwinds through, a loop in one too, at any depth, in execute_code and in Main(), and still ends code with no loop, code that catches and recurses, a heavy call in a finally and a loop in a catch at every level. Its first step waits for the hero prefabs to load.",
+  "description": "Checks what execute_code reports for a mod's internal type by full name, a throw inside a multi-statement block, a throw inside a single expression, two calls that must succeed, a throw in the statement after a block, a throw in the second statement of a single line, and a compiler diagnostic in the second statement of a single line, whose column is reported against the submitted input. Needs BroMakerLib and RocketLib installed in the profile. Five calls that never return on their own are stopped at the 9s budget and the game answers after them: a bare while(true), a loop inside a lazily enumerated result, a loop in a method of a type the same input declares, a loop whose body catches every exception, and a loop whose catch wraps the stop in another exception. Code whose method ends in a try statement with an unreachable end, once with nothing looping, answers with its exception and the game alive: try/catch, try/finally, lock, using, a lambda, a declared method returning a value, an else branch. Every loop shape is stopped too, in execute_code at 9s and in execute_script's Main() at 15s: inside try, catch and finally, in both try and finally, nested, do, for, while and foreach, a back-edge that is a leave out of a try and out of a catch, a continue through a finally, lock, using, a lambda, a declared method and an iterator, and in Unload(). A loop in a static initializer comes back as a TypeInitializationException naming the abort. Runaway recursion comes back as a RunawayRecursionException with the game alive, in a method, mutually, in a lambda, a property, a constructor, a static initializer, an iterator and a using, and legitimately deep recursion runs. A catch when filter is honoured, true, false, throwing and in a script, and stopped with the rest. A stop runs the compiled calls in the finally and catch blocks it unwinds through, a loop in one too, at any depth, in execute_code and in Main(), and still ends code with no loop, code that catches and recurses, a heavy call in a finally and a loop in a catch at every level. Its first step waits for the hero prefabs to load.",
   "steps": [
     {
       "command": "execute_code",
@@ -18,11 +18,14 @@
     {
       "command": "execute_code",
       "params": {
-        "code": "var s = new Unity_Inspector_Mod.Splice();"
+        "code": "var s = new Unity_Inspector_Mod.Splice();\nreturn s.GetType().FullName;"
       },
       "expect": {
-        "success": false,
+        "success": true,
         "contains": [
+          "\"result\": \"Unity_Inspector_Mod.Splice\""
+        ],
+        "notContains": [
           "CS0122"
         ]
       }
@@ -762,7 +765,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "errors-spin"
+        "path": "errors-spin"
       },
       "expect": {
         "success": true,
@@ -1003,7 +1006,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "errors-rec"
+        "path": "errors-rec"
       },
       "expect": {
         "success": true,
@@ -1045,7 +1048,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "errors-rec"
+        "path": "errors-rec"
       },
       "expect": {
         "success": true,
@@ -1085,7 +1088,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "errors-rec"
+        "path": "errors-rec"
       },
       "expect": {
         "success": true,
@@ -1207,7 +1210,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "errors-rec"
+        "path": "errors-rec"
       },
       "expect": {
         "success": true,
@@ -1435,7 +1438,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "errors-rec"
+        "path": "errors-rec"
       },
       "expect": {
         "success": true,
@@ -1462,7 +1465,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "errors-spin"
+        "path": "errors-spin"
       },
       "expect": {
         "notContains": [
@@ -1473,7 +1476,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "errors-rec"
+        "path": "errors-rec"
       },
       "expect": {
         "notContains": [

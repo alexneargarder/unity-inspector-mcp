@@ -15,7 +15,7 @@ const { handleToolCall, findLogPath, logFileInfo, resetPlatformDetection, resolv
 const { setProcReader } = await import('../lib/game-process.js');
 const { fakeProcReader } = await import('./support/fake-proc.js');
 
-// No game is running in these tests: the game's start time and profile come from this empty table
+// No game is running in these tests: the game's start time and its UMM log come from this empty table
 setProcReader(fakeProcReader({}));
 test.after(() => setProcReader(null));
 
@@ -52,6 +52,7 @@ async function withFakeHome(run) {
     return await run({
       profileLog: (profile, contents, mtime) =>
         write(path.join(profiles, profile, 'UMM/Core/Log.txt'), contents, mtime),
+      activeLog: (profile) => async () => path.join(profiles, profile, 'UMM/Core/Log.txt'),
       writePlayerLog: (contents, mtime) => write(playerLog, contents, mtime),
       playerLogPath: playerLog,
     });
@@ -141,21 +142,20 @@ test('read_log with onlyNew does not leak file descriptors', { skip: process.pla
   assert.ok(after <= before + 2, `fd count grew from ${before} to ${after}`);
 });
 
-test('read_log refuses onlyNew with lines or filter, and reset without onlyNew', async () => {
+test('read_log refuses reset without onlyNew, and onlyNew with a lines count that is no whole number of at least 1', async () => {
   const refused = async (args) => {
     const response = await handleToolCall({ params: { name: 'read_log', arguments: args } });
     assert.equal(response.isError, true, JSON.stringify(args));
     return response.content.map((c) => c.text).join('\n');
   };
 
-  assert.match(await refused({ onlyNew: true, lines: 5 }), /onlyNew .*neither lines nor filter/);
-  assert.match(await refused({ onlyNew: true, filter: 'x' }), /onlyNew .*neither lines nor filter/);
   assert.match(await refused({ reset: true }), /reset .*needs onlyNew/);
   assert.match(await refused({ reset: true, lines: 5 }), /reset .*needs onlyNew/);
+  assert.match(await refused({ onlyNew: true, lines: 0 }), /lines must be a whole number of at least 1/);
 
   await readNew({ reset: true });
   await fs.appendFile(logPath, 'after the refusals\n');
-  await handleToolCall({ params: { name: 'read_log', arguments: { onlyNew: true, lines: 5 } } });
+  await handleToolCall({ params: { name: 'read_log', arguments: { onlyNew: true, lines: 0 } } });
   assert.equal((await readNew({})).newLines, 1, 'a refused call does not move the position');
 
   const plain = payload(await handleToolCall({ params: { name: 'read_log', arguments: { reset: false, onlyNew: false, lines: 1 } } }));
@@ -197,12 +197,11 @@ test('the log search reaches the Flatpak r2modman\'s profiles, and an absolute X
 
   try {
     assert.equal(await findLogPath(async () => null, noGameStart), dotConfig);
-    assert.equal(await findLogPath(async () => 'Test-Flatpak-a41f', noGameStart), flatpak);
+    assert.equal(await findLogPath(async () => flatpak, noGameStart), flatpak);
 
     process.env.XDG_CONFIG_HOME = xdg;
     assert.equal(await findLogPath(async () => null, noGameStart), flatpak, '~/.config is not searched once XDG_CONFIG_HOME names the folder');
-    assert.equal(await findLogPath(async () => 'Test-Xdg-a41f', noGameStart), fromXdg);
-    assert.equal(await findLogPath(async () => 'Test-Dotconfig-a41f', noGameStart), flatpak);
+    assert.equal(await findLogPath(async () => fromXdg, noGameStart), fromXdg);
 
     process.env.XDG_CONFIG_HOME = 'xdg';
     assert.equal(await findLogPath(async () => null, noGameStart), dotConfig, 'a relative XDG_CONFIG_HOME is ignored');
@@ -228,7 +227,7 @@ test('the log search globs r2modman profiles and prefers the newest', fakeHomeWo
     return file;
   };
 
-  // Names that cannot collide with a real game process's profile, so detection misses and mtime decides
+  // Names that cannot collide with a real game's Doorstop target, so detection misses and mtime decides
   const stale = await write('Test-Stale-a41f', 'stale profile\n', new Date('2020-01-01T00:00:00Z'));
   await write('Test-Older-a41f', 'older profile\n', new Date('2021-01-01T00:00:00Z'));
   const newest = await write('Test-Newest-a41f', 'newest profile\n', new Date('2024-01-01T00:00:00Z'));
@@ -244,8 +243,8 @@ test('the log search globs r2modman profiles and prefers the newest', fakeHomeWo
     assert.equal(result.path, newest);
     assert.match(result.content, /newest profile/);
 
-    assert.equal(await findLogPath(async () => 'Test-Stale-a41f', noGameStart), stale);
-    assert.equal(await findLogPath(async () => 'Test-Missing-a41f', noGameStart), newest);
+    assert.equal(await findLogPath(async () => stale, noGameStart), stale);
+    assert.equal(await findLogPath(async () => path.join(profiles, 'Test-Missing-a41f/UMM/Core/Log.txt'), noGameStart), newest);
     assert.equal(await findLogPath(async () => null, noGameStart), newest);
   } finally {
     if (savedHome === undefined) delete process.env.HOME;
@@ -274,33 +273,33 @@ test('read_log with onlyNew restarts as a baseline when the resolved log path ch
   }
 });
 
-test('an active profile with no UMM log falls back to the Unity player log', fakeHomeWorks, async () => {
-  await withFakeHome(async ({ profileLog, writePlayerLog, playerLogPath }) => {
+test('an active UMM log that does not exist falls back to the Unity player log', fakeHomeWorks, async () => {
+  await withFakeHome(async ({ profileLog, activeLog, writePlayerLog, playerLogPath }) => {
     await profileLog('Test-Dead-8c02', 'dead profile\n', new Date('2020-01-01T00:00:00Z'));
     await writePlayerLog('player log\n', new Date('2024-06-01T00:00:00Z'));
 
-    const resolved = await resolveLogFile(async () => 'Test-Live-8c02', noGameStart);
+    const resolved = await resolveLogFile(activeLog('Test-Live-8c02'), noGameStart);
     assert.equal(resolved.path, playerLogPath);
     assert.equal(resolved.stale, false);
     assert.match(resolved.modifiedAt, /^2024-06-01T/);
   });
 });
 
-test("the player log beats an active profile's UMM log the game also writes, whichever was written last", fakeHomeWorks, async () => {
-  await withFakeHome(async ({ profileLog, writePlayerLog, playerLogPath }) => {
+test("the player log beats the active UMM log the game also writes, whichever was written last", fakeHomeWorks, async () => {
+  await withFakeHome(async ({ profileLog, activeLog, writePlayerLog, playerLogPath }) => {
     const live = await profileLog('Test-Live-8c02', 'live profile\n', new Date('2024-06-01T00:00:30Z'));
     await writePlayerLog('player log\n', new Date('2024-06-01T00:00:00Z'));
 
     const startedAt = Date.parse('2024-05-01T00:00:00Z');
-    assert.equal(await findLogPath(async () => 'Test-Live-8c02', async () => startedAt), playerLogPath);
-    assert.equal(await findLogPath(async () => 'Test-Live-8c02', noGameStart), playerLogPath, 'a UMM log flushed just after the player log');
+    assert.equal(await findLogPath(activeLog('Test-Live-8c02'), async () => startedAt), playerLogPath);
+    assert.equal(await findLogPath(activeLog('Test-Live-8c02'), noGameStart), playerLogPath, 'a UMM log flushed just after the player log');
 
     await fs.utimes(playerLogPath, new Date('2024-04-01T00:00:00Z'), new Date('2024-04-01T00:00:00Z'));
-    assert.equal(await findLogPath(async () => 'Test-Live-8c02', async () => startedAt), live, 'a player log this run never wrote gives way');
+    assert.equal(await findLogPath(activeLog('Test-Live-8c02'), async () => startedAt), live, 'a player log this run never wrote gives way');
   });
 });
 
-test('with no profile resolved, the player log is read while both are live, never the newer of the two', fakeHomeWorks, async () => {
+test('with no active UMM log, the player log is read while both are live, never the newer of the two', fakeHomeWorks, async () => {
   await withFakeHome(async ({ profileLog, writePlayerLog, playerLogPath }) => {
     await profileLog('Test-Some-8c02', 'batched\n', new Date('2024-06-01T00:00:10Z'));
     await writePlayerLog('every line\n', new Date('2024-06-01T00:00:05Z'));
@@ -311,7 +310,7 @@ test('with no profile resolved, the player log is read while both are live, neve
   });
 });
 
-test('with no profile resolved the newest candidate wins, player log included', fakeHomeWorks, async () => {
+test('with no active UMM log the newest candidate wins, player log included', fakeHomeWorks, async () => {
   await withFakeHome(async ({ profileLog, writePlayerLog, playerLogPath }) => {
     await profileLog('Test-Old-8c02', 'old profile\n', new Date('2021-01-01T00:00:00Z'));
     const newestProfile = await profileLog('Test-New-8c02', 'newer profile\n', new Date('2024-01-01T00:00:00Z'));
@@ -344,23 +343,23 @@ test('a log older than the running game is reported as stale, never served silen
 });
 
 test('a leftover profile log from an older install loses to the live player log', fakeHomeWorks, async () => {
-  await withFakeHome(async ({ profileLog, writePlayerLog, playerLogPath }) => {
+  await withFakeHome(async ({ profileLog, activeLog, writePlayerLog, playerLogPath }) => {
     await profileLog('Test-Live-8c02', 'from an old install\n', new Date('2026-04-01T00:00:00Z'));
     await writePlayerLog('live output\n', new Date());
     const startedAt = Date.now() - 60000;
 
-    const resolved = await resolveLogFile(async () => 'Test-Live-8c02', async () => startedAt);
+    const resolved = await resolveLogFile(activeLog('Test-Live-8c02'), async () => startedAt);
     assert.equal(resolved.path, playerLogPath);
     assert.equal(resolved.stale, false);
   });
 });
 
 test('when nothing has been written since the game started, the newest is served and flagged', fakeHomeWorks, async () => {
-  await withFakeHome(async ({ profileLog, writePlayerLog }) => {
+  await withFakeHome(async ({ profileLog, activeLog, writePlayerLog }) => {
     const profilePath = await profileLog('Test-Live-8c02', 'old install\n', new Date('2026-04-01T00:00:00Z'));
     await writePlayerLog('older still\n', new Date('2026-01-01T00:00:00Z'));
 
-    const resolved = await resolveLogFile(async () => 'Test-Live-8c02', async () => Date.now());
+    const resolved = await resolveLogFile(activeLog('Test-Live-8c02'), async () => Date.now());
     assert.equal(resolved.path, profilePath, 'the newest of the stale candidates');
     assert.equal(resolved.stale, true);
     assert.match(resolved.warning, /not writing to it/);
@@ -409,7 +408,7 @@ test('the Windows layout offers output_log.txt as well as Player.log', fakeHomeW
 
   try {
     assert.equal(await findLogPath(async () => null, noGameStart), outputLog);
-    assert.equal(await findLogPath(async () => 'Test-Live-8c02', noGameStart), outputLog);
+    assert.equal(await findLogPath(async () => path.join(emptyHome, 'no-profile/UMM/Core/Log.txt'), noGameStart), outputLog);
   } finally {
     for (const [key, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[key];
@@ -468,7 +467,7 @@ test('an override is never filtered out by the freshness cutoff', async () => {
 
   process.env.UNITY_INSPECTOR_LOG = overrideLog;
   try {
-    const resolved = await resolveLogFile(async () => 'Test-Live-8c02', async () => Date.now());
+    const resolved = await resolveLogFile(async () => path.join(logDir, 'no-profile/UMM/Core/Log.txt'), async () => Date.now());
     assert.equal(resolved.path, overrideLog);
     assert.equal(resolved.stale, true);
   } finally {
@@ -706,6 +705,96 @@ test('a baseline never repeats lines the next onlyNew call returns', async (t) =
   assert.ok(!baseline.content.includes('line 6'));
 });
 
+const mixed = (count) => Array.from({ length: count }, (_, i) => `${i % 2 ? 'drop' : 'Keep'} ${i + 1}`).join('\n') + '\n';
+
+test('an onlyNew baseline takes lines and filter: the newest lines of the file, filtered, 20 without lines', async (t) => {
+  await withLog(t, mixed(60));
+  const filtered = await readNew({ filter: 'keep' });
+  assert.equal(filtered.isBaseline, true);
+  assert.equal(filtered.newLines, 20);
+  assert.equal(filtered.content.split('\n')[0], 'Keep 21');
+  assert.ok(filtered.content.endsWith('Keep 59'));
+  assert.doesNotMatch(filtered.content, /drop/);
+
+  await withLog(t, numbered(30));
+  const newest = await readNew({ lines: 5 });
+  assert.equal(newest.isBaseline, true);
+  assert.equal(newest.content, 'line 26\nline 27\nline 28\nline 29\nline 30');
+
+  await withLog(t, mixed(60));
+  const both = await readNew({ filter: 'KEEP', lines: 2 });
+  assert.equal(both.isBaseline, true);
+  assert.equal(both.content, 'Keep 57\nKeep 59');
+});
+
+test('onlyNew with filter serves only the matching new lines, and never serves the rest later', async (t) => {
+  const file = await withLog(t, 'start\n');
+  await readNew({});
+  await fs.appendFile(file, 'keep a\ndrop b\nKEEP c\n');
+
+  const filtered = await readNew({ filter: 'keep' });
+  assert.equal(filtered.isBaseline, false);
+  assert.equal(filtered.newLines, 2);
+  assert.equal(filtered.content, 'keep a\nKEEP c');
+  assert.equal(filtered.truncated, undefined);
+
+  await fs.appendFile(file, 'drop d\n');
+  const nothing = await readNew({ filter: 'keep' });
+  assert.equal(nothing.newLines, 0);
+  assert.equal(nothing.content, '');
+
+  await fs.appendFile(file, 'after\n');
+  assert.equal((await readNew({})).content, 'after', 'the lines the filter passed over were consumed');
+});
+
+test('onlyNew with lines keeps the newest new lines, counts the rest as dropped, and never serves them later', async (t) => {
+  const file = await withLog(t, 'start\n');
+  await readNew({});
+  await fs.appendFile(file, numbered(5, 'new'));
+
+  const newest = await readNew({ lines: 2 });
+  assert.equal(newest.isBaseline, false);
+  assert.equal(newest.content, 'new 4\nnew 5');
+  assert.equal(newest.newLines, 2);
+  assert.equal(newest.truncated, true);
+  assert.equal(newest.droppedLines, 3);
+  assert.match(newest.message, /dropped 3 earlier lines/);
+
+  await fs.appendFile(file, 'after\n');
+  const next = await readNew({ lines: 2 });
+  assert.equal(next.content, 'after');
+  assert.equal(next.truncated, undefined);
+});
+
+test('a continuing onlyNew read keeps a blank line between two entries, and lines counts it', async (t) => {
+  const file = await withLog(t, 'start\n');
+  await readNew({});
+  await fs.appendFile(file, 'first\n\nsecond\n');
+  const whole = await readNew({});
+  assert.equal(whole.content, 'first\n\nsecond');
+  assert.equal(whole.newLines, 2);
+
+  await fs.appendFile(file, 'third\n\nfourth\n');
+  const newest = await readNew({ lines: 2 });
+  assert.equal(newest.content, '\nfourth', 'the blank line is one of the two lines kept');
+  assert.equal(newest.droppedLines, 1);
+  assert.equal(newest.newLines, 1);
+});
+
+test('onlyNew with lines and filter keeps the newest matches and consumes every line it read', async (t) => {
+  const file = await withLog(t, 'start\n');
+  await readNew({});
+  await fs.appendFile(file, 'keep 1\ndrop 2\nkeep 3\nkeep 4\ndrop 5\n');
+
+  const both = await readNew({ filter: 'keep', lines: 1 });
+  assert.equal(both.content, 'keep 4');
+  assert.equal(both.droppedLines, 2);
+  assert.equal(both.truncated, true);
+
+  const quiet = await readNew({});
+  assert.equal(quiet.newLines, 0, 'neither the dropped matches nor the filtered-out lines come back');
+});
+
 test('parallel onlyNew calls hand each new line out once', async (t) => {
   const file = await withLog(t, numbered(3));
   await readNew({});
@@ -757,13 +846,13 @@ test('the player log paths wait for the Proton detection, so the first read afte
 
 test('while a game runs, the logs a test run snapshots name no player log it has not written', fakeHomeWorks, async () => {
   const { targetLogPaths } = await import('../index.js');
-  await withFakeHome(async ({ profileLog, writePlayerLog }) => {
+  await withFakeHome(async ({ profileLog, activeLog, writePlayerLog }) => {
     const started = Date.now() - 60000;
     const old = new Date(started - 3600000);
     await writePlayerLog('another install\n', old);
     const live = await profileLog('Test-Live-8c02', 'this run\n', new Date());
 
-    assert.deepEqual(await targetLogPaths({ detectProfile: async () => 'Test-Live-8c02', startTime: async () => started }), { umm: live, player: null });
+    assert.deepEqual(await targetLogPaths({ detectUmmLog: activeLog('Test-Live-8c02'), startTime: async () => started }), { umm: live, player: null });
 
     process.env.UNITY_INSPECTOR_LOG = live;
     try {

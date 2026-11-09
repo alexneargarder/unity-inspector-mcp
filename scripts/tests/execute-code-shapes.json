@@ -1,11 +1,11 @@
 {
   "name": "execute_code input shapes",
-  "description": "Covers execute_code's return forms (expression, trailing return, trailing expression, void, a return inside if and inside try), the result shapes (anonymous type, dictionary, list, over 100 items, Vector3, GameObject, Component, null, a 40 KB string, a self-containing list, nesting past the depth limit, enum, Type, decimal, a destroyed object, a throwing ToString), language features (using directives before statements, a local function with and without static or an access modifier, and inside a declared type's method, no local-function hint for a method inside a declared type, LINQ and lambdas, a throwing lambda, foreach over Dictionary Keys, Values and SortedDictionary, generics, unqualified Object and Math, reflection, comments, a 1000-character line), declared types (nested, redeclared, a declaration with a trailing statement, several statics assigned in one input), runtime and compiler errors with their position, statement and stack trace, types from RocketLib, BroMakerLib, Swap Bros Mod and a class-only script, and a call that holds the main thread past 9 seconds and returns, one that holds it past the 9s budget and 2s grace and is reported still running, followed by a trivial call. A block comment right before a trailing return, after a statement and as the first thing in the input, compiles. A generic class declared by execute_code runs when used in the same input and in a later one, its field named from a sibling class of that input included. A generic method runs when called in the same input and in a later one, a lambda in one included, capturing or not, and a call to itself or to another generic method of the same input with its own type arguments or from elsewhere, in execute_code and in a script; one with other type arguments from inside its own body, or a virtual or interface one with fixed type arguments from the compile that declares it, is refused and names the rewrites, which run. A declaration that was refused does not stay declared: calling it says the type does not exist, an earlier declaration of the name stays, and its input's using directives stay out. Naming JsonConvert works at the first naming in a new Evaluator, in statements and in a declaration, with its unloadable overloads missing and reading their attributes throwing; other library types do too, and JsonConvert of an anonymous type and of a generic class with a public field, and the fields of an anonymous type, read by reflection, answer. An anonymous type with the names of an earlier one and other types compiles. The same alias with another target fails with CS1537 and a line saying to pick another name, leaving the earlier one in force, the preamble's Object alias included. A delegate declared again replaces the earlier one, as a class does. A using directive is replayed after the Evaluator is rebuilt for an unloaded script and after a compiler crash, a crash is built once and not retried, a CS0584 carries its Cause lines in execute_code and a script compile while the mod's nested-type import fix is taken away and put back, a caller error in a request is answered at once under its own id, without the Internal error prefix, over a second connection that opens with the hello and its token, and a reply past 64 KB carrying surrogate pairs and BMP characters comes back whole. A declared generic class's field emitted into a DynamicMethod by hand is refused at the emit, owner-typed with ldfld and anonymously hosted with ldsfld, naming the field and the rewrites, while a non-generic declared class's field and an mscorlib generic class's field emit; no step creates a DynamicMethod. AccessTools.FieldRefAccess over the field fails with an error, after a check that a direct emit is refused and that MonoMod's generator switches are at their defaults, and returns skipped otherwise. Six real calls that once failed to compile: Harmony Unpatch as a statement and as the last statement, Harmony's patch registry, a LevelSelectionController static property and constant, and JsonConvert. Constants and enums are covered by script-constants.json. A method whose signature names an assembly the game does not ship (JsonConvert's XNode overloads, which name System.Xml.Linq) fails with a FileNotFoundException naming that assembly when script code asks for its parameters or generic arguments, whether it is generic, or to invoke it, each step skipping itself, and failing, on a build without the guard that rewrites those calls; ordinary methods, constructors and an indexer answer as before, JsonConvert's methods return as a result, and a trivial call at the end answers. Formatting such a method as a string inside library code (StringBuilder.Append, string.Concat, concatenation, interpolation, String.Format, and concatenation again once its verdict is cached) is refused with 'as a string was refused' naming that assembly, and a method, a constructor and a property whose signatures hold a function-pointer type, each checked as flagged first, are refused naming the function pointer; a search for a constructor or a getter-less property naming an absent assembly reports none found when the game has none; an ordinary method still formats and the names of JsonConvert's methods read; each step skips itself, and fails, on a build without the guard's prefix on MonoMethod, MonoCMethod and MonoProperty ToString, and the game answers after each. A script's Update formatting the function-pointer method ComputeSegmentsCore records the refusal as a NotSupportedException, polled until it lands, after checking that those prefixes are the guard that judges every caller and recording skipped without touching the member otherwise; the game answers after it and the script unloads, in cleanup too. Needs RocketLib, BroMakerLib with Cobro installed and Swap Bros Mod. Its first step unloads the script an earlier failed run left loaded; its later steps unload it and check nothing is left, and its cleanup runs the first step again, which unloads the scripts and puts the import fix back and removes the crash counter if a failed run left them changed, then rebuilds the Evaluator through a compiler crash, since an Evaluator that imported Dictionary<int,int>.KeyCollection.Enumerator while the fix was away keeps that broken import after the fix is back.",
+  "description": "Covers execute_code's return forms (expression, trailing return, trailing expression, void, a return inside if and inside try), the result shapes (anonymous type, dictionary, list, over 100 items, Vector3, GameObject, Component, null, a 40 KB string, a self-containing list, nesting past the depth limit, enum, Type, decimal, a destroyed object, a throwing ToString), language features (using directives before statements, a local function with and without static or an access modifier, and inside a declared type's method, no local-function hint for a method inside a declared type, LINQ and lambdas, a throwing lambda, foreach over Dictionary Keys, Values and SortedDictionary, generics, unqualified Object and Math, reflection, comments, a 1000-character line), declared types (nested, redeclared, a declaration with a trailing statement, several statics assigned in one input), runtime and compiler errors with their position, statement and stack trace, types from RocketLib, BroMakerLib, Swap Bros Mod and a class-only script, and a call that holds the main thread past 9 seconds and returns, one that holds it past the 9s budget and 2s grace and is reported still running, followed by a trivial call. A block comment right before a trailing return, after a statement and as the first thing in the input, compiles. A generic class declared by execute_code runs when used in the same input and in a later one, its field named from a sibling class of that input included. A generic method runs when called in the same input and in a later one, a lambda in one included, capturing or not, and a call to itself or to another generic method of the same input with its own type arguments or from elsewhere, in execute_code and in a script; one with other type arguments from inside its own body, or a virtual or interface one with fixed type arguments from the compile that declares it, is refused and names the rewrites, which run. A declaration that was refused does not stay declared: calling it says the type does not exist, an earlier declaration of the name stays, and its input's using directives stay out. Naming JsonConvert works at the first naming in a new Evaluator, in statements and in a declaration, with its unloadable overloads missing and reading their attributes throwing; other library types do too, and JsonConvert of an anonymous type and of a generic class with a public field, and the fields of an anonymous type, read by reflection, answer. An anonymous type with the names of an earlier one and other types compiles. The same alias with another target fails with CS1537 and a line saying to pick another name, leaving the earlier one in force, the preamble's Object alias included. A delegate declared again replaces the earlier one, as a class does. A using directive is replayed after the Evaluator is rebuilt for an unloaded script and after a compiler crash, a crash is built once and not retried while the mod's number-pattern fix is taken away and put back, a CS0584 carries its Cause lines in execute_code and a script compile while the mod's nested-type import fix is taken away and put back, a caller error in a request is answered at once under its own id, without the Internal error prefix, over a second connection that opens with the hello and its token, and a reply past 64 KB carrying surrogate pairs and BMP characters comes back whole. A declared generic class's field emitted into a DynamicMethod by hand is refused at the emit, owner-typed with ldfld and anonymously hosted with ldsfld, naming the field and the rewrites, while a non-generic declared class's field and an mscorlib generic class's field emit; no step creates a DynamicMethod. AccessTools.FieldRefAccess over the field fails with an error, after a check that a direct emit is refused and that MonoMod's generator switches are at their defaults, and returns skipped otherwise. Six real calls that once failed to compile: Harmony Unpatch as a statement and as the last statement, Harmony's patch registry, a LevelSelectionController static property and constant, and JsonConvert. Constants and enums are covered by script-constants.json. A method whose signature names an assembly the game does not ship (JsonConvert's XNode overloads, which name System.Xml.Linq) fails with a FileNotFoundException naming that assembly when script code asks for its parameters or generic arguments, whether it is generic, or to invoke it, each step skipping itself, and failing, on a build without the guard that rewrites those calls; ordinary methods, constructors and an indexer answer as before, JsonConvert's methods return as a result, and a trivial call at the end answers. Formatting such a method as a string inside library code (StringBuilder.Append, string.Concat, concatenation, interpolation, String.Format, and concatenation again once its verdict is cached) is refused with 'as a string was refused' naming that assembly, and a method, a constructor and a property whose signatures hold a function-pointer type, each checked as flagged first, are refused naming the function pointer; a search for a constructor or a getter-less property naming an absent assembly reports none found when the game has none; an ordinary method still formats and the names of JsonConvert's methods read; each step skips itself, and fails, on a build without the guard's prefix on MonoMethod, MonoCMethod and MonoProperty ToString, and the game answers after each. A script's Update formatting the function-pointer method ComputeSegmentsCore records the refusal as a NotSupportedException, polled until it lands, after checking that those prefixes are the guard that judges every caller and recording skipped without touching the member otherwise; the game answers after it and the script unloads, in cleanup too. Needs RocketLib, BroMakerLib with Cobro installed and Swap Bros Mod. Its first step unloads the script an earlier failed run left loaded; its later steps unload it and check nothing is left, and its cleanup runs the first step again, which unloads the scripts and puts the import fix back and removes the crash counter if a failed run left them changed, puts the number-pattern fix back if a failed run left it out, then rebuilds the Evaluator, since an Evaluator that imported Dictionary<int,int>.KeyCollection.Enumerator while the fix was away keeps that broken import after the fix is back.",
   "steps": [
     {
       "command": "execute_code",
       "params": {
-        "code": "var f = typeof(Unity_Inspector_Mod.ScriptManager).GetField(\"activeScripts\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);\nvar d = (System.Collections.IDictionary)f.GetValue(null);\nvar names = new List<string>();\nforeach (object k in d.Keys) { var n = (string)k; if (n.StartsWith(\"shapes-\")) names.Add(n); }\nstring log = \"\";\nforeach (var n in names) log += n + \":\" + Unity_Inspector_Mod.ScriptManager.UnloadScript(n) + \" \";\nint destroyed = 0;\nforeach (var go in UnityEngine.Object.FindObjectsOfType<GameObject>()) if (go.name.StartsWith(\"Shapes\")) { UnityEngine.Object.Destroy(go); destroyed++; }\nforeach (var m in Harmony.GetAllPatchedMethods().ToList()) { var owners = Harmony.GetPatchInfo(m).Owners.ToList(); foreach (var o in owners) if (o.StartsWith(\"script.shapes-\")) { new Harmony(o).Unpatch(m, HarmonyPatchType.All, o); log += \"unpatched \" + o + \" \"; } }\nvar reader = typeof(Mono.CSharp.MetadataImporter).GetNestedType(\"AttributesTypeInfoReader\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);\nvar createType = typeof(Mono.CSharp.MetadataImporter).GetMethod(\"CreateType\", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic, null, new[] { typeof(System.Type), reader, typeof(bool) }, null);\nvar opener = typeof(Unity_Inspector_Mod.ScriptCompiler).GetMethod(\"OpenDeclaringTypeTranspiler\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);\nvar info = Harmony.GetPatchInfo(createType);\nif (info == null || !info.Transpilers.Any(p => p.PatchMethod == opener)) { new Harmony(\"scriptcompiler.internal\").Patch(createType, transpiler: new HarmonyMethod(opener)); log += \"transpiler restored \"; }\nif (Harmony.HasAnyPatches(\"shapes.crashcount\")) { foreach (var cm in new Harmony(\"shapes.crashcount\").GetPatchedMethods().ToList()) new Harmony(\"shapes.crashcount\").Unpatch(cm, HarmonyPatchType.All, \"shapes.crashcount\"); log += \"crash counter removed \"; }\nSystem.AppDomain.CurrentDomain.SetData(\"shapes.evaluator\", null);\nUnityEngine.Time.timeScale = 1f;\nreturn \"unloaded \" + names.Count + \" destroyed \" + destroyed + \" \" + log;"
+        "code": "var f = typeof(Unity_Inspector_Mod.ScriptManager).GetField(\"activeScripts\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);\nvar d = (System.Collections.IDictionary)f.GetValue(null);\nvar names = new List<string>();\nforeach (object k in d.Keys) { var n = (string)k; if (n.StartsWith(\"shapes-\")) names.Add(n); }\nstring log = \"\";\nforeach (var n in names) log += n + \":\" + Unity_Inspector_Mod.ScriptManager.UnloadScript(n) + \" \";\nint destroyed = 0;\nforeach (var go in UnityEngine.Object.FindObjectsOfType<GameObject>()) if (go.name.StartsWith(\"Shapes\")) { UnityEngine.Object.Destroy(go); destroyed++; }\nforeach (var m in Harmony.GetAllPatchedMethods().ToList()) { var owners = Harmony.GetPatchInfo(m).Owners.ToList(); foreach (var o in owners) if (o.StartsWith(\"script.shapes-\")) { new Harmony(o).Unpatch(m, HarmonyPatchType.All, o); log += \"unpatched \" + o + \" \"; } }\nvar reader = typeof(Mono.CSharp.MetadataImporter).GetNestedType(\"AttributesTypeInfoReader\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);\nvar createType = typeof(Mono.CSharp.MetadataImporter).GetMethod(\"CreateType\", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic, null, new[] { typeof(System.Type), reader, typeof(bool) }, null);\nvar opener = typeof(Unity_Inspector_Mod.ScriptCompiler).GetMethod(\"OpenDeclaringTypeTranspiler\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);\nvar info = Harmony.GetPatchInfo(createType);\nif (info == null || !info.Transpilers.Any(p => p.PatchMethod == opener)) { new Harmony(\"scriptcompiler.internal\").Patch(createType, transpiler: new HarmonyMethod(opener)); log += \"transpiler restored \"; }\nvar prepare = typeof(Mono.CSharp.ClassOrStruct).GetMethod(\"PrepareEmit\", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.DeclaredOnly);\nvar skip = typeof(Unity_Inspector_Mod.TypeResolution).GetMethod(\"SkipPreparedMatcher\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);\nvar prepareInfo = Harmony.GetPatchInfo(prepare);\nif (prepareInfo == null || !prepareInfo.Prefixes.Any(p => p.PatchMethod == skip)) { new Harmony(\"scriptcompiler.internal\").Patch(prepare, prefix: new HarmonyMethod(skip)); log += \"pattern fix restored \"; }\nif (Harmony.HasAnyPatches(\"shapes.crashcount\")) { foreach (var cm in new Harmony(\"shapes.crashcount\").GetPatchedMethods().ToList()) new Harmony(\"shapes.crashcount\").Unpatch(cm, HarmonyPatchType.All, \"shapes.crashcount\"); log += \"crash counter removed \"; }\nSystem.AppDomain.CurrentDomain.SetData(\"shapes.evaluator\", null);\nUnityEngine.Time.timeScale = 1f;\nreturn \"unloaded \" + names.Count + \" destroyed \" + destroyed + \" \" + log;"
       },
       "expect": {
         "success": true,
@@ -872,7 +872,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "shapes-types"
+        "path": "shapes-types"
       },
       "expect": {
         "success": true
@@ -1118,7 +1118,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "shapes-rebuild"
+        "path": "shapes-rebuild"
       },
       "expect": {
         "success": true,
@@ -1142,12 +1142,12 @@
     {
       "command": "execute_code",
       "params": {
-        "code": "public static class ShapesCrashCount { public static int N; public static void Count() { N++; } }\nvar h = new HarmonyLib.Harmony(\"shapes.crashcount\");\nforeach (var c in typeof(Mono.CSharp.InternalErrorException).GetConstructors(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic)) h.Patch(c, postfix: new HarmonyLib.HarmonyMethod(typeof(ShapesCrashCount).GetMethod(\"Count\")));\nShapesCrashCount.N = 0;\nreturn \"counting internal errors\";"
+        "code": "public static class ShapesCrashCount { public static int N; public static void Count() { N++; } }\nvar h = new HarmonyLib.Harmony(\"shapes.crashcount\");\nforeach (var c in typeof(Mono.CSharp.InternalErrorException).GetConstructors(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic)) h.Patch(c, postfix: new HarmonyLib.HarmonyMethod(typeof(ShapesCrashCount).GetMethod(\"Count\")));\nnew HarmonyLib.Harmony(\"scriptcompiler.internal\").Unpatch(typeof(Mono.CSharp.ClassOrStruct).GetMethod(\"PrepareEmit\", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.DeclaredOnly), typeof(Unity_Inspector_Mod.TypeResolution).GetMethod(\"SkipPreparedMatcher\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static));\nShapesCrashCount.N = 0;\nreturn \"counting internal errors, pattern fix removed\";"
       },
       "expect": {
         "success": true,
         "contains": [
-          "\"result\": \"counting internal errors\","
+          "\"result\": \"counting internal errors, pattern fix removed\","
         ]
       }
     },
@@ -1179,12 +1179,12 @@
     {
       "command": "execute_code",
       "params": {
-        "code": "var counter = new HarmonyLib.Harmony(\"shapes.crashcount\");\nforeach (var cm in counter.GetPatchedMethods().ToList()) counter.Unpatch(cm, HarmonyLib.HarmonyPatchType.All, counter.Id);\nSystem.AppDomain.CurrentDomain.SetData(\"shapes.evaluator\", null);\nreturn \"counter removed \" + !HarmonyLib.Harmony.HasAnyPatches(\"shapes.crashcount\");"
+        "code": "var counter = new HarmonyLib.Harmony(\"shapes.crashcount\");\nforeach (var cm in counter.GetPatchedMethods().ToList()) counter.Unpatch(cm, HarmonyLib.HarmonyPatchType.All, counter.Id);\nSystem.AppDomain.CurrentDomain.SetData(\"shapes.evaluator\", null);\nvar prepare = typeof(Mono.CSharp.ClassOrStruct).GetMethod(\"PrepareEmit\", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.DeclaredOnly);\nnew HarmonyLib.Harmony(\"scriptcompiler.internal\").Patch(prepare, prefix: new HarmonyLib.HarmonyMethod(typeof(Unity_Inspector_Mod.TypeResolution).GetMethod(\"SkipPreparedMatcher\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)));\nreturn \"counter removed \" + !HarmonyLib.Harmony.HasAnyPatches(\"shapes.crashcount\") + \", pattern fix back \" + HarmonyLib.Harmony.GetPatchInfo(prepare).Prefixes.Count;"
       },
       "expect": {
         "success": true,
         "contains": [
-          "\"result\": \"counter removed True\","
+          "\"result\": \"counter removed True, pattern fix back 1\","
         ]
       }
     },
@@ -1203,13 +1203,12 @@
     {
       "command": "execute_code",
       "params": {
-        "code": "object o = 1;\nreturn o is 1;"
+        "code": "typeof(Unity_Inspector_Mod.CodeExecutor).GetMethod(\"DiscardEvaluator\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).Invoke(null, null);\nreturn \"evaluator discarded\";"
       },
       "expect": {
-        "success": false,
+        "success": true,
         "contains": [
-          "[as statements with value] InternalErrorException: Internal error",
-          "Mono.CSharp.MethodData.DefineMethodBuilder"
+          "\"result\": \"evaluator discarded\","
         ]
       }
     },
@@ -1258,13 +1257,12 @@
     {
       "command": "execute_code",
       "params": {
-        "code": "object o = 1;\nreturn o is 1;"
+        "code": "typeof(Unity_Inspector_Mod.CodeExecutor).GetMethod(\"DiscardEvaluator\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).Invoke(null, null);\nreturn \"evaluator discarded\";"
       },
       "expect": {
-        "success": false,
+        "success": true,
         "contains": [
-          "[as statements with value] InternalErrorException: Internal error",
-          "Mono.CSharp.MethodData.DefineMethodBuilder"
+          "\"result\": \"evaluator discarded\","
         ]
       }
     },
@@ -1784,7 +1782,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "shapes-hole"
+        "path": "shapes-hole"
       },
       "expect": {
         "success": true,
@@ -2075,7 +2073,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "shapes-json"
+        "path": "shapes-json"
       },
       "expect": {
         "success": true,
@@ -2548,7 +2546,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "shapes-gen"
+        "path": "shapes-gen"
       },
       "expect": {
         "success": true,
@@ -3505,7 +3503,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "shapes-tostring-update"
+        "path": "shapes-tostring-update"
       },
       "expect": {
         "success": true,
@@ -3522,7 +3520,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "shapes-tostring-update"
+        "path": "shapes-tostring-update"
       },
       "expect": {
         "notContains": [
@@ -3533,7 +3531,7 @@
     {
       "command": "execute_code",
       "params": {
-        "code": "var f = typeof(Unity_Inspector_Mod.ScriptManager).GetField(\"activeScripts\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);\nvar d = (System.Collections.IDictionary)f.GetValue(null);\nvar names = new List<string>();\nforeach (object k in d.Keys) { var n = (string)k; if (n.StartsWith(\"shapes-\")) names.Add(n); }\nstring log = \"\";\nforeach (var n in names) log += n + \":\" + Unity_Inspector_Mod.ScriptManager.UnloadScript(n) + \" \";\nint destroyed = 0;\nforeach (var go in UnityEngine.Object.FindObjectsOfType<GameObject>()) if (go.name.StartsWith(\"Shapes\")) { UnityEngine.Object.Destroy(go); destroyed++; }\nforeach (var m in Harmony.GetAllPatchedMethods().ToList()) { var owners = Harmony.GetPatchInfo(m).Owners.ToList(); foreach (var o in owners) if (o.StartsWith(\"script.shapes-\")) { new Harmony(o).Unpatch(m, HarmonyPatchType.All, o); log += \"unpatched \" + o + \" \"; } }\nvar reader = typeof(Mono.CSharp.MetadataImporter).GetNestedType(\"AttributesTypeInfoReader\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);\nvar createType = typeof(Mono.CSharp.MetadataImporter).GetMethod(\"CreateType\", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic, null, new[] { typeof(System.Type), reader, typeof(bool) }, null);\nvar opener = typeof(Unity_Inspector_Mod.ScriptCompiler).GetMethod(\"OpenDeclaringTypeTranspiler\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);\nvar info = Harmony.GetPatchInfo(createType);\nif (info == null || !info.Transpilers.Any(p => p.PatchMethod == opener)) { new Harmony(\"scriptcompiler.internal\").Patch(createType, transpiler: new HarmonyMethod(opener)); log += \"transpiler restored \"; }\nif (Harmony.HasAnyPatches(\"shapes.crashcount\")) { foreach (var cm in new Harmony(\"shapes.crashcount\").GetPatchedMethods().ToList()) new Harmony(\"shapes.crashcount\").Unpatch(cm, HarmonyPatchType.All, \"shapes.crashcount\"); log += \"crash counter removed \"; }\nSystem.AppDomain.CurrentDomain.SetData(\"shapes.evaluator\", null);\nUnityEngine.Time.timeScale = 1f;\nreturn \"unloaded \" + names.Count + \" destroyed \" + destroyed + \" \" + log;"
+        "code": "var f = typeof(Unity_Inspector_Mod.ScriptManager).GetField(\"activeScripts\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);\nvar d = (System.Collections.IDictionary)f.GetValue(null);\nvar names = new List<string>();\nforeach (object k in d.Keys) { var n = (string)k; if (n.StartsWith(\"shapes-\")) names.Add(n); }\nstring log = \"\";\nforeach (var n in names) log += n + \":\" + Unity_Inspector_Mod.ScriptManager.UnloadScript(n) + \" \";\nint destroyed = 0;\nforeach (var go in UnityEngine.Object.FindObjectsOfType<GameObject>()) if (go.name.StartsWith(\"Shapes\")) { UnityEngine.Object.Destroy(go); destroyed++; }\nforeach (var m in Harmony.GetAllPatchedMethods().ToList()) { var owners = Harmony.GetPatchInfo(m).Owners.ToList(); foreach (var o in owners) if (o.StartsWith(\"script.shapes-\")) { new Harmony(o).Unpatch(m, HarmonyPatchType.All, o); log += \"unpatched \" + o + \" \"; } }\nvar reader = typeof(Mono.CSharp.MetadataImporter).GetNestedType(\"AttributesTypeInfoReader\", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);\nvar createType = typeof(Mono.CSharp.MetadataImporter).GetMethod(\"CreateType\", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic, null, new[] { typeof(System.Type), reader, typeof(bool) }, null);\nvar opener = typeof(Unity_Inspector_Mod.ScriptCompiler).GetMethod(\"OpenDeclaringTypeTranspiler\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);\nvar info = Harmony.GetPatchInfo(createType);\nif (info == null || !info.Transpilers.Any(p => p.PatchMethod == opener)) { new Harmony(\"scriptcompiler.internal\").Patch(createType, transpiler: new HarmonyMethod(opener)); log += \"transpiler restored \"; }\nvar prepare = typeof(Mono.CSharp.ClassOrStruct).GetMethod(\"PrepareEmit\", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.DeclaredOnly);\nvar skip = typeof(Unity_Inspector_Mod.TypeResolution).GetMethod(\"SkipPreparedMatcher\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);\nvar prepareInfo = Harmony.GetPatchInfo(prepare);\nif (prepareInfo == null || !prepareInfo.Prefixes.Any(p => p.PatchMethod == skip)) { new Harmony(\"scriptcompiler.internal\").Patch(prepare, prefix: new HarmonyMethod(skip)); log += \"pattern fix restored \"; }\nif (Harmony.HasAnyPatches(\"shapes.crashcount\")) { foreach (var cm in new Harmony(\"shapes.crashcount\").GetPatchedMethods().ToList()) new Harmony(\"shapes.crashcount\").Unpatch(cm, HarmonyPatchType.All, \"shapes.crashcount\"); log += \"crash counter removed \"; }\nSystem.AppDomain.CurrentDomain.SetData(\"shapes.evaluator\", null);\nUnityEngine.Time.timeScale = 1f;\nreturn \"unloaded \" + names.Count + \" destroyed \" + destroyed + \" \" + log;"
       },
       "expect": {
         "success": true,
@@ -3545,13 +3543,12 @@
     {
       "command": "execute_code",
       "params": {
-        "code": "object o = 1;\nreturn o is 1;"
+        "code": "typeof(Unity_Inspector_Mod.CodeExecutor).GetMethod(\"DiscardEvaluator\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).Invoke(null, null);\nreturn \"evaluator discarded\";"
       },
       "expect": {
-        "success": false,
+        "success": true,
         "contains": [
-          "[as statements with value] InternalErrorException: Internal error",
-          "Mono.CSharp.MethodData.DefineMethodBuilder"
+          "\"result\": \"evaluator discarded\","
         ]
       }
     }

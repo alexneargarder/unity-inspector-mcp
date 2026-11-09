@@ -110,7 +110,7 @@
     }
   ],
   "cleanup": [
-    { "command": "unload_script", "params": { "name": "scenario-player-join" } },
+    { "command": "unload_script", "params": { "path": "scenario-player-join" } },
     {
       "command": "execute_code",
       "params": {

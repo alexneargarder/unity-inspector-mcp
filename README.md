@@ -104,10 +104,11 @@ All of these are optional and go in the `env` block (the `[mcp_servers.unity-ins
 | `BROFORCE_STOP_CMD` | unset, and the game is stopped by signalling its own process | Command line `stop_game` runs to stop your own game. |
 | `UNITY_INSPECTOR_LOG` | unset, and the server searches for the log itself | Path to the log `read_log` reads: Unity's player log, or the Unity Mod Manager log. |
 | `UNITY_INSPECTOR_TOKEN_FILE` | unset, and the server searches the game's data folders itself | Path to the token file the mod writes. |
-| `UNITY_INSPECTOR_HOST` | `127.0.0.1`, or on WSL that and then the Windows host | Host your own game runs on. A game on another machine needs the mod's "Allow remote connections (LAN)" setting on, and a copy of its token file named in `UNITY_INSPECTOR_TOKEN_FILE`, taken again each time the mod's server starts; the server can't see or stop that game's process. |
+| `UNITY_INSPECTOR_HOST` | `127.0.0.1`, or on WSL that and then the Windows host | Host your own game runs on. A game on another machine needs the mod's "Allow remote connections (LAN)" setting on, and a copy of its token file named in `UNITY_INSPECTOR_TOKEN_FILE`, taken again each time the mod's server starts; the server can't see or stop that game's process. A loopback host here means this machine, so a game behind an ssh tunnel goes through `launch_game`'s `remote` instead ([docs/remote-game.md](docs/remote-game.md)). |
 | `UNITY_INSPECTOR_TEST_RESULTS_DIR` | `$XDG_STATE_HOME/unity-inspector-mcp/test-results`, else `~/.local/state/unity-inspector-mcp/test-results` | Folder `run_test_script` writes each session's full results under. |
+| `UNITY_INSPECTOR_REMOTE_DIR` | `$XDG_STATE_HOME/unity-inspector-mcp/remote`, else `~/.local/state/unity-inspector-mcp/remote` | Folder the files fetched from a game on another machine go under, one folder per session. |
 
-Apart from `BROFORCE_INSTANCE_CMD` and `UNITY_INSPECTOR_TEST_RESULTS_DIR`, these are about your own game, never about a session's instance, which takes its port, its logs and its token from `BROFORCE_INSTANCE_CMD`'s launcher instead.
+Apart from `BROFORCE_INSTANCE_CMD`, `UNITY_INSPECTOR_TEST_RESULTS_DIR` and `UNITY_INSPECTOR_REMOTE_DIR`, these are about your own game, never about a session's instance, which takes its port, its logs and its token from `BROFORCE_INSTANCE_CMD`'s launcher instead.
 
 `launch_game` goes through Steam by default. `BROFORCE_LAUNCH_CMD` replaces that with a full command line, like a Proton launcher script, parsed into a command plus arguments with shell-style quoting. It runs exactly as you configured it, with `--vanilla` added for a vanilla launch and whatever `launchArgs` holds appended. `launchArgs` reach whichever launch the call runs, this command with `steam: true` and the instance launcher's `instance <id> launch` by default, so an option of one is not an option of the other.
 
@@ -123,7 +124,7 @@ When `BROFORCE_LAUNCH_CMD` isn't set, `launch_game` starts your own game with mo
 
 On Linux, each Claude Code session can get its own game instance. An instance is a second copy of the game with its own profile, settings, saves, logs, TCP port and virtual display, so an agent can play with its own game while you play yours. `BROFORCE_INSTANCE_CMD` turns this on and names the launcher that creates and runs the instance. Leave it unset and there are no instances, and the server serves your own game.
 
-`launch_game` with no arguments starts this session's instance and points the server at it, and `launch_game { steam: true }` launches your own game and points the server there instead. The two games never touch each other. `stop_game` stops whichever one the server is pointed at, and `stop_game { remove: true }` deletes the instance directory afterwards, so the next launch builds it fresh. `game_state` names the target on every reply, along with the instances currently running and which store's build the game is. `read_log` reads the instance's own `home/unity3d/Free Lives/Broforce/Player.log`, or its `profile/UMM/Core/Log.txt` when the game is not writing the player log.
+`launch_game` with no arguments starts this session's instance and points the server at it, and `launch_game { steam: true }` points the server at your own game instead, launching it only when it isn't running, and `restart: true` relaunches the game that call starts, so `{ steam: true, restart: true }` relaunches your own. The two games never touch each other. `stop_game` stops whichever one the server is pointed at, and `stop_game { remove: true }` deletes the instance directory afterwards, so the next launch builds it fresh. `game_state` names the target on every reply, along with the instances currently running and which store's build the game is. `read_log` reads the instance's own `home/unity3d/Free Lives/Broforce/Player.log`, or its `profile/UMM/Core/Log.txt` when the game is not writing the player log.
 
 Your session's instance is stopped 15 seconds after the session ends. Reconnecting the client on the same session id within that time keeps it running, and the new server picks it up.
 
@@ -161,12 +162,12 @@ There are 33, 32 from the server and `restart_server` from the wrapper. A call t
 | `execute_code` | Run C# in the Unity context: statements, local declarations and `return` all work, and a trailing expression comes back as the value. Locals last for the one call. Exceptions thrown by submitted code come back with their stack trace, plus the line and text of the statement that was running. Code still running after 9 seconds is stopped at its next loop iteration or method call. |
 | `execute_script` | Compile and run a full C# script in the game, Harmony patches and private members included. `compileOnly` compiles without running, to check for compiler errors. |
 | `list_scripts` | List the C# script library with descriptions, tags and arguments. |
-| `unload_script` | Unload a running script, unpatching it and destroying its GameObjects and the components it added. |
+| `unload_script` | Unload a running script, named by `path` as `execute_script` takes it, unpatching it and destroying its GameObjects and the components it added. |
 | `list_test_scripts` | List the JSON test scripts. |
 | `run_test_script` | Run a JSON command sequence and report each step, checking any per-step `expect` so a step can be required to fail. |
 | `capture_animations` | Sweep a bro's animation states into PNG frame strips with the game clock held at zero, and report which sprite-sheet cells each state addressed against what the state list expected; `backdrop` renders the strips on a flat colour, as `take_screenshot`'s does. |
-| `read_log` | Read the last N lines of the game's log, with an optional filter, or with `onlyNew` only the lines written since the previous such call. |
-| `launch_game` | Launch Broforce and wait until it answers, with `restart`, `vanilla` and `launchArgs` options. If it never answers, it reports which failure mode it hit, same as `wait_for_game`. |
+| `read_log` | Read the last N lines of the game's log, or with `onlyNew` only the lines written since the previous such call, either way with an optional filter. |
+| `launch_game` | Launch Broforce and wait until it answers, with `restart`, `vanilla` and `launchArgs` options. If it never answers, it reports which failure mode it hit, same as `wait_for_game`. With `remote` it points the server at a game on another machine and launches nothing, see [docs/remote-game.md](docs/remote-game.md). |
 | `stop_game` | Stop the Broforce process this server is responsible for. |
 | `wait_for_game` | Poll until the game responds, or time out. A timeout says which case it was: no process, nothing listening on the port, connected but no reply, or a connection that got closed. A connection the mod refuses ends it at once. |
 | `restart_server` | Restart `index.js` in place to pick up code changes. Provided by `wrapper.js`. |
@@ -196,7 +197,7 @@ The `capture_animations` tool drives its own in-game script end to end (level, b
 3. The mod is on a port other than the default one. Set `UNITY_INSPECTOR_PORT` to match, or set the mod back to 9999.
 4. You're on WSL2's default networking with "Allow remote connections (LAN)" turned off, or the Windows firewall blocks Broforce. The mod is bound to the Windows loopback and WSL can't reach it.
 
-When the game is running but nothing answers, the error says the mod may still be loading, its server may be stopped or the port may differ; when the game's process can't be seen, as on WSL or with `UNITY_INSPECTOR_HOST`, it says it can't tell whether the game is running.
+When the game is running but nothing answers, the error says the mod may still be loading, its server may be stopped or the port may differ. When the game's process can't be seen, as on WSL, it says it can't tell whether the game is running, and for a game on another machine it names the tunnel, or the mod's remote setting and the firewall.
 
 If the mod refuses the connection, the error says why. The mod writes its token to `unity-inspector-<port>.token` in the game's Unity data folder, which is `~/.config/unity3d/Free Lives/Broforce/` on Linux, `%USERPROFILE%\AppData\LocalLow\Free Lives\Broforce\` on Windows, the same folder inside the game's Proton prefix in whichever Steam library holds it, Flatpak Steam's folders, and `~/Library/Application Support/Free Lives/Broforce/` on macOS. Set `UNITY_INSPECTOR_TOKEN_FILE` if yours is elsewhere.
 

@@ -52,8 +52,11 @@ const RESTART_TOOL = {
   inputSchema: { type: "object", properties: {} },
 };
 
+const FORGOTTEN_TARGET = 'A game target declared with launch_game { remote } is forgotten by a restart and has to be declared again.';
+
 let child = null;
 let initMessage = null;
+let respawnUntold = false;
 let pendingRequests = new Map();
 let outstandingRequests = new Map();
 let restarting = false;
@@ -308,6 +311,7 @@ async function respawnChild() {
   try {
     await startChild();
     serverDown = false;
+    respawnUntold = true;
     log('Auto-respawn complete');
     if (initMessage) {
       sendToParent(JSON.stringify({
@@ -405,11 +409,18 @@ function handleChildMessage(line, proc) {
   }
 
   if (isResponse) {
-    if (outstandingRequests.get(id)?.proc !== proc) {
+    const request = outstandingRequests.get(id);
+    if (request?.proc !== proc) {
       log(`Dropped a response to request ${JSON.stringify(id)}, which was already answered or cancelled`);
       return;
     }
     outstandingRequests.delete(id);
+    if (respawnUntold && request.method === 'tools/call' && Array.isArray(parsed.result?.content)) {
+      respawnUntold = false;
+      parsed.result.content.push({ type: 'text', text: FORGOTTEN_TARGET });
+      sendToParent(JSON.stringify(parsed));
+      return;
+    }
   }
 
   if (parsed.result && parsed.result.tools && Array.isArray(parsed.result.tools)) {
@@ -496,8 +507,8 @@ async function handleRestart(request) {
 function restartNote() {
   const subagents = 'A subagent already running keeps the tool list it started with, so a changed tool reaches only a new subagent.';
   const changed = changedSince(WRAPPER_CODE_FILES, performance.timeOrigin);
-  if (changed.length === 0) return subagents;
-  return `${subagents} ${changed.join(', ')} changed after this wrapper started and a restart does not reload the wrapper: reconnect the server in the client (/mcp in Claude Code) to load it.`;
+  if (changed.length === 0) return `${subagents} ${FORGOTTEN_TARGET}`;
+  return `${subagents} ${FORGOTTEN_TARGET} ${changed.join(', ')} changed after this wrapper started and a restart does not reload the wrapper: reconnect the server in the client (/mcp in Claude Code) to load it.`;
 }
 
 async function performRestart() {
@@ -512,6 +523,7 @@ async function performRestart() {
     serverDown = false;
 
     const tools = await startChild();
+    respawnUntold = false;
 
     log('Restart complete');
     return {

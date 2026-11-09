@@ -58,23 +58,29 @@ Write one-off scripts to the system temp directory. A reusable utility can go in
 - `ScriptContext.Args` in `Unload()` holds the args of the run being unloaded.
 - Log through `ScriptContext.Logger`, never `UnityEngine.Debug.Log`: its output never reaches the Unity Mod Manager log.
 
-**Auto-imported namespaces** (`execute_script` and `execute_code`): `System`, `System.Collections`, `System.Collections.Generic`, `System.Linq`, `System.Reflection`, `UnityEngine`, `HarmonyLib`, `Unity_Inspector_Mod`, with `Object` aliased to `UnityEngine.Object`. `UnityModManagerNet` needs an explicit `using`.
+**Auto-imported namespaces** (`execute_script` and `execute_code`): `System`, `System.Collections`, `System.Collections.Generic`, `System.IO`, `System.Linq`, `System.Reflection`, `System.Text`, `UnityEngine`, `HarmonyLib`, `Unity_Inspector_Mod`, with `Object` aliased to `UnityEngine.Object`.
 
 **Constraints:**
-- .NET 3.5: no `GetValueOrDefault`, no `async`/`await`. LINQ works. Private members are accessible directly, without reflection.
+- .NET 3.5: no `GetValueOrDefault`, no `async`/`await`. LINQ works. `string.Join` has only the `(string, string[])` and 4-argument `string[]` forms, so an `IEnumerable<string>` or `List<string>` fails with CS1502: call `.ToArray()` first.
+- No local functions (use a delegate local) and no `@$"` strings (use `$@"`).
+- Every loaded assembly is referenced, and a type outside the auto-imported namespaces needs a `using` or its full name: the game's namespaced types (`Utility.SceneLoader`, `World.Generation.MapGenV4.ProcGenGameMode`, `TFBGames.Systems.GameSystems`), every mod's (`RocketLib`, `BroMakerLib`, `Utility_Mod`, …) and `UnityModManagerNet`'s.
+- Private and internal members, nested types and another assembly's top-level `internal` types are reachable by name, as public ones are; a bare `Main` is this mod's own, so another mod's `Main` takes its full name or an alias.
+- The game's global `Math` class (`Sin`, `Cos`, `GetAngle`; no `Min`, `Max`, `Log` or `Abs`) shadows `System.Math`, so `Math.Min` fails with CS0117: use `System.Math` or `Mathf`.
 - Unity 2017.4: no `GameObject.TryGetComponent`, `Object.FindAnyObjectByType`/`FindObjectsByType` or `Random.onUnitCircle`; use `GetComponent` plus a null check, the `FindObjectOfType`/`FindObjectsOfType` family and `Random.insideUnitCircle`.
 - 3D physics: `Physics`, `Collider`, `RaycastHit`, `BoxCollider`. `Physics2D` and `Collider2D` appear nowhere in the game or the mods; `Rigidbody2D` only in a few vanilla joint rigs, never in mods.
 - A script-defined enum used as a field type (at compile) or a local (at run) crashes the game natively, so the script compiler rejects any reference to an enum a script or `execute_code` defined, from any script or `execute_code`; use `int` constants or an enum from a mod DLL.
 - Iterator methods (`yield return`) work.
 - MonoBehaviours die on scene load unless marked `DontDestroyOnLoad`; `ScriptContext.GameObjects` handles cleanup, not persistence.
-- Script-defined types are reachable from `execute_code` by reflection, and by name except enums.
+- Script-defined types are reachable from `execute_code` by reflection, and by name except enums; a script can name the types of other loaded scripts and `execute_code`'s latest declarations, enums again excepted. A replaced or unloaded script's types are gone.
+- `execute_code` input may open with `using` directives and type declarations, then continue with statements. Those declarations persist across calls, and are the only way `execute_code` input adds a `using` or a type that outlives the call.
+- On a member whose signature names an absent assembly or holds a function pointer, a `GetParameters`/`Invoke`-style read still ends the game when the reflection guards miss it: through a delegate, an `Expression` tree or a generic type parameter, or made by library code for the script, such as `Type.GetMethod` with a type list naming such a method.
 
 ## Animation capture
 
 `capture_animations` loads a level, swaps the bro, waits until the bro is sweepable, runs the in-game `AnimationCapture` script and waits for its `done`/`error` sentinel. It sweeps on the server's own client, so it goes to the server's current target. The script writes one PNG strip per state, `capture.json` (each frame's sheet cell and what the level did) and the sentinel into `gameOut`; the server writes `states.json` and `report.md` (cells against the state list) into `out`.
 
 - `out`: the prep deletes every `.png` in it, so a non-empty one is accepted only when it holds the `.capture-animations` mark an earlier sweep wrote.
-- `gameOut` must be absolute, in either path style; set it whenever the server's and the game's path spaces differ (Proton, WSL). A wrong one surfaces as the script's `state file not found` refusal.
+- `gameOut` must be absolute, in either path style; set it whenever the server's and the game's path spaces differ (Proton, WSL). A wrong one surfaces as the script's `state file not found` refusal. On a declared remote, or a `UNITY_INSPECTOR_HOST` naming another machine outside WSL, `gameOut` is refused and the server picks the game's folder itself (`.claude/rules/remote.md`).
 - `settle` waits after the level reports its player, who goes live about a second before the world renders. A bro's intro cutscene starts about half a second after `go_to_level` replies where the bro spawns straight in; a `settle` shorter than that misses it and the readiness wait refuses it. Raise `settle` for a bro still on the level-start helicopter.
 - `bro` is the `list_bros` roster name. A locked or filtered bro goes in with `ignoreUnlocks`, which is not Swap Bros Mod's selection, so a respawn brings the selection back. A slot left holding another bro (a BroMaker substitution that left plain Rambro) fails the run before any sweep.
 - `swapSettle`: `swap_bro` answers while the old character is still drawn; a sweep freezing the clock there strips the wrong bro.
@@ -101,6 +107,7 @@ Claude Code loads each when a file matching its `paths:` is read; otherwise read
 - `.claude/rules/tool-behaviour.md` — per-tool behaviour and reply fields, argument checking, `list_enemies`, the `execute_code` contract
 - `.claude/rules/scripts.md` — the C# script library, `execute_script`, `run_test_script`'s shape, cleanup and `logs`
 - `.claude/rules/logs.md` — `read_log`: which file, in what order, staleness, `onlyNew`
+- `.claude/rules/remote.md` — the remote game target: declaration, the env path, reach, the token search and the connection's failure replies, file transfers and local copies, screenshots, the log mirror, `run_test_script` and `capture_animations` on it, restart
 - `.claude/rules/testing.md` — the test fixtures and fences, the set to run before a pull request, the rule for changes, the matrix's conventions
 - `.claude/rules/testing-matrix-server.md` — input-class matrix: server tests of the other tools and the handshake
 - `.claude/rules/testing-matrix-node-tools.md` — input-class matrix: server tests of `capture_animations`, `list_scripts`, `list_test_scripts`, `read_log`, `restart_server`, `run_test_script`
@@ -110,5 +117,5 @@ Claude Code loads each when a file matching its `paths:` is read; otherwise read
 
 ## Folder AGENTS.md files
 
-- `lib/AGENTS.md` — the TCP protocol and command queue, the animation-capture sweep driver (claim, cutscenes, swap), the backdrop render and the shared command and log helpers
+- `lib/AGENTS.md` — the TCP protocol and command queue, the animation-capture sweep driver (claim, cutscenes, swap), the backdrop render, the remote file transfers and the shared command and log helpers
 - `lib/animation-capture/AGENTS.md` — animation-capture state lists and the in-game capture script's mechanics

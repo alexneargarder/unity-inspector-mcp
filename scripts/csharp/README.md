@@ -92,17 +92,19 @@ The game runs on .NET 3.5. Key limitations:
 - No `string.IsNullOrWhiteSpace()` — use `string.IsNullOrEmpty(s) || s.Trim().Length == 0`
 - No `async/await`
 - LINQ is available (`System.Linq`)
+- `string.Join` takes a `string[]`, not a `List<string>` or other `IEnumerable<string>` — call `.ToArray()` first
+- `Math` is the game's own class and hides `System.Math`, with no `Min`, `Max`, `Log` or `Abs` — use `System.Math` or `Mathf`
 
 ## Auto-Imported Namespaces
 
 The following are automatically imported — no `using` statements needed:
-`System`, `System.Collections`, `System.Collections.Generic`, `System.Linq`, `System.Reflection`, `UnityEngine`, `HarmonyLib`, `Unity_Inspector_Mod`
+`System`, `System.Collections`, `System.Collections.Generic`, `System.IO`, `System.Linq`, `System.Reflection`, `System.Text`, `UnityEngine`, `HarmonyLib`, `Unity_Inspector_Mod`
 
-Add additional `using` statements as needed for other namespaces.
+A type in any other namespace, such as a mod's, `UnityModManagerNet`'s or the game's namespaced ones, needs a `using` or its full name.
 
 ## Private Member Access
 
-Scripts can directly access private fields and methods on game types — no reflection needed.
+Scripts can directly access private and internal fields and methods on game types, and a mod's internal types such as its `Main` by their full name (`Utility_Mod.Main`), with no reflection needed.
 
 ## Capturing Spawn Calls
 

@@ -28,7 +28,7 @@ Read the script format, every field and the reply's fields in [scripts/README.md
    - Make every `until` timeout cover the first load after a launch, about 20 s.
    - Use `wait` only after a step whose effect no command can read back.
 6. Give every step that can fail an `expect`. Without one a step fails only when its command throws or returns `success: false`, so an `execute_code` step whose returned text reports a failure still passes: return a fixed word on success and `expect` it with `contains`. A step that should fail gets `"success": false` and a `contains` naming the error. `contains` matches the result pretty-printed as the tool returns it, a space after each key's colon.
-7. Repeat in `cleanup` every restore the steps make: settings, speed, pause, spawned objects, loaded scripts (`unload_script`), the run's records, and in a script that changes level, a reload of the level it started in. End `steps` with that same reload.
+7. Repeat in `cleanup` every restore the steps make: settings, speed, pause, spawned objects, loaded scripts (`unload_script`, its `path` the `execute_script` step's `path` or an inline script's `name`), the run's records, and in a script that changes level, a reload of the level it started in. End `steps` with that same reload.
 8. Set `continueOnFailure: true` only when the steps are independent checks and every failure should be listed.
 
 ## Reading a run

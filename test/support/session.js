@@ -30,6 +30,8 @@ delete process.env.UNITY_INSPECTOR_HOST;
 export const TEST_RESULTS_SCRATCH = mkdtempSync(path.join(tmpdir(), 'unity-inspector-test-results-'));
 process.env.UNITY_INSPECTOR_TEST_RESULTS_DIR = TEST_RESULTS_SCRATCH;
 process.on('exit', () => rmSync(TEST_RESULTS_SCRATCH, { recursive: true, force: true }));
+export const REMOTE_FILES_SCRATCH = path.join(TEST_RESULTS_SCRATCH, 'remote');
+process.env.UNITY_INSPECTOR_REMOTE_DIR = REMOTE_FILES_SCRATCH;
 export const NO_TOKEN_FILE = path.join(TEST_RESULTS_SCRATCH, 'no-inspector-token');
 process.env.UNITY_INSPECTOR_TOKEN_FILE = NO_TOKEN_FILE;
 

@@ -8,18 +8,19 @@ import {
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import net from 'net';
 import os from 'os';
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import { COMMAND_CANCELLED, COMMAND_TIMEOUT, HANDSHAKE_TIMEOUT, UNITY_PRODUCT_DIR, UnityInspectorClient, cancelledError, defaultPort, isHandshakeRefusal, simulateInputProblem, tokenSearchIn, toolCommand, unityDataDirs } from './lib/unity-client.js';
-import { captureCommandHelp, parseStatStartTicks, composeExtraLaunchArgs, detectActiveProfile, forgetCommandHelp, gameBuild, gameStartTime, instanceModeChecked, instanceProbeFailure, invalidateGameProcessScan, isGameRunning, isWsl, killGame, listInstances, ownedGameProcesses, probeInstanceMode, readValidatedPidfile, removeInstance, resolveLaunchCommand, runCommandCapture, spawnDetached, userGameOutOfReach } from './lib/game-process.js';
+import { COMMAND_CANCELLED, COMMAND_TIMEOUT, HANDSHAKE_TIMEOUT, UNITY_PRODUCT_DIR, UnityInspectorClient, cancelledError, defaultPort, isHandshakeRefusal, remoteTokenSearch, simulateInputProblem, TOKEN_FILE_ENV, tokenSearchIn, toolCommand, unityDataDirs } from './lib/unity-client.js';
+import { captureCommandHelp, configuredGameHost, isLoopbackHost, parseStatStartTicks, remoteEndpoint, activeUmmLog, composeExtraLaunchArgs, forgetCommandHelp, gameBuild, gameDataLocations, setUnplaceableInstancesCheck, gameStartTime, instanceModeChecked, instanceProbeFailure, invalidateGameProcessScan, isGameRunning, isWsl, killGame, listInstances, ownedGameProcesses, probeInstanceMode, readValidatedPidfile, removeInstance, resolveLaunchCommand, runCommandCapture, spawnDetached, userGameOutOfReach } from './lib/game-process.js';
 import { NO_INSTANCE_REASONS, instanceConfig, launcherConfig, steamConfig, withRoot } from './lib/instance.js';
 import { LAUNCH_REFUSED, preflightSteamLaunch, prepareSteamLaunch, r2modmanProfileRoots, withdrawWrapperArgs } from './lib/steam-launch.js';
 import { tokenizeCommand } from './lib/command-line.js';
 import { backdropColour, screenshotReply } from './lib/backdrop.js';
-import { CAPTURE_FILE, CAPTURE_STATES_DIR, DEFAULT_SETTLE_MS, DEFAULT_STATES_PATH, DEFAULT_SWAP_SETTLE_MS, DEFAULT_SWAP_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, REPORT_FILE, STATES_COPY_NAME, claimLeaseMs, formatLogTail, isAbsoluteGamePath, outDirProblem, parseLevel, releaseClaim, runCapture, teardownGame } from './lib/animation-capture.js';
+import { CAPTURE_FILE, CAPTURE_STATES_DIR, DEFAULT_SETTLE_MS, DEFAULT_STATES_PATH, DEFAULT_SWAP_SETTLE_MS, DEFAULT_SWAP_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, REPORT_FILE, STATES_COPY_NAME, claimLeaseMs, fetchLeaseMs, formatLogTail, isAbsoluteGamePath, outDirProblem, parseLevel, releaseClaim, runCapture, teardownGame } from './lib/animation-capture.js';
 import {
   argumentTypeProblems,
   buildScriptCatalog,
@@ -34,6 +35,7 @@ import {
 } from './lib/script-library.js';
 import { START_TIME_TOLERANCE_MS, fileIdOf, isPlayerLogName, linesBackward, readGuard, sameLogRun, sameRun } from './lib/log-delta.js';
 import { changedSince, serverCodeFiles } from './lib/stale-code.js';
+import { logMirrorPaths, withLogMirrors } from './lib/remote-files.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -122,23 +124,36 @@ function refuseUserGameUnderWsl(action) {
 }
 
 export function userGame() {
-  return (userGameMemo ??= steamConfig());
+  return (userGameMemo ??= withHostSetting(steamConfig()));
+}
+
+function withHostSetting(config) {
+  const host = configuredGameHost();
+  if (host === null || isLoopbackHost(host) || isWsl()) return config;
+  return { ...config, remote: { host, port: null, tokenFile: null, fromEnv: true } };
 }
 
 // One explicit target, resolved once and changed only by launch_game
 let currentTarget = null;
 let targetPending = null;
 let targetGeneration = 0;
+let declaredRemote = null;
 
 export function activeTarget() {
   return (currentTarget ??= sessionInstance().isAgentInstance ? 'instance' : 'steam');
 }
 
+function configOf(target) {
+  if (target === 'instance') return sessionInstance();
+  return target === 'remote' ? declaredRemote : userGame();
+}
+
 export function activeConfig() {
-  return activeTarget() === 'instance' ? sessionInstance() : userGame();
+  return configOf(activeTarget());
 }
 
 export function targetDescription(target = activeTarget()) {
+  if (target === 'remote') return `the remote game at ${remoteEndpoint(declaredRemote.remote)}`;
   return target === 'instance' ? `the game of instance ${sessionInstance().id}` : "the user's game";
 }
 
@@ -156,10 +171,10 @@ function pendingRefusal() {
 
 const boundCalls = [];
 
-function refuseWhileBound(nextTarget) {
+function refuseWhileBound(nextTarget, next = targetDescription(nextTarget)) {
   if (boundCalls.length === 0) return;
   throw new Error(
-    `Cannot switch to ${targetDescription(nextTarget)} while ${boundCalls.join(', ')} ` +
+    `Cannot switch to ${next} while ${boundCalls.join(', ')} ` +
     `${boundCalls.length === 1 ? 'is' : 'are'} still running on ${reportedTarget() === null ? 'no target' : targetDescription()}: ` +
     `its remaining commands would reach the other game. Wait for ${boundCalls.length === 1 ? 'it' : 'them'} to finish and try again.`
   );
@@ -181,9 +196,10 @@ function acquireInstanceOp() {
 }
 
 const vanillaGames = new Map();
-const targetOf = (config) => (config.isAgentInstance ? 'instance' : 'steam');
+const targetOf = (config) => (config.isAgentInstance ? 'instance' : config.declared ? 'remote' : 'steam');
 
 async function launchedWithoutMods(config) {
+  if (config.remote) return false;
   const target = targetOf(config);
   const record = vanillaGames.get(target);
   if (!record) return false;
@@ -249,12 +265,13 @@ async function detectLogPlatform() {
   }
 }
 
-async function playerLogPaths() {
+async function playerLogPaths(gameData = null) {
   await detectLogPlatform();
   const home = os.homedir();
   const { linux, windows } = await unityDataDirs({
     home,
     protonPrefix: unityClient.protonPrefix,
+    gameData: gameData ?? (await gameDataLocations(activeConfig())),
     wsl: unityClient.platform === 'wsl',
   });
   const paths = linux.map(base => path.join(base, 'Player.log'));
@@ -272,14 +289,21 @@ async function playerLogPaths() {
   return [...new Set(paths)];
 }
 
-function profileLogPaths(profile) {
-  return r2modmanProfileRoots().map(root => path.join(root, profile, UMM_LOG_IN_PROFILE));
-}
-
 // UNITY_INSPECTOR_LOG names a log for the user's game; an instance has its own two paths
 function logOverride() {
-  if (activeConfig().isAgentInstance) return '';
+  const config = activeConfig();
+  if (config.isAgentInstance || config.declared) return '';
   return (process.env.UNITY_INSPECTOR_LOG || '').trim();
+}
+
+function mirroredEndpoint(config = activeConfig()) {
+  if (!config.remote || logOverride()) return null;
+  return remoteEndpoint({ host: config.remote.host, port: config.declared ? config.remote.port : defaultPort() });
+}
+
+function withRemoteLogs(read) {
+  const endpoint = mirroredEndpoint();
+  return endpoint ? withLogMirrors(unityClient, endpoint, () => read()) : read();
 }
 
 async function ummLogSearch() {
@@ -291,9 +315,14 @@ async function ummLogSearch() {
     const paths = [config.playerLog, config.ummLog];
     return { paths, ummPaths: [config.ummLog], playerPaths: [config.playerLog], displays: [...paths], override: false };
   }
+  if (config.remote) {
+    const { player, umm } = logMirrorPaths(mirroredEndpoint(config));
+    return { paths: [player, umm], ummPaths: [umm], playerPaths: [player], displays: [player, umm], override: false };
+  }
 
-  const ummPaths = [];
-  const displays = [];
+  const gameData = await gameDataLocations(config);
+  const ummPaths = [...gameData.ummLogs];
+  const displays = [...gameData.ummLogs];
 
   for (const root of r2modmanProfileRoots()) {
     let profiles = [];
@@ -326,7 +355,7 @@ async function ummLogSearch() {
     }
   }
 
-  const playerPaths = await playerLogPaths();
+  const playerPaths = await playerLogPaths(gameData);
   displays.push(...playerPaths);
 
   return {
@@ -338,7 +367,7 @@ async function ummLogSearch() {
   };
 }
 
-let newLinesState = null;
+const newLinesStates = new Map();
 let newLinesQueue = Promise.resolve();
 
 function serializeNewLines(read) {
@@ -382,7 +411,7 @@ async function stuckLog(stickTo, paths, started, liveSince) {
   return { path: stickTo.path, mtimeMs: stat.mtimeMs };
 }
 
-async function selectLogs(detectProfile, startTime, stickTo) {
+async function selectLogs(detectUmmLog, startTime, stickTo) {
   const config = activeConfig();
   const search = await ummLogSearch();
 
@@ -394,9 +423,9 @@ async function selectLogs(detectProfile, startTime, stickTo) {
   }
 
   let ummPaths = search.ummPaths;
-  if (!config.isAgentInstance) {
-    const profile = await detectProfile(config);
-    if (profile) ummPaths = profileLogPaths(profile);
+  if (!config.isAgentInstance && !config.remote) {
+    const active = await detectUmmLog(config).catch(() => null);
+    if (active) ummPaths = [active];
   }
 
   const chosen = (await stuckLog(stickTo, search.paths, started, liveSince))
@@ -405,8 +434,8 @@ async function selectLogs(detectProfile, startTime, stickTo) {
   return { config, search, started, liveSince, chosen, ummPaths };
 }
 
-export async function resolveLogFile(detectProfile = detectActiveProfile, startTime = gameStartTime, { stickTo = null } = {}) {
-  const { config, search, started, liveSince, chosen } = await selectLogs(detectProfile, startTime, stickTo);
+export async function resolveLogFile(detectUmmLog = activeUmmLog, startTime = gameStartTime, { stickTo = null } = {}) {
+  const { config, search, started, liveSince, chosen } = await selectLogs(detectUmmLog, startTime, stickTo);
   if (!chosen) return null;
 
   const modifiedAt = new Date(chosen.mtimeMs).toISOString();
@@ -450,27 +479,33 @@ function tailReply(resolved, kept, available, readerCut) {
   };
 }
 
+const lineFilter = (filter) => {
+  if (!filter) return () => true;
+  const wanted = filter.toLowerCase();
+  return (line) => line.toLowerCase().includes(wanted);
+};
+
 async function readLogTail(resolved, { count, filter }) {
   if (filter) {
-    const wanted = filter.toLowerCase();
-    const matches = [];
+    const matches = lineFilter(filter);
+    const kept = [];
     let matchBytes = 0;
     let total = 0;
     const handle = await fs.open(resolved.path, 'r');
     try {
       for await (const line of handle.readLines({ crlfDelay: Infinity })) {
-        if (!line.toLowerCase().includes(wanted)) continue;
+        if (!matches(line)) continue;
         total++;
-        matches.push(line);
+        kept.push(line);
         matchBytes += Buffer.byteLength(line) + 1;
-        while (matches.length > count || (matches.length > 1 && matchBytes - Buffer.byteLength(matches[0]) - 1 >= READ_LOG_MAX_BYTES)) {
-          matchBytes -= Buffer.byteLength(matches.shift()) + 1;
+        while (kept.length > count || (kept.length > 1 && matchBytes - Buffer.byteLength(kept[0]) - 1 >= READ_LOG_MAX_BYTES)) {
+          matchBytes -= Buffer.byteLength(kept.shift()) + 1;
         }
       }
     } finally {
       await handle.close();
     }
-    return tailReply(resolved, matches, Math.min(total, count), false);
+    return tailReply(resolved, kept, Math.min(total, count), false);
   }
 
   const newestFirst = [];
@@ -504,23 +539,28 @@ async function readRange(filePath, from, to) {
 
 const splitLogLines = (buffer) => buffer.toString('utf-8').replace(/\r?\n$/, '').split(/\r?\n/);
 
-async function rememberNewLines(resolved, stat, offset) {
-  newLinesState = {
+function newLinesKey(config = activeConfig()) {
+  return config.declared ? `remote ${remoteEndpoint(config.remote)}` : targetOf(config);
+}
+
+async function rememberNewLines(key, resolved, stat, offset) {
+  newLinesStates.set(key, {
     path: resolved.path,
     fileId: fileIdOf(stat),
     offset,
     guard: await readGuard(resolved.path, offset),
     started: resolved.started ?? null,
-  };
+  });
 }
 
-async function readNewLogLines(resolved, reset) {
+async function readNewLogLines(key, resolved, { reset, count, filter }) {
+  const newLinesState = newLinesStates.get(key);
   const logPath = resolved.path;
   const stat = await fs.stat(logPath);
   const fileSize = stat.size;
 
   if (reset) {
-    await rememberNewLines(resolved, stat, fileSize);
+    await rememberNewLines(key, resolved, stat, fileSize);
     return {
       ...logFileInfo(resolved),
       isBaseline: true,
@@ -541,8 +581,10 @@ async function readNewLogLines(resolved, reset) {
       start = newline === -1 ? window.length : newline + 1;
     }
     const end = Math.max(start, window.lastIndexOf(0x0a) + 1);
-    const lines = end > start ? splitLogLines(window.subarray(start, end)).slice(-ONLY_NEW_BASELINE_LINES) : [];
-    await rememberNewLines(resolved, stat, from + end);
+    const lines = end > start
+      ? splitLogLines(window.subarray(start, end)).filter(lineFilter(filter)).slice(-(count ?? ONLY_NEW_BASELINE_LINES))
+      : [];
+    await rememberNewLines(key, resolved, stat, from + end);
     return {
       ...logFileInfo(resolved),
       isBaseline: true,
@@ -579,33 +621,40 @@ async function readNewLogLines(resolved, reset) {
       message: "No new log entries",
     };
   }
-  await rememberNewLines(resolved, stat, chunkStart + complete.length);
+  await rememberNewLines(key, resolved, stat, chunkStart + complete.length);
 
-  const lines = splitLogLines(complete);
+  let lines = splitLogLines(complete).filter(lineFilter(filter));
+  const droppedLines = count != null && lines.length > count ? lines.length - count : 0;
+  if (droppedLines > 0) lines = lines.slice(-count);
+  const cuts = [];
+  if (skippedBytes > 0) cuts.push(`skipped ${skippedBytes} earlier bytes, reading the last ${NEW_LINES_MAX_BYTES}`);
+  if (droppedLines > 0) cuts.push(`dropped ${droppedLines} earlier line${droppedLines === 1 ? '' : 's'} past lines: ${count}`);
   return {
     ...logFileInfo(resolved),
     isBaseline: false,
-    newLines: lines.filter(l => l.length > 0).length,
+    newLines: lines.filter((line) => line.length > 0).length,
     content: lines.join('\n').trimEnd(),
-    ...(skippedBytes > 0
+    ...(lines.length === 0 && filter ? { message: "No new log entries match the filter" } : {}),
+    ...(cuts.length > 0
       ? {
           truncated: true,
-          skippedBytes,
-          message: `Output truncated: skipped ${skippedBytes} earlier bytes, showing the last ${NEW_LINES_MAX_BYTES} bytes. Use read_log without onlyNew, with a filter, to reach the earlier lines.`,
+          ...(skippedBytes > 0 ? { skippedBytes } : {}),
+          ...(droppedLines > 0 ? { droppedLines } : {}),
+          message: `Output truncated: ${cuts.join(', and ')}. Use read_log without onlyNew, with a filter, to reach the earlier lines.`,
         }
       : {}),
   };
 }
 
 async function withResolvedLog(use, options = {}) {
-  let resolved = await resolveLogFile(detectActiveProfile, gameStartTime, options);
+  let resolved = await resolveLogFile(activeUmmLog, gameStartTime, options);
   if (!resolved) throw await logNotFoundError();
 
   try {
     return await use(resolved);
   } catch (err) {
     if (err?.code !== 'ENOENT') throw err;
-    resolved = await resolveLogFile(detectActiveProfile, gameStartTime, options);
+    resolved = await resolveLogFile(activeUmmLog, gameStartTime, options);
     if (!resolved) throw await logNotFoundError();
     return await use(resolved);
   }
@@ -623,13 +672,14 @@ export function logFileInfo(resolved) {
   };
 }
 
-export async function targetLogPaths({ detectProfile = detectActiveProfile, startTime = gameStartTime } = {}) {
+export async function targetLogPaths({ detectUmmLog = activeUmmLog, startTime = gameStartTime } = {}) {
   const config = activeConfig();
   if (config.isAgentInstance) return { umm: config.ummLog, player: config.playerLog };
+  if (config.remote && !logOverride()) return logMirrorPaths(mirroredEndpoint(config));
 
   let selection;
   try {
-    selection = await selectLogs(detectProfile, startTime, null);
+    selection = await selectLogs(detectUmmLog, startTime, null);
   } catch {
     return { umm: null, player: null };
   }
@@ -651,8 +701,8 @@ export async function targetLogPaths({ detectProfile = detectActiveProfile, star
   };
 }
 
-export async function findLogPath(detectProfile = detectActiveProfile, startTime = gameStartTime) {
-  const resolved = await resolveLogFile(detectProfile, startTime);
+export async function findLogPath(detectUmmLog = activeUmmLog, startTime = gameStartTime) {
+  const resolved = await resolveLogFile(detectUmmLog, startTime);
   return resolved ? resolved.path : null;
 }
 
@@ -669,6 +719,12 @@ async function logNotFoundError() {
   }
   if (override) {
     return new Error(`Log file not found: UNITY_INSPECTOR_LOG points at ${displays[0]}, which does not exist.`);
+  }
+  if (config.remote) {
+    return new Error(
+      `${capitalized(targetDescription())} has no log yet: neither its Unity player log (Player.log or ` +
+      `output_log.txt) nor Unity Mod Manager's log exists on its machine.`
+    );
   }
   return new Error(
     `Log file not found. Looked in:\n  ${displays.join('\n  ')}\n` +
@@ -743,12 +799,15 @@ export async function instanceOwnsGame(config) {
 // The port the server would talk to right now: the user's game is always on its own, and an
 // instance's is its recorded one for as long as a game of ours is running there
 export async function targetPort(config = activeConfig()) {
+  if (config.declared) return config.remote.port;
   if (!config.isAgentInstance) return defaultPort();
   const recorded = await readInstancePort(config);
   return recorded !== null && (await instanceOwnsGame(config)) ? recorded : null;
 }
 
 function targetTokenSearch(config) {
+  if (config.remote?.fromEnv) return () => remoteTokenSearch(String(process.env[TOKEN_FILE_ENV] ?? '').trim() || null);
+  if (config.remote) return () => remoteTokenSearch(config.remote.tokenFile);
   if (!config.isAgentInstance) return null;
   return (port) => tokenSearchIn(config.unityDataDir ? [config.unityDataDir] : [], port);
 }
@@ -1177,6 +1236,8 @@ export async function unplaceableInstancesReason(target = activeTarget()) {
   return instancesRoot === null ? `the instances root is unknown (${reason})` : null;
 }
 
+setUnplaceableInstancesCheck(() => unplaceableInstancesReason('steam'));
+
 export async function steamKillRefusal() {
   const why = await unplaceableInstancesReason();
   return why === null
@@ -1216,6 +1277,7 @@ export function resetTargetResolution() {
   launcherMemo = null;
   currentTarget = null;
   targetPending = null;
+  declaredRemote = null;
   targetGeneration++;
   startupClaimPending = false;
   boundCalls.length = 0;
@@ -1404,7 +1466,9 @@ export async function adoptRunningInstance() {
 }
 
 export async function setTarget(next) {
-  if (next !== 'instance' && next !== 'steam') throw new Error(`Unknown target: ${next}`);
+  if (!['instance', 'steam', 'remote'].includes(next) || (next === 'remote' && declaredRemote === null)) {
+    throw new Error(`Unknown target: ${next}`);
+  }
   const changed = targetPending !== null || next !== activeTarget();
   currentTarget = next;
   targetPending = null;
@@ -1477,11 +1541,18 @@ export async function instanceField() {
   };
 }
 
+function remoteField(config) {
+  if (config.declared) return { ...config.remote };
+  return { host: config.remote.host, port: defaultPort(), tokenFile: String(process.env[TOKEN_FILE_ENV] ?? '').trim() || null };
+}
+
 // Every reply that can arrive without a game behind it still says what this server is pointed at
 export async function serverStateFields({ withInstanceList = false } = {}) {
   const pending = targetPending !== null;
+  const remote = pending ? null : activeConfig().remote;
   const fields = {
     target: reportedTarget(),
+    ...(remote ? { remote: remoteField(activeConfig()) } : {}),
     port: pending ? null : await targetPort(),
     ...(await instanceField()),
     logs: pending ? { umm: null, player: null } : await targetLogPaths(),
@@ -1610,7 +1681,7 @@ function toolDefinitions({ launchHelp = "" } = {}) {
       },
       {
         name: "query_gameobjects",
-        description: "Search scene GameObjects by name pattern, component type, or both. componentType matches base types and interfaces, so 'Projectile' finds its subclasses. The reply has resolvedType, scanned, scanTruncated, truncatedBy.",
+        description: "Search scene GameObjects by name pattern, component type, or both. componentType matches base types and interfaces, so 'Projectile' finds its subclasses. The reply has resolvedType and scanTruncated.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1663,7 +1734,7 @@ function toolDefinitions({ launchHelp = "" } = {}) {
       },
       {
         name: "execute_code",
-        description: "Run C# in the Unity context: statements, local declarations, and 'return expr;' statements or a trailing expression, whose value comes back. Locals do not persist between calls; use static members for that. Types from a script loaded with execute_script are in scope. The result is resultSet:true with the value in 'result'; success:true, resultSet:false when it ran and returned nothing; or success:false with 'error', plus 'stackTrace', 'position' and 'statement' when the code threw. Code still running after 9s is stopped at its next loop iteration or method call.",
+        description: "Run C# in the Unity context: statements, local declarations, and 'return expr;' statements or a trailing expression, whose value comes back. Locals do not persist between calls; use static members for that. A loaded script's types are in scope. The result is resultSet:true with the value in 'result'; success:true, resultSet:false when it ran and returned nothing; or success:false with 'error', plus 'stackTrace', 'position' and 'statement' when the code threw. Code running past 9s is stopped at its next loop or call. Imports System, System.{Collections, Collections.Generic, IO, Linq, Reflection, Text}, UnityEngine, HarmonyLib, Unity_Inspector_Mod; other namespaces need a using or full name. Private and internal members and types are reachable. Math is the game's class: use System.Math or Mathf. string.Join takes a string[]: call .ToArray().",
         inputSchema: {
           type: "object",
           properties: {
@@ -1701,7 +1772,7 @@ function toolDefinitions({ launchHelp = "" } = {}) {
             z: { type: "number" },
             playerNum: {
               type: "integer",
-              description: "Player index 0-3, or -1 for all active players (default: 0)",
+              description: "Player index 0-3, or -1 for all active players",
             },
           },
           required: ["x", "y"],
@@ -1716,7 +1787,7 @@ function toolDefinitions({ launchHelp = "" } = {}) {
             health: { type: "integer" },
             playerNum: {
               type: "integer",
-              description: "Player index 0-3, or -1 for all active players (default: 0)",
+              description: "Player index 0-3, or -1 for all active players",
             },
           },
           required: ["health"],
@@ -1808,7 +1879,7 @@ function toolDefinitions({ launchHelp = "" } = {}) {
           type: "object",
           properties: {
             broName: { type: "string", description: "e.g. 'Rambro'; see list_bros" },
-            playerNum: { type: "integer", description: "Player number 0-3 (default: 0)" },
+            playerNum: { type: "integer", description: "Player number 0-3" },
             ignoreUnlocks: {
               type: "boolean",
               description: "Allow locked bros for this swap, including every installed custom bro, locked or disabled; reply adds ignoredUnlocks",
@@ -1828,7 +1899,7 @@ function toolDefinitions({ launchHelp = "" } = {}) {
         inputSchema: {
           type: "object",
           properties: {
-            playerNum: { type: "integer", description: "Player number 0-3 (default: 0)" },
+            playerNum: { type: "integer", description: "Player number 0-3" },
           },
         },
       },
@@ -1860,7 +1931,7 @@ function toolDefinitions({ launchHelp = "" } = {}) {
                   action: { type: "string", description: "Omit for a pure pause" },
                   binding: { type: "string" },
                   duration: { type: "integer", description: "Ms held (default: 50)" },
-                  wait: { type: "integer", description: "Ms paused afterwards (default: 0)" },
+                  wait: { type: "integer", description: "Ms paused afterwards" },
                 },
               },
             },
@@ -1882,18 +1953,18 @@ function toolDefinitions({ launchHelp = "" } = {}) {
       },
       {
         name: "wait_for_game",
-        description: "Poll until the game's inspector answers a ping or the timeout is reached. On failure 'state' names how it failed and 'message' explains it.",
+        description: "Poll until the game's inspector answers a ping or the timeout is reached. On failure 'state' names how it failed.",
         inputSchema: {
           type: "object",
           properties: {
             timeout: { type: "number", description: "Seconds (default: 60)" },
-            interval: { type: "number", description: "Seconds between attempts (default: 3)" },
+            interval: { type: "number", description: "Seconds between attempts" },
           },
         },
       },
       {
         name: "game_state",
-        description: "The loaded level, game mode, player status and bro type. 'scene' is the Unity scene: every level is the one gameplay scene, and 'isCampaignScene' tells it from the world map, victory screen and cutscenes. The level is 'campaignName' (list_campaigns' 'name'), 'campaignDisplay' (its 'displayName'), 'levelName', 'levelIndex' (0-based) and 'levelNumber' (1-based), all null off a level. Also `target` (`instance`, `steam`, or null until the launcher has answered), `port`, `instance` (else an `instanceReason`), the `logs` read_log uses, and when known `runningInstances` and `build`.",
+        description: "The loaded level, game mode, player status and bro type. 'scene' is the Unity scene: every level is the one gameplay scene, and 'isCampaignScene' tells it from the world map, victory screen and cutscenes. The level is 'campaignName' (list_campaigns' 'name'), 'campaignDisplay' (its 'displayName'), 'levelName', 'levelIndex' (0-based) and 'levelNumber' (1-based), all null off a level. Also `target` (`instance`, `steam`, `remote`, or null until the launcher has answered), `port`, `instance` (else an `instanceReason`), the `logs` read_log uses, and when known `runningInstances` and `build`.",
         inputSchema: {
           type: "object",
           properties: {},
@@ -1901,15 +1972,15 @@ function toolDefinitions({ launchHelp = "" } = {}) {
       },
       {
         name: "read_log",
-        description: "Read the game's log: Unity's player log, which carries every UMM and mod line and Unity's own errors, else UMM's own log. Returns the last lines, optionally filtered, or with onlyNew the lines written since the last such call. The reply names the file and flags `stale: true` when it predates the running game.",
+        description: "Read the game's log: Unity's player log, which carries the mod lines, else UMM's own log. The reply names the file and flags `stale: true` when it predates the running game.",
         inputSchema: {
           type: "object",
           properties: {
-            lines: { type: "integer", minimum: 1, description: "Lines from the end of the log (default: 50)" },
+            lines: { type: "integer", minimum: 1, description: "Newest lines kept (default: 50; onlyNew: all new ones, 20 on a baseline)" },
             filter: { type: "string", description: "Only lines containing this string, case-insensitive" },
             onlyNew: {
               type: "boolean",
-              description: "Only the lines since the last such call; `isBaseline: true` marks the last 20 lines instead, on the first call or when the file changed. Not with lines or filter",
+              description: "Only the lines since the last such call, lines and filter applying to them; `isBaseline: true` marks the file's last lines instead, on the first call or when the file changed",
             },
             reset: { type: "boolean", description: "With onlyNew: move the position to the end of the log" },
           },
@@ -1929,7 +2000,7 @@ function toolDefinitions({ launchHelp = "" } = {}) {
       },
       {
         name: "execute_script",
-        description: "Compile and run a C# script file in the Unity runtime; list_scripts lists the library. Supports full class definitions, MonoBehaviours, Harmony patches, and private member access. Scripts can define Main() for execution and Unload() for cleanup. Use ScriptContext for Harmony instances, logging, and arguments.",
+        description: "Compile and run a C# script file under execute_code's rules; list_scripts lists the library. Supports full class definitions, MonoBehaviours and Harmony patches. Scripts can define Main() for execution and Unload() for cleanup. Use ScriptContext for Harmony instances and logging.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1953,13 +2024,13 @@ function toolDefinitions({ launchHelp = "" } = {}) {
       },
       {
         name: "unload_script",
-        description: "Unload an active C# script, cleaning up its Harmony patches, GameObjects, and calling its Unload() method if defined.",
+        description: "Unload a loaded C# script: runs its Unload(), removes its Harmony patches, destroys its tracked GameObjects and components.",
         inputSchema: {
           type: "object",
           properties: {
-            name: { type: "string", description: "The script's file name without .cs, or its library name" },
+            path: { type: "string", description: "As execute_script's path, or a loaded script's name" },
           },
-          required: ["name"],
+          required: ["path"],
         },
       },
       {
@@ -1972,7 +2043,7 @@ function toolDefinitions({ launchHelp = "" } = {}) {
           type: "object",
           properties: {
             out: { type: "string", description: "Absolute output directory" },
-            gameOut: { type: "string", description: "out as the game's filesystem sees it (default: out)" },
+            gameOut: { type: "string", description: "out as the game's filesystem sees it" },
             bro: { type: "string", description: "Bro to swap to first, as list_bros names it" },
             level: { type: "string", description: "Level to load first, CAMPAIGN:LEVEL (e.g. 1:0)" },
             states: {
@@ -1984,10 +2055,10 @@ function toolDefinitions({ launchHelp = "" } = {}) {
             swapSettle: { type: "number", minimum: 0, description: "Seconds after the swap lands (default: 2)" },
             swapTimeout: { type: "number", minimum: 1, description: "Seconds to wait for the swap (default: 15)" },
             timeout: { type: "number", minimum: 1, description: "Seconds per wait, and per state swept (default: 60)" },
-            player: { type: "integer", minimum: 0, maximum: 3, description: "(default: 0)" },
+            player: { type: "integer", minimum: 0, maximum: 3 },
             box: { type: "number", minimum: 1, maximum: 256, description: "Crop-box half-size in world units; cells are 2*box px (default: 24)" },
-            includeLethal: { type: "boolean", description: "Also sweep states that pin the bro dead (default: false)" },
-            allowSideEffects: { type: "boolean", description: "Let animations fire real specials/attacks (default: false)" },
+            includeLethal: { type: "boolean", description: "Also sweep states that pin the bro dead" },
+            allowSideEffects: { type: "boolean", description: "Let animations fire real specials/attacks" },
             only: { type: "array", items: { type: "string" }, description: "Only these states, in list order" },
             backdrop: { type: ["boolean", "string"], description: "As take_screenshot's backdrop" },
           },
@@ -1996,22 +2067,24 @@ function toolDefinitions({ launchHelp = "" } = {}) {
       },
       {
         name: "launch_game",
-        description: "Launch Broforce, wait for it to answer and point this server at it: by default this session's game instance (its own profile, saves and port), or the user's game in a session without one. steam: true launches the user's game instead (the configured launch command, else Steam); a window on screen needs that command's placement option. A running game is reported, not launched over, unless restart is true, which stops only the target's game first." + launchHelp,
+        description: "Launch Broforce, wait for it to answer and point this server at it: by default this session's game instance (its own profile, saves and port), or the user's game in a session without one. steam: true targets the user's game instead, launching it (the configured launch command, else Steam) only when it is not running; a window on screen needs that command's placement option. A game already running is pointed at and reported, never relaunched, unless restart is true, which stops only the target's game and launches it again." + launchHelp,
         inputSchema: {
           type: "object",
           properties: {
-            steam: {
-              type: "boolean",
-              description: "Launch the user's own game instead of this session's instance (default: false)",
-            },
+            steam: { type: "boolean" },
             vanilla: {
               type: "boolean",
-              description: "Launch without mods (default: false). No inspector loads, so the call returns once the game has started",
+              description: "Launch without mods. No inspector loads, so the call returns once the game has started",
             },
-            restart: { type: "boolean", description: "Stop the running game first, then relaunch (default: false)" },
+            restart: { type: "boolean" },
             launchArgs: {
               type: "string",
               description: "Arguments appended to the launch this call runs, tokenized with shell-style quoting: the instance launch by default, the configured launch command or the Steam launch with steam: true. The Steam protocol fallback takes no arguments.",
+            },
+            remote: {
+              type: "object",
+              properties: { host: { type: "string" }, port: { type: "integer" }, tokenFile: { type: "string" } },
+              description: "Point at a game on another machine instead, launching nothing; tokenFile is a local copy of its token",
             },
           },
         },
@@ -2024,7 +2097,7 @@ function toolDefinitions({ launchHelp = "" } = {}) {
           properties: {
             remove: {
               type: "boolean",
-              description: "After stopping, delete this session's instance directory, so the next launch builds it fresh (default: false). Instance target only",
+              description: "After stopping, delete this session's instance directory, so the next launch builds it fresh. Instance target only",
             },
           },
         },
@@ -2340,6 +2413,9 @@ export async function pollUntilResponsive(timeoutMs, intervalMs, watcher = null,
   } else if (answeredStage) {
     state = "connection-dropped";
     message = `${PortLabel} accepted a connection that was then closed ${tail}: ${lastError}`;
+  } else if (running === null && activeConfig().remote) {
+    state = "unknown";
+    message = `Could not reach ${targetDescription()} ${tail}: ${lastError}`;
   } else if (running === null) {
     state = "unknown";
     message = `Could not connect to ${portLabel} ${tail}, and process detection is unavailable, so it is unknown whether the game is running.` +
@@ -2376,7 +2452,7 @@ function sweepRefusal(action) {
     `Cannot ${action} while a capture_animations sweep into ${activeSweep.out} is running on the ` +
     `${activeTarget()} target — it holds the game clock at zero and the bro pinned, and anything that changes ` +
     `the game would land in its strips (about ${left}s of its budget left, more while it makes progress). ` +
-    `Wait for it to finish, or use stop_game to end it early.`
+    `Wait for it to finish${activeConfig().remote ? '' : ', or use stop_game to end it early'}.`
   );
 }
 
@@ -2450,7 +2526,94 @@ function capReachedMessage(config, capReport, capPolls, capStart) {
     `${config.id} was not started.` + who + unparsed;
 }
 
+const REMOTE_KEYS = ['host', 'port', 'tokenFile'];
+
+function parseRemote(args) {
+  const remote = args.remote;
+  const refuse = (why) => new Error(`launch_game's remote ${why}. Nothing was changed.`);
+  if (typeof remote !== 'object' || remote === null || Array.isArray(remote)) throw refuse('must be an object');
+  const stray = Object.keys(remote).filter((key) => !REMOTE_KEYS.includes(key));
+  if (stray.length > 0) {
+    throw refuse(`has no key${stray.length > 1 ? 's' : ''} ${stray.map((key) => `"${key}"`).join(', ')}; it takes host, port and tokenFile`);
+  }
+  const missing = REMOTE_KEYS.filter((key) => remote[key] === undefined || remote[key] === null);
+  if (missing.length > 0) throw refuse(`needs ${missing.join(', ')}`);
+
+  let host = remote.host;
+  const bracketed = typeof host === 'string' ? /^\[(.*)\]$/.exec(host) : null;
+  if (bracketed && net.isIPv6(bracketed[1])) host = bracketed[1];
+  if (typeof host !== 'string' || host === '' || /[\s/[\]]/.test(host) || (host.includes(':') && !net.isIPv6(host))) {
+    throw refuse(`host must be a host name or address alone, with no scheme, port, path or whitespace, got ${JSON.stringify(remote.host)}`);
+  }
+  if (!Number.isInteger(remote.port) || remote.port < 1 || remote.port > 65535) {
+    throw refuse(`port must be an integer from 1 to 65535, got ${JSON.stringify(remote.port)}`);
+  }
+  if (typeof remote.tokenFile !== 'string' || !path.isAbsolute(remote.tokenFile)) {
+    throw refuse(`tokenFile must be an absolute path on this machine, got ${JSON.stringify(remote.tokenFile)}`);
+  }
+
+  const flags = ['steam', 'vanilla', 'restart'].filter((flag) => args[flag] === true);
+  if (String(args.launchArgs ?? '').trim()) flags.push('launchArgs');
+  if (flags.length > 0) {
+    throw new Error(
+      `launch_game's remote launches nothing, so it takes no ${flags.join(', ')}: this server starts and stops ` +
+      `nothing on the remote game's machine. Nothing was changed.`
+    );
+  }
+  return { host, port: remote.port, tokenFile: remote.tokenFile };
+}
+
+async function pingRemote(signal) {
+  const poll = await pollUntilResponsive(0, POLL_DEFAULT_INTERVAL_MS, null, { signal });
+  const where = targetDescription();
+  return poll.success
+    ? { success: true, state: poll.state, message: `This server now points at ${where}, which answered. Nothing was launched.` }
+    : {
+        success: false,
+        state: poll.state,
+        message: `This server now points at ${where}, which did not answer, and nothing was launched: ${poll.message}`,
+        lastError: poll.lastError,
+      };
+}
+
+async function declareRemote(args, signal) {
+  const remote = parseRemote(args);
+  await resolveTarget();
+  refuseWhileInFlight('launch');
+  refuseWhileBound('remote', `the remote game at ${remoteEndpoint(remote)}`);
+  const previousTarget = reportedTarget();
+  boundCalls.push('launch_game');
+  try {
+    declaredRemote = {
+      id: null, isAgentInstance: false, instancesRoot: null, stageRoot: null, root: null, reason: null,
+      declared: true, remote,
+    };
+    unityClient.disconnect('launch_game declared a remote game before this command was answered');
+    await setTarget('remote');
+    const note = await switchedAwayNote(previousTarget, 'remote');
+    return {
+      ...(await pingRemote(signal)),
+      target: reportedTarget(),
+      remote: { ...remote },
+      ...(note ? { targetNote: note } : {}),
+    };
+  } finally {
+    boundCalls.splice(boundCalls.indexOf('launch_game'), 1);
+  }
+}
+
+async function switchedAwayNote(previousTarget, nextTarget) {
+  if (previousTarget === null || nextTarget === previousTarget) return null;
+  if (previousTarget === 'remote') {
+    return `${capitalized(targetDescription('remote'))} was left as it was: switching targets touches nothing on its machine.`;
+  }
+  if ((await isGameRunning(configOf(previousTarget))) !== true) return null;
+  return `${targetDescription(previousTarget)} is still running — switching targets left it alone. ` +
+    `Switch back and use stop_game to stop it.`;
+}
+
 async function launchGame(args, signal = null) {
+  if (args.remote !== undefined) return declareRemote(args, signal);
   // The probe and the root settle what this session has before the target moves anywhere
   await resolveTarget();
   const hasInstance = await instanceTargetReady();
@@ -2472,6 +2635,27 @@ async function launchGame(args, signal = null) {
     ...(switchNote ? { targetNote: switchNote } : {}),
     ...(instanceReason ? { instanceReason } : {}),
   });
+
+  if (config.remote) {
+    const flags = ['vanilla', 'restart'].filter((flag) => args[flag] === true);
+    if (String(args.launchArgs ?? '').trim()) flags.push('launchArgs');
+    if (flags.length > 0) {
+      throw new Error(
+        `launch_game takes no ${flags.join(', ')} here: ${userGameOutOfReach(config)}, so this server starts and ` +
+        `stops nothing there. Call launch_game without ${flags.length > 1 ? 'them' : 'it'} to point at it.`
+      );
+    }
+    switchNote = await switchedAwayNote(previousTarget, nextTarget);
+    refuseWhileInFlight('launch');
+    if (nextTarget !== reportedTarget()) refuseWhileBound(nextTarget);
+    boundCalls.push('launch_game');
+    try {
+      await setTarget(nextTarget);
+      return withTargetNotes(await pingRemote(signal));
+    } finally {
+      boundCalls.splice(boundCalls.indexOf('launch_game'), 1);
+    }
+  }
 
   // The user's game is every Broforce process this server cannot place in an instance, so with
   // the launcher's instances unaccounted for it cannot say whether that game is running at
@@ -2515,13 +2699,7 @@ async function launchGame(args, signal = null) {
     );
   }
 
-  if (previousTarget !== null && nextTarget !== previousTarget) {
-    const previousConfig = previousTarget === 'instance' ? sessionInstance() : userGame();
-    if ((await isGameRunning(previousConfig)) === true) {
-      switchNote = `${targetDescription(previousTarget)} is still running — switching targets left it alone. ` +
-        `Switch back and use stop_game to stop it.`;
-    }
-  }
+  switchNote = await switchedAwayNote(previousTarget, nextTarget);
 
   refuseWhileInFlight('launch');
   if (nextTarget !== reportedTarget()) refuseWhileBound(nextTarget);
@@ -2928,6 +3106,15 @@ async function vanillaOutcome({ signal, config, nextTarget, launch, watcher, lau
 }
 
 async function stopGame(args) {
+  const pointed = activeConfig();
+  if (pointed.remote) {
+    return {
+      success: false,
+      message: `Nothing was stopped: ${userGameOutOfReach(pointed)}, and stop_game touches nothing on this machine ` +
+        `for it. Stop the game on its own machine.`,
+      target: activeTarget(),
+    };
+  }
   // Asking whether the kill may run is also what asks the launcher again, and a retry that
   // succeeds rewrites the target's config: everything below acts on the config after that
   const signalRefusal = await steamKillRefusal();
@@ -3006,6 +3193,7 @@ export async function shutdownServer(signal, { exit = (code) => process.exit(cod
   const claim = watched
     ? claimInstanceWhenCreated(watched, expired).catch(() => null)
     : Promise.resolve(null);
+  if (sweep) sweep.stopping = true;
   if (sweep && (sweep.claim || sweep.scriptName)) {
     const teardown = (async () => {
       if (sweep.claim) await releaseClaim(sweep.client, sweep.claim, SHUTDOWN_TEARDOWN_COMMAND_MS);
@@ -3103,13 +3291,19 @@ function captureOnly(raw) {
 }
 
 async function captureOptions(args) {
+  const remote = Boolean(activeConfig().remote);
+  const givenGameOut = args.gameOut !== undefined && args.gameOut !== null && String(args.gameOut).trim() !== '';
+  if (remote && givenGameOut) {
+    throw new Error(
+      `capture_animations takes no gameOut on ${targetDescription()}: the sweep writes into a folder of its own in the ` +
+      `game's temporary cache on its machine, and the server fetches the files from there into out.`
+    );
+  }
   const out = await captureOutDir(args.out);
   const level = args.level === undefined || args.level === null ? null : parseLevel(args.level);
   const bro = args.bro === undefined || args.bro === null || String(args.bro).trim() === '' ? null : String(args.bro);
-  const gameOut = args.gameOut === undefined || args.gameOut === null || String(args.gameOut).trim() === ''
-    ? out
-    : String(args.gameOut).trim();
-  if (!isAbsoluteGamePath(gameOut)) {
+  const gameOut = remote ? null : givenGameOut ? String(args.gameOut).trim() : out;
+  if (!remote && !isAbsoluteGamePath(gameOut)) {
     throw new Error(`gameOut must be an absolute path as the game sees it (/..., C:\\... or \\\\server\\...), got "${args.gameOut}"`);
   }
 
@@ -3135,6 +3329,7 @@ async function captureOptions(args) {
   return {
     out,
     gameOut,
+    remote,
     level,
     bro,
     statesPaths,
@@ -3214,6 +3409,10 @@ export function staleCodeNotice(changed, { isError = false } = {}) {
     ? ' and can refuse files the newer code wrote. Call restart_server once no other call is running, then repeat this call unless it may already have acted.'
     : '. This call ran, so do not repeat it. Call restart_server once no other call is running.';
   // Read directly: activeTarget() would settle a target nothing has resolved yet
+  if (currentTarget === 'remote') {
+    return `${stale}${advice} A restart forgets the remote game declared with launch_game { remote } and puts the ` +
+      `target back on this session's default; declare it again after the restart.`;
+  }
   const targetMoves = currentTarget === 'steam' && sessionInstance().isAgentInstance && instanceModeChecked() !== false;
   return `${stale}${advice}${targetMoves ? " A restart puts the target back on this session's default." : ''}`;
 }
@@ -3471,22 +3670,21 @@ async function callTool(request, signal) {
 
       case "read_log": {
         const filter = args.filter;
-        if (args.onlyNew && (args.lines != null || filter)) {
-          throw new Error("read_log's onlyNew returns every line written since the last such call, so it takes neither lines nor filter");
-        }
         if (args.reset && !args.onlyNew) {
           throw new Error("read_log's reset moves the position onlyNew reads from, so it needs onlyNew: true");
         }
+        if (args.lines != null && (!Number.isInteger(args.lines) || args.lines < 1)) {
+          throw new Error(`read_log's lines must be a whole number of at least 1, got ${JSON.stringify(args.lines)}`);
+        }
         if (args.onlyNew) {
-          result = await serializeNewLines(() =>
-            withResolvedLog((resolved) => readNewLogLines(resolved, args.reset), { stickTo: newLinesState }));
+          const key = newLinesKey();
+          const options = { reset: args.reset, count: args.lines, filter };
+          result = await serializeNewLines(() => withRemoteLogs(() =>
+            withResolvedLog((resolved) => readNewLogLines(key, resolved, options), { stickTo: newLinesStates.get(key) })));
           break;
         }
         const count = args.lines ?? 50;
-        if (!Number.isInteger(count) || count < 1) {
-          throw new Error(`read_log's lines must be a whole number of at least 1, got ${JSON.stringify(args.lines)}`);
-        }
-        result = await withResolvedLog((resolved) => readLogTail(resolved, { count, filter }));
+        result = await withRemoteLogs(() => withResolvedLog((resolved) => readLogTail(resolved, { count, filter })));
         break;
       }
 
@@ -3496,6 +3694,7 @@ async function callTool(request, signal) {
           throw new Error("Script name or path is required");
         }
         const running = { script };
+        const endpoint = mirroredEndpoint();
         activeTestScripts.add(running);
         try {
           result = await compactTestScriptReply(
@@ -3504,6 +3703,7 @@ async function callTool(request, signal) {
               logPaths: () => targetLogPaths(),
               gameStart: () => gameStartTime(activeConfig()),
               crashLog: (sinceMs) => gameStdoutTail(activeConfig(), sinceMs),
+              refreshLogs: endpoint ? () => withLogMirrors(unityClient, endpoint) : null,
               toolArguments: toolArguments(),
               signal,
             }),
@@ -3538,12 +3738,12 @@ async function callTool(request, signal) {
         break;
 
       case "unload_script": {
-        if (!args.name) {
-          throw new Error("Script name is required");
+        if (!args.path) {
+          throw new Error("Script path is required");
         }
-        const scriptName = await loadedScriptName(args.name);
+        const script = toolCommand("unload_script", { path: await loadedScriptName(args.path) });
         refuseDuringSweep(name, args);
-        result = await unityClient.sendCommand("unload_script", { name: scriptName });
+        result = await unityClient.sendCommand(script.method, script.params);
         break;
       }
 
@@ -3565,7 +3765,9 @@ async function callTool(request, signal) {
           );
         }
 
-        const budgetMs = claimLeaseMs(captureOpts) + captureOpts.timeoutMs;
+        const budgetMs = captureOpts.remote
+          ? claimLeaseMs(captureOpts, {}) + captureOpts.timeoutMs + fetchLeaseMs()
+          : claimLeaseMs(captureOpts) + captureOpts.timeoutMs;
         const sweep = {
           out: captureOpts.out, client: unityClient, deadline: Date.now() + budgetMs,
           claim: null, scriptName: null, restoreSpeed: null,
@@ -3573,7 +3775,9 @@ async function callTool(request, signal) {
         activeSweep = sweep;
 
         try {
-          const run = await runCapture(captureOpts, unityClient, { resolveLog: resolveLogFile, signal, sweep });
+          const endpoint = mirroredEndpoint();
+          const withLog = endpoint ? (use) => withLogMirrors(unityClient, endpoint, () => use()) : null;
+          const run = await runCapture(captureOpts, unityClient, { resolveLog: resolveLogFile, withLog, signal, sweep });
           result = captureReply(run, captureOpts);
         } finally {
           if (activeSweep === sweep) activeSweep = null;

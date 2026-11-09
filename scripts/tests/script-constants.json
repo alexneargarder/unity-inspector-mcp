@@ -264,7 +264,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "script-constants-test"
+        "path": "script-constants-test"
       },
       "expect": {
         "success": true
@@ -275,7 +275,7 @@
     {
       "command": "unload_script",
       "params": {
-        "name": "script-constants-test"
+        "path": "script-constants-test"
       },
       "expect": {
         "notContains": [
