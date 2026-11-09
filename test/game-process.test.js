@@ -12,6 +12,8 @@ import {
   startFromEtimes,
   startFromLstart,
   composeExtraLaunchArgs,
+  createProcReader,
+  defaultProcReader,
   extractProfileName,
   invalidateGameProcessScan,
   isGameRunning,
@@ -159,6 +161,8 @@ test('startFromLstart survives the shapes ps actually emits', () => {
 });
 
 test('isGameRunning reports false (never throws) with no game running', async (t) => {
+  setProcReader(createProcReader());
+  t.after(() => setProcReader(null));
   const before = isPosix && (await broforceIsActuallyRunning());
   invalidateGameProcessScan();
   const answer = await isGameRunning();
@@ -171,16 +175,17 @@ test('isGameRunning reports false (never throws) with no game running', async (t
   }
 });
 
-test('killGame reports honestly when nothing was killed', async (t) => {
-  if (process.platform === 'linux') {
-    setProcReader(fakeProcReader({}));
-    t.after(() => setProcReader(null));
-  } else if (isPosix && (await broforceIsActuallyRunning())) {
-    t.skip('a real Broforce process is running; refusing to kill it');
-    return;
-  }
+// Answers as taskkill, the pkill probe and pkill do when no game is running
+const nothingToKill = async (command, args) => ({
+  code: command === 'taskkill' ? 128 : String(args[1]).startsWith('command -v') ? 0 : 1,
+  signal: null, stdout: '', stderr: '', error: null,
+});
 
-  const result = await killGame();
+test('killGame reports honestly when nothing was killed', async (t) => {
+  setProcReader(fakeProcReader({}));
+  t.after(() => setProcReader(null));
+
+  const result = await killGame({ run: nothingToKill });
   assert.equal(result.killed, false);
   assert.ok(typeof result.detail === 'string' && result.detail.length > 0);
 });
@@ -414,3 +419,93 @@ test('UNITY_INSPECTOR_HOST naming another machine leaves the user\'s game unknow
   process.env.UNITY_INSPECTOR_HOST = '127.0.0.1';
   assert.equal(await isGameRunning(USER_GAME), true);
 });
+
+test('the real process table is refused under UNITY_INSPECTOR_TEST unless a test injects a reader for it', { skip: process.platform !== 'linux' }, async (t) => {
+  const refusal = /real process table while UNITY_INSPECTOR_TEST is set.*setProcReader/;
+  assert.throws(() => defaultProcReader(), refusal);
+  await assert.rejects(isGameRunning(USER_GAME), refusal);
+  await assert.rejects(gameStartTime(USER_GAME), refusal);
+
+  const real = createProcReader();
+  setProcReader(real);
+  t.after(() => setProcReader(null));
+  assert.equal(defaultProcReader(), real);
+  assert.ok((await real.pids()).includes(String(process.pid)), 'the opted-in reader reads the real /proc');
+});
+
+test('with the test marker absent, defaultProcReader hands out one reader of the real process table', { skip: process.platform !== 'linux' }, async (t) => {
+  const marker = process.env.UNITY_INSPECTOR_TEST;
+  setProcReader(null);
+  delete process.env.UNITY_INSPECTOR_TEST;
+  t.after(() => {
+    process.env.UNITY_INSPECTOR_TEST = marker;
+    setProcReader(null);
+  });
+
+  const reader = defaultProcReader();
+  assert.equal(defaultProcReader(), reader, 'one instance, so the scan cache can key on it');
+  assert.ok((await reader.pids()).includes(String(process.pid)), 'it reads the real /proc');
+});
+
+test('a real kill under UNITY_INSPECTOR_TEST refuses without signalling, and the liveness probe still answers', { skip: process.platform === 'win32' }, async (t) => {
+  const { realKill } = await import('../lib/game-process.js');
+  const child = spawn('sleep', ['30'], { stdio: 'ignore' });
+  t.after(() => child.kill('SIGKILL'));
+  await new Promise((resolve) => child.once('spawn', resolve));
+
+  for (const signal of ['SIGTERM', 'SIGKILL', 9]) {
+    assert.throws(() => realKill(child.pid, signal), new RegExp(`pid ${child.pid} .*UNITY_INSPECTOR_TEST.*inject kill`));
+  }
+  assert.equal(realKill(child.pid, 0), true);
+  assert.equal(child.exitCode, null);
+  assert.equal(child.signalCode, null);
+});
+
+// Under a PATH holding only sh and recording stubs, so a broken fence reaches no real pkill or taskkill.
+// Windows finds taskkill in System32 whatever PATH says, so there the uninjected call is not made.
+async function killGameUnderStubs(t, platform) {
+  const { mkdtemp, rm, symlink, writeFile, readFile } = await import('fs/promises');
+  const { tmpdir } = await import('os');
+  const { join, dirname } = await import('path');
+  const { fileURLToPath } = await import('url');
+
+  const binDir = await mkdtemp(join(tmpdir(), 'kill-fence-'));
+  t.after(() => rm(binDir, { recursive: true, force: true }));
+  const record = join(binDir, 'calls');
+  await symlink('/bin/sh', join(binDir, 'sh'));
+  for (const [name, code] of [['pkill', 1], ['taskkill', 128]]) {
+    await writeFile(join(binDir, name), `#!/bin/sh\necho "${name} $*" >> '${record}'\nexit ${code}\n`, { mode: 0o755 });
+  }
+
+  const moduleUrl = new URL('../lib/game-process.js', import.meta.url).href;
+  const script = `import(${JSON.stringify(moduleUrl)}).then(m => (m.setWslProbe(() => false), m.killGame({ platform: ${JSON.stringify(platform)} })))` +
+    '.then(result => ({ result }), err => ({ refused: err.message })).then(o => process.stdout.write(JSON.stringify(o)))';
+  const output = await new Promise((resolve) => {
+    const child = spawn(process.execPath, ['-e', script], {
+      env: { PATH: binDir, UNITY_INSPECTOR_TEST: '1' },
+      cwd: dirname(fileURLToPath(moduleUrl)),
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    let out = '';
+    child.stdout.on('data', (d) => { out += d.toString(); });
+    child.on('error', () => resolve('{}'));
+    child.on('close', () => resolve(out));
+  });
+  const calls = (await readFile(record, 'utf8').catch(() => '')).split('\n').filter(Boolean);
+  return { outcome: JSON.parse(output || '{}'), calls };
+}
+
+test('a by-name kill under UNITY_INSPECTOR_TEST refuses unless the test injected run', { skip: !isPosix }, async (t) => {
+  for (const platform of ['win32', 'darwin']) {
+    const { outcome, calls } = await killGameUnderStubs(t, platform);
+    assert.match(outcome.refused ?? '', new RegExp(`kill Broforce by name on ${platform} .*UNITY_INSPECTOR_TEST.*inject run`), JSON.stringify(outcome));
+    assert.deepEqual(calls, [], platform);
+
+    const injected = [];
+    const run = async (command, args) => { injected.push(command); return nothingToKill(command, args); };
+    const result = await killGame({ platform, run });
+    assert.equal(result.killed, false);
+    assert.ok(injected.length > 0, platform);
+  }
+});
+

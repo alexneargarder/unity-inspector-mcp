@@ -19,13 +19,13 @@ const alive = (pid) => {
   }
 };
 
-export function startWrapper(env = {}, { detached = false } = {}) {
+export function startWrapper(env = {}, { detached = false, script = WRAPPER_PATH } = {}) {
   const logDir = mkdtempSync(path.join(os.tmpdir(), 'mcp-wrapper-test-'));
   const logFile = path.join(logDir, 'wrapper.log');
   // Where the server records the owner.pid it wrote, and the only place the wrapper looks for it
   const claimFile = path.join(logDir, 'wrapper.claim');
 
-  const proc = spawn(process.execPath, [WRAPPER_PATH], {
+  const proc = spawn(process.execPath, [script], {
     stdio: ['pipe', 'pipe', 'pipe'],
     detached,
     env: {

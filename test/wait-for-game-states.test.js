@@ -25,8 +25,10 @@ async function waitForGame(args) {
   return { payload: JSON.parse(textOf(response)), elapsed: Date.now() - started };
 }
 
-test('a port that accepts but never answers is connected-unresponsive', { timeout: 30000 }, async () => {
+test('a port that accepts but never answers is connected-unresponsive', { timeout: 30000 }, async (t) => {
   onPing = () => {};
+  setProcReader(fakeProcReader({}));
+  t.after(() => setProcReader(null));
   const budget = 1000;
   const { payload, elapsed } = await waitForGame({ timeout: budget / 1000, interval: 0.05 });
 
@@ -92,8 +94,10 @@ test('launch_game finding the game already running keeps the live socket', { tim
   assert.equal(stub.connectionCount, connectionsBefore, 'launch_game reconnected instead of pinging over the live socket');
 });
 
-test('a game whose main thread does not answer is main-thread-hung, not ready', { timeout: 30000 }, async () => {
+test('a game whose main thread does not answer is main-thread-hung, not ready', { timeout: 30000 }, async (t) => {
   onPing = (request, socket) => reply(socket, request.id, { message: 'pong', mainThreadAnswered: false, frame: 120 });
+  setProcReader(fakeProcReader({}));
+  t.after(() => setProcReader(null));
 
   const { payload } = await waitForGame({ timeout: 0.3, interval: 0.05 });
 

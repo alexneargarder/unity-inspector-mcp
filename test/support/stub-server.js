@@ -1,3 +1,4 @@
+import { readFile } from 'fs/promises';
 import net from 'net';
 
 import { HANDSHAKE_PROTOCOL } from '../../lib/unity-client.js';
@@ -93,8 +94,8 @@ export function serveConnection(socket, state, onLine) {
   });
 }
 
-export function startStubServer(onRequest, { hello = 'accept', host = '127.0.0.1' } = {}) {
-  return new Promise((resolve) => {
+export function startStubServer(onRequest, { hello = 'accept', host = '127.0.0.1', port = 0 } = {}) {
+  return new Promise((resolve, reject) => {
     const sockets = new Set();
     const state = { connectionCount: 0, hello, hellos: [], firstLines: [], lines: [] };
 
@@ -106,7 +107,8 @@ export function startStubServer(onRequest, { hello = 'accept', host = '127.0.0.1
       serveConnection(socket, state, onRequest);
     });
 
-    server.listen(0, host, () => {
+    server.once('error', reject);
+    server.listen(port, host, () => {
       resolve({
         port: server.address().port,
         get connectionCount() { return state.connectionCount; },
@@ -122,6 +124,34 @@ export function startStubServer(onRequest, { hello = 'accept', host = '127.0.0.1
       });
     });
   });
+}
+
+function refusedOn(host, port) {
+  return new Promise((resolve) => {
+    const probe = net.connect({ host, port });
+    probe.once('connect', () => { probe.destroy(); resolve(false); });
+    probe.once('error', (err) => resolve(err.code === 'ECONNREFUSED'));
+  });
+}
+
+// An ephemeral port bound on 127.0.0.2 can be one another file's listen(0) holds or takes on
+// 127.0.0.1, so this stub's port comes from below the ephemeral range, where no listen(0) lands
+export async function startStubBesideLoopback(onRequest, options = {}) {
+  const [low] = (await readFile('/proc/sys/net/ipv4/ip_local_port_range', 'utf8')).trim().split(/\s+/).map(Number);
+  if (low <= 1024) throw new Error(`the ephemeral port range starts at ${low}, leaving no port below it`);
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const port = 1024 + Math.floor(Math.random() * (low - 1024));
+    let stub;
+    try {
+      stub = await startStubServer(onRequest, { ...options, host: '127.0.0.2', port });
+    } catch (err) {
+      if (err.code === 'EADDRINUSE' || err.code === 'EACCES') continue;
+      throw err;
+    }
+    if (await refusedOn('127.0.0.1', port)) return stub;
+    await stub.close();
+  }
+  throw new Error(`no port below ${low} was free on both 127.0.0.2 and 127.0.0.1`);
 }
 
 export function reply(socket, id, result) {

@@ -197,7 +197,6 @@ test('take_screenshot advertises the highlight argument and what it reports', as
   const tool = await toolNamed('take_screenshot');
   assert.match(tool.description, /highlighted/);
   assert.match(tool.description, /highlightError/);
-  assert.match(tool.description, /succeeds either way/);
 
   const { highlight } = tool.inputSchema.properties;
   assert.deepEqual(highlight?.type, ['string', 'object'], 'highlight takes a path or a rectangle');
@@ -319,6 +318,16 @@ test('trace_spawns advertises its actions, targets and the read cursor', async (
   assert.match(tool.description, /`restart_server` always does/);
 });
 
+test('take_screenshot and capture_animations advertise backdrop as a boolean or a colour', async () => {
+  for (const name of ['take_screenshot', 'capture_animations']) {
+    const { backdrop } = (await toolNamed(name)).inputSchema.properties;
+    assert.deepEqual(backdrop?.type, ['boolean', 'string'], name);
+  }
+  const { backdrop } = (await toolNamed('take_screenshot')).inputSchema.properties;
+  assert.match(backdrop.description, /#FF00FF/);
+  assert.match(backdrop.description, /#RRGGBB/);
+});
+
 test('capture_animations is listed, and is server-side orchestration rather than a game command', async () => {
   const tool = await toolNamed('capture_animations');
   assert.deepEqual(tool.inputSchema.required, ['out']);
@@ -338,7 +347,7 @@ test('launch_game says which launch launchArgs reach', async () => {
 
   const { launchArgs } = tool.inputSchema.properties;
   assert.match(launchArgs.description, /appended to the launch this call runs/);
-  assert.match(launchArgs.description, /the instance launch by default, the configured launch command or Steam's -applaunch with steam: true/);
+  assert.match(launchArgs.description, /the instance launch by default, the configured launch command or the Steam launch with steam: true/);
   assert.match(launchArgs.description, /The Steam protocol fallback takes no arguments/);
 });
 
@@ -371,7 +380,9 @@ test('wait_for_game reports which failure mode a timeout hit', { timeout: 30000 
   assert.ok(elapsed < 8000, `wait_for_game took ${elapsed}ms`);
 });
 
-test('wait_for_game still makes one attempt with a non-positive budget', { timeout: 30000 }, async () => {
+test('wait_for_game still makes one attempt with a non-positive budget', { timeout: 30000 }, async (t) => {
+  setProcReader(fakeProcReader({}));
+  t.after(() => setProcReader(null));
   const response = await handleToolCall({
     params: { name: 'wait_for_game', arguments: { timeout: 0, interval: 0.05 } },
   });

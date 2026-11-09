@@ -17,6 +17,7 @@ paths:
 | S | a state that damages, disturbs or kills: `levelChanges`, `suppressed`, `damageCalls` | not produced by any step: only a live sweep reaches it |
 | C | a step call (`RunGun`, `StartHanging`, `AttachToZipline`), the `written` flags and `gunFrame`; a provided ladder or zipline | not produced by any step: only a live sweep reaches it |
 | N | a box whose strip passes the GPU texture limit; `capture.json` after an unload mid-sweep | not produced by any step: only a live sweep reaches it |
+| C | `backdrop`: strips on the flat colour, the contribution check's second render through it too, a blank capture against the colour | not produced by any step: only a live sweep reaches it |
 
 ## execute_code
 
@@ -38,6 +39,7 @@ paths:
 | C | a declared generic class, used in the same input and in a later one | execute-code-shapes 108-109 |
 | C | a generic class: a property, a field refused, reflection, nested, self-referencing, a struct, a base declared in the same input, a constraint, from a script | execute-code-shapes 108-109, 117-126 |
 | C | a generic class's field named from a sibling class in the same input, and the game answering after it | execute-code-shapes 224-225 |
+| C | a declared generic class's field emitted into a DynamicMethod by hand (owner-typed, anonymously hosted), refused; through `AccessTools.FieldRefAccess`, an error; a non-generic class's and an mscorlib generic class's field emitted; the game answering after it | execute-code-shapes 226-232 |
 | C | a lambda in a generic method, capturing and not, `Func<T,string>`, one calling the method itself, in execute_code and a script | execute-code-shapes 81-83, 116, 194-196 |
 | C | a generic method called from the compile declaring it: itself, inferred, another before and after it, mutually, from a non-generic method before and after it, across classes, on a generic class; in a script | execute-code-shapes 186-193, 195-196 |
 | C | a generic method called with other type arguments from inside its own body: refused, naming the rewrites, which run; in a script | execute-code-shapes 197-203 |
@@ -45,6 +47,8 @@ paths:
 | C | a refused declaration: calling it says it does not exist, an earlier declaration of the name stays, its input's `using` stays out, the corrected resend compiles | execute-code-shapes 204-215, 218-219 |
 | C | a delegate declared again: another signature, alone, after a rebuild, over a class and by a class, generic, beside a refused type, in a namespace | execute-code-shapes 172-185 |
 | C | `JsonConvert` at the first naming in an Evaluator, in a declaration and in statements; an overload naming an absent assembly missing, and reading its attributes throwing; `JObject`, `JToken`, `Harmony`, `AccessTools`, `LevelSelectionController`, `List<T>` and LINQ in a declaration | execute-code-shapes 139-150 |
+| C | a method whose signature names an absent assembly: its parameters, `IsGenericMethod`, `ContainsGenericParameters`, `GetGenericArguments`, `MakeGenericMethod` and `Invoke` failing with that assembly named, each step skipping itself on a build without the guard; the same members on ordinary methods, constructors and an indexer unchanged; `JsonConvert`'s methods returned as a result; the game answering after | execute-code-shapes 233-246 |
+| C | a method whose signature names an absent assembly formatted as a string inside library code (`StringBuilder.Append`, `string.Concat`, concatenation, interpolation, `String.Format`, concatenation again from the cached verdict): refused as a string, naming the assembly; a method, a constructor and a property holding a function-pointer type, each checked as flagged first: refused, naming the function pointer; a search for a constructor or a getter-less property naming an absent assembly, none found on this game; each step skipping itself on a build without the `ToString` prefixes on `MonoMethod`, `MonoCMethod` and `MonoProperty`; an ordinary method still formatting and `JsonConvert`'s method names read; the game answering after each; a script's `Update` formatting a function-pointer method: refused, after checking the prefixes judge every caller and skipping otherwise, the game answering and the script unloading after it | execute-code-shapes 247-277 |
 | C | an anonymous type through `JsonConvert` and `JObject`, its fields and members by reflection, declared in a type; a generic class's public field through `JsonConvert`; in a script | execute-code-shapes 151-157, 160-161 |
 | C | an anonymous type with an earlier one's names and other types | execute-code-shapes 158-159 |
 | C | a bare `IEnumerator` with no `using` | execute-code-shapes 111; scripts-lifecycle 141 |
@@ -72,6 +76,7 @@ paths:
 | C | a loop in a static initializer; an exception filter | execute-code-errors 44-46 |
 | C | runaway recursion: a method, mutual, a lambda, a property, a constructor, a static initializer, caught, an iterator, `using`, `ToString` | execute-code-errors 61-72 |
 | C | deep legitimate recursion | execute-code-errors 65 |
+| C | runaway recursion through `finally` blocks and `catch when` filters, the game answering a ping after each case: a static initializer, which does not recurse, answers its value (2-3); a runaway the code catches answers success with the exception it caught, twice in a row (5-6), after its `finally` cleanup ran (8-9), and through `using` and `lock`, disposed and the lock free to another thread (32-33); recursion inside a `finally` (11-27), a throwing `finally` (29-30), a throwing filter (35-36), a filter calling compiled code (38-39), deep finite recursion with a throwing `finally` (41-42) and an iterator's `finally` (44-45) answer an error | finally-recursion 2-46 |
 | C | a stop at method entry: no loop; a catch at every level | execute-code-errors 73-74 |
 | C | a stop runs the compiled calls it unwinds through: a `finally`, a `using`, a loop in a `finally`, 7000 frames deep, a `catch`, in `Main()` | execute-code-errors 98-107, 110-113 |
 | C | a stop still ends a heavy call in a `finally` and a loop in a `catch` at every level | execute-code-errors 108-109 |

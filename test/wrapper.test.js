@@ -1,10 +1,17 @@
 import './support/session.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { cpSync, mkdtempSync, rmSync, utimesSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { startWrapper } from './support/wrapper-harness.js';
+import { WRAPPER_CODE_FILES } from '../lib/stale-code.js';
 
 const posix = process.platform !== 'win32';
+const repo = fileURLToPath(new URL('..', import.meta.url));
+const SUBAGENT_NOTE = 'A subagent already running keeps the tool list it started with, so a changed tool reaches only a new subagent.';
 
 test('the wrapper replays initialize after the child dies unexpectedly', { timeout: 20000, skip: !posix }, async (t) => {
   const w = startWrapper();
@@ -327,8 +334,34 @@ test('restart_server succeeds only once the new server has listed its tools, and
   assert.deepEqual(JSON.parse(restarted.result.content[0].text), {
     success: true,
     message: 'MCP server restarted successfully, listing 1 tools',
+    note: SUBAGENT_NOTE,
   });
   assert.equal(w.messages.filter((m) => m.result?.tools).length, 0);
+});
+
+test("restart_server's note adds the reconnect only once the wrapper's own code changed, naming the files", { timeout: 20000, skip: !posix }, async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'wrapper-stale-'));
+  for (const file of [...WRAPPER_CODE_FILES, 'package.json']) cpSync(path.join(repo, file), path.join(dir, file));
+  const w = startWrapper({}, { script: path.join(dir, 'wrapper.js') });
+  t.after(() => { w.stop(); rmSync(dir, { recursive: true, force: true }); });
+  await w.initialize(0);
+  const restart = async (id) => {
+    w.send({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'restart_server', arguments: {} } });
+    return JSON.parse((await w.waitFor((m) => m.id === id, 15000)).result.content[0].text);
+  };
+
+  assert.equal((await restart(1)).note, SUBAGENT_NOTE);
+
+  const now = new Date();
+  utimesSync(path.join(dir, 'wrapper.js'), now, now);
+  utimesSync(path.join(dir, 'lib/instance.js'), now, now);
+  const outcome = await restart(2);
+
+  assert.equal(outcome.message, 'MCP server restarted successfully, listing 1 tools');
+  assert.equal(
+    outcome.note,
+    `${SUBAGENT_NOTE} wrapper.js, lib/instance.js changed after this wrapper started and a restart does not reload the wrapper: reconnect the server in the client (/mcp in Claude Code) to load it.`,
+  );
 });
 
 test('a restart whose server cannot list its tools fails, naming the error and the log, and stops it', { timeout: 20000, skip: !posix }, async (t) => {

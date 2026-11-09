@@ -16,8 +16,9 @@ import { fileURLToPath } from 'url';
 import { COMMAND_CANCELLED, COMMAND_TIMEOUT, HANDSHAKE_TIMEOUT, UNITY_PRODUCT_DIR, UnityInspectorClient, cancelledError, defaultPort, isHandshakeRefusal, simulateInputProblem, tokenSearchIn, toolCommand, unityDataDirs } from './lib/unity-client.js';
 import { captureCommandHelp, parseStatStartTicks, composeExtraLaunchArgs, detectActiveProfile, forgetCommandHelp, gameBuild, gameStartTime, instanceModeChecked, instanceProbeFailure, invalidateGameProcessScan, isGameRunning, isWsl, killGame, listInstances, ownedGameProcesses, probeInstanceMode, readValidatedPidfile, removeInstance, resolveLaunchCommand, runCommandCapture, spawnDetached, userGameOutOfReach } from './lib/game-process.js';
 import { NO_INSTANCE_REASONS, instanceConfig, launcherConfig, steamConfig, withRoot } from './lib/instance.js';
-import { LAUNCH_REFUSED, preflightSteamLaunch, prepareSteamLaunch } from './lib/steam-launch.js';
+import { LAUNCH_REFUSED, preflightSteamLaunch, prepareSteamLaunch, r2modmanProfileRoots, withdrawWrapperArgs } from './lib/steam-launch.js';
 import { tokenizeCommand } from './lib/command-line.js';
+import { backdropColour, screenshotReply } from './lib/backdrop.js';
 import { CAPTURE_FILE, CAPTURE_STATES_DIR, DEFAULT_SETTLE_MS, DEFAULT_STATES_PATH, DEFAULT_SWAP_SETTLE_MS, DEFAULT_SWAP_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, REPORT_FILE, STATES_COPY_NAME, claimLeaseMs, formatLogTail, isAbsoluteGamePath, outDirProblem, parseLevel, releaseClaim, runCapture, teardownGame } from './lib/animation-capture.js';
 import {
   argumentTypeProblems,
@@ -32,6 +33,7 @@ import {
   withoutNullArguments,
 } from './lib/script-library.js';
 import { START_TIME_TOLERANCE_MS, fileIdOf, isPlayerLogName, linesBackward, readGuard, sameLogRun, sameRun } from './lib/log-delta.js';
+import { changedSince, serverCodeFiles } from './lib/stale-code.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -230,7 +232,6 @@ export function configureLaunchTiming(overrides = {}) {
   return { ...launchTiming };
 }
 
-const R2_PROFILES_SUFFIX = 'r2modmanPlus-local/Broforce/profiles';
 const UMM_LOG_IN_PROFILE = 'UMM/Core/Log.txt';
 // UMM writes its log beside its own assembly
 const DIRECT_INSTALL_LOGS = ['Broforce_Data/Managed/UnityModManager/Log.txt'];
@@ -239,13 +240,6 @@ const WINDOWS_PLAYER_LOGS = ['Player.log', 'output_log.txt'];
 const STALE_TOLERANCE_MS = START_TIME_TOLERANCE_MS;
 const SAME_RUN_WINDOW_MS = 60000;
 const ONLY_NEW_BASELINE_LINES = 20;
-
-function r2ProfileRoots() {
-  const roots = [path.join(os.homedir(), '.config', R2_PROFILES_SUFFIX)];
-  if (process.env.APPDATA) roots.push(path.join(process.env.APPDATA, R2_PROFILES_SUFFIX));
-  roots.push(path.join(os.homedir(), 'AppData/Roaming', R2_PROFILES_SUFFIX));
-  return [...new Set(roots)];
-}
 
 async function detectLogPlatform() {
   try {
@@ -279,7 +273,7 @@ async function playerLogPaths() {
 }
 
 function profileLogPaths(profile) {
-  return r2ProfileRoots().map(root => path.join(root, profile, UMM_LOG_IN_PROFILE));
+  return r2modmanProfileRoots().map(root => path.join(root, profile, UMM_LOG_IN_PROFILE));
 }
 
 // UNITY_INSPECTOR_LOG names a log for the user's game; an instance has its own two paths
@@ -301,7 +295,7 @@ async function ummLogSearch() {
   const ummPaths = [];
   const displays = [];
 
-  for (const root of r2ProfileRoots()) {
+  for (const root of r2modmanProfileRoots()) {
     let profiles = [];
     try {
       profiles = (await fs.readdir(root, { withFileTypes: true }))
@@ -939,7 +933,7 @@ function steamArgumentHelp(withSteamFlag) {
   const lead = withSteamFlag ? 'With steam: true ' : '';
   return serverPlatform === 'darwin'
     ? `\n\n${lead}${withSteamFlag ? 'the' : 'The'} Steam protocol launch takes no arguments, so launchArgs are not accepted.`
-    : `\n\n${lead}launchArgs follow the Doorstop arguments of Steam's -applaunch; the Steam protocol launch, used only when no Steam executable is found, takes none.`;
+    : `\n\n${lead}launchArgs follow the Steam launch's Doorstop arguments; the Steam protocol launch, used only when no Steam executable is found, takes none.`;
 }
 
 function renderArgumentHelp(instance, launch) {
@@ -1645,7 +1639,7 @@ function toolDefinitions({ launchHelp = "" } = {}) {
       },
       {
         name: "take_screenshot",
-        description: "Screenshot the game; returns the saved path. An optional `highlight` outlines a target for that frame only: the reply has `highlighted` or `highlightError`, and the screenshot succeeds either way.",
+        description: "Screenshot the game; returns the saved path. An optional `highlight` outlines a target for that frame only: the reply has `highlighted` or `highlightError`.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1659,6 +1653,10 @@ function toolDefinitions({ launchHelp = "" } = {}) {
               },
               description:
                 "A GameObject path, {instanceId}, or a rectangle in world units, x/y its bottom-left corner. An inactive, boundless or off-camera target is a highlightError.",
+            },
+            backdrop: {
+              type: ["boolean", "string"],
+              description: "Only characters, guns and effects, on a flat colour: true (#FF00FF) or #RRGGBB.",
             },
           },
         },
@@ -1792,7 +1790,7 @@ function toolDefinitions({ launchHelp = "" } = {}) {
       },
       {
         name: "go_to_level",
-        description: "Go to a campaign level; replies once in play, or once a cutscene holds it (named in `cutscene`), else fails after 60s. An out-of-range campaignIndex is rejected; a levelIndex past the campaign's end loads the Victory map. A `warning` says when enemy-spawn suppression skips its enemies, or that `simulate_input` `start` skips the cutscene.",
+        description: "Go to a campaign level; replies once in play, or once a cutscene holds it (named in `cutscene`), else fails after 60s. An out-of-range campaignIndex is rejected; a levelIndex past the campaign's end loads the Victory map. A `warning` says that `simulate_input` `start` skips the cutscene.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1968,8 +1966,8 @@ function toolDefinitions({ launchHelp = "" } = {}) {
         name: "capture_animations",
         description:
           "Sweep a bro's animation states with the game clock held at zero, optionally loading a level and swapping the bro first: one " +
-          "PNG strip per state, `capture.json` (the sprite-sheet cell every frame addressed) and `report.md` (those against the state list), " +
-          "all into `out`. The reply carries `status` and the report. Reference: `.claude/rules/animation-capture.md`.",
+          "PNG strip per state, `capture.json` and `report.md` (cells against the state list), " +
+          "all into `out`. The reply carries `status` and the report. Reference: `AGENTS.md`, Animation capture.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1991,6 +1989,7 @@ function toolDefinitions({ launchHelp = "" } = {}) {
             includeLethal: { type: "boolean", description: "Also sweep states that pin the bro dead (default: false)" },
             allowSideEffects: { type: "boolean", description: "Let animations fire real specials/attacks (default: false)" },
             only: { type: "array", items: { type: "string" }, description: "Only these states, in list order" },
+            backdrop: { type: ["boolean", "string"], description: "As take_screenshot's backdrop" },
           },
           required: ["out"],
         },
@@ -2012,7 +2011,7 @@ function toolDefinitions({ launchHelp = "" } = {}) {
             restart: { type: "boolean", description: "Stop the running game first, then relaunch (default: false)" },
             launchArgs: {
               type: "string",
-              description: "Arguments appended to the launch this call runs, tokenized with shell-style quoting: the instance launch by default, the configured launch command or Steam's -applaunch with steam: true. The Steam protocol fallback takes no arguments.",
+              description: "Arguments appended to the launch this call runs, tokenized with shell-style quoting: the instance launch by default, the configured launch command or the Steam launch with steam: true. The Steam protocol fallback takes no arguments.",
             },
           },
         },
@@ -2535,9 +2534,16 @@ async function launchGame(args, signal = null) {
     if (config.isAgentInstance) release = await acquireInstanceOp();
     return await launchOnTarget({ args, signal, config, nextTarget, launch, vanilla, withTargetNotes, beforeSwitch, releaseInstance });
   } finally {
+    await withdrawWrapperArgs(launch.prepare);
     releaseInstance();
     boundCalls.splice(boundCalls.indexOf('launch_game'), 1);
   }
+}
+
+async function withdrawnArgsNote(launch) {
+  if (!(await withdrawWrapperArgs(launch.prepare))) return '';
+  return ` Steam had not handed the game the ${launch.vanilla ? 'vanilla' : 'modded'} launch arguments, so they were ` +
+    `withdrawn from ${launch.prepare.wrapperArgs.file} and a game Steam is still starting comes up without them. Launch again.`;
 }
 
 function likelyCauses(launch, state) {
@@ -2697,7 +2703,7 @@ async function launchOnTarget({ args, signal, config, nextTarget, launch, vanill
     if (err.code === COMMAND_CANCELLED) throw err;
     await restoreTarget(beforeSwitch);
     throw new Error(
-      `Could not write the Proton override: ${err.message}. ` +
+      `Could not write ${err.wrapperArgs ? `the launch arguments to ${err.wrapperArgs}` : 'the Proton override'}: ${err.message}. ` +
       (stoppedFirst ? `The running game had already been stopped, and nothing was launched.` : `Nothing was launched.`)
     );
   }
@@ -2847,7 +2853,8 @@ async function launchOnTarget({ args, signal, config, nextTarget, launch, vanill
         : poll.state === "handshake-refused"
           ? `Game launched with \`${launch.display}\`, but its inspector refused this server's connection: ${poll.message}`
           : `${asSentence(`Game launched with \`${launch.display}\` but never answered — ${poll.message}`)} ` +
-            `It may still be starting: call wait_for_game to keep waiting for it.`) + likelyCauses(launch, poll.state) + tail,
+            `It may still be starting: call wait_for_game to keep waiting for it.`) + likelyCauses(launch, poll.state) +
+      (poll.state === "no-process" ? await withdrawnArgsNote(launch) : '') + tail,
     lastError: poll.lastError,
     attempts: poll.attempts,
     ...(ignoredArgsNote ? { note: ignoredArgsNote } : {}),
@@ -2899,6 +2906,7 @@ async function vanillaOutcome({ signal, config, nextTarget, launch, watcher, lau
       message: `${how}, but no Broforce process of ${targetDescription(nextTarget)} was running ` +
         `${confirmMs / 1000}s later — the game did not start, or exited as it started.` +
         likelyCauses(launch, 'no-process') +
+        (await withdrawnArgsNote(launch)) +
         (await launchFailureTail(config, launcherStderr, spawnedAt)),
       ...note,
     });
@@ -3140,6 +3148,7 @@ async function captureOptions(args) {
     includeLethal: args.includeLethal === true,
     allowSideEffects: args.allowSideEffects === true,
     only: captureOnly(args.only),
+    backdrop: backdropColour(args.backdrop),
   };
 }
 
@@ -3197,8 +3206,23 @@ function newestLinesWithin(lines, max, available = lines.length) {
   return { content: last.subarray(start).toString('utf8'), returned: 1, dropped: available - 1, cut: true };
 }
 
-export function handleToolCall(request, { signal = null } = {}) {
-  return unityClient.runCall(signal, () => callTool(request, signal));
+const SERVER_CODE_FILES = serverCodeFiles();
+
+export function staleCodeNotice(changed, { isError = false } = {}) {
+  const stale = `The server's code changed on disk after this server started (${changed.join(', ')}), so it is running older code than its checkout`;
+  const advice = isError
+    ? ' and can refuse files the newer code wrote. Call restart_server once no other call is running, then repeat this call unless it may already have acted.'
+    : '. This call ran, so do not repeat it. Call restart_server once no other call is running.';
+  // Read directly: activeTarget() would settle a target nothing has resolved yet
+  const targetMoves = currentTarget === 'steam' && sessionInstance().isAgentInstance && instanceModeChecked() !== false;
+  return `${stale}${advice}${targetMoves ? " A restart puts the target back on this session's default." : ''}`;
+}
+
+export async function handleToolCall(request, { signal = null } = {}) {
+  const reply = await unityClient.runCall(signal, () => callTool(request, signal));
+  const changed = changedSince(SERVER_CODE_FILES, performance.timeOrigin);
+  if (changed.length === 0) return reply;
+  return { ...reply, content: [...reply.content, { type: "text", text: staleCodeNotice(changed, reply) }] };
 }
 
 async function callTool(request, signal) {
@@ -3281,15 +3305,11 @@ async function callTool(request, signal) {
         result = await unityClient.sendCommand("list_enemies");
         break;
 
-      case "take_screenshot":
-        result = await unityClient.sendCommand(
-          "take_screenshot",
-          args.highlight === undefined ? {} : { highlight: args.highlight },
-        );
-        if (result && result.path) {
-          result.path = await unityClient.translateScreenshotPath(result.path);
-        }
+      case "take_screenshot": {
+        const shot = toolCommand("take_screenshot", args);
+        result = await screenshotReply(shot, await unityClient.sendCommand(shot.method, shot.params), unityClient);
         break;
+      }
 
       case "execute_code":
         if (!args.code) {

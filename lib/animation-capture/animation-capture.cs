@@ -7,6 +7,7 @@
 // #args box: World-unit half-size of the crop box; each strip cell is 2*box pixels (default 24)
 // #args suppress: "false" to let the swept animations fire their real specials and attacks (default true)
 // #args claim: The token of the claim capture_animations took for this run, which Main() may replace (default none)
+// #args backdrop: A colour as #RRGGBB to render the strips on, with the level's scenery hidden (default none)
 
 using System.Globalization;
 using System.IO;
@@ -193,6 +194,9 @@ public class AnimationCapture : MonoBehaviour
 
     private RenderTexture captureTexture;
     private RenderTexture contributionTexture;
+    private bool backdropOn;
+    private Color32 backdropColour;
+    private Camera backdropCamera;
 
     private static void Log(string message)
     {
@@ -233,6 +237,7 @@ public class AnimationCapture : MonoBehaviour
         float boxSize = ParseFloat(ScriptContext.GetArg("box", "24"), 24f);
         bool suppress = ScriptContext.GetArg("suppress", "true") != "false";
         string claim = ScriptContext.GetArg("claim", "");
+        string backdrop = ScriptContext.GetArg("backdrop", "");
 
         AnimationCapture created = null;
         try
@@ -255,6 +260,7 @@ public class AnimationCapture : MonoBehaviour
             if (string.IsNullOrEmpty(statesFile)) throw new Exception("statesFile is required");
             if (player < 0 || player > 3) throw new Exception("player must be 0-3, got " + player);
             if (boxSize < 1f) throw new Exception("box must be at least 1, got " + boxSize);
+            Color32 colour = backdrop == "" ? new Color32(0, 0, 0, 0) : PlainBackdrop.ParseColour(backdrop);
 
             JObject parameters;
             JArray stateList = ReadStates(statesFile, out parameters);
@@ -283,6 +289,13 @@ public class AnimationCapture : MonoBehaviour
             instance.sweepParams = parameters ?? new JObject();
             instance.sweepParams["allowSideEffects"] = !suppress;
             instance.sweepParams["box"] = boxSize;
+            if (backdrop != "")
+            {
+                instance.backdropOn = true;
+                instance.backdropColour = colour;
+                instance.backdropCamera = PlainBackdrop.CreateCamera();
+                ScriptContext.GameObjects.Add(instance.backdropCamera.gameObject);
+            }
             AppDomain.CurrentDomain.SetData(LiveSlot, new object[] { go, outDir });
 
             SuppressBubbles();
@@ -736,7 +749,7 @@ public class AnimationCapture : MonoBehaviour
         heldBubbleScales.Clear();
     }
 
-    // The floating lives/grenades gear is parented straight to the character (Player.cs:798-802) and
+    // The floating lives/grenades gear is parented straight to the character (Player.SetUpDeathMatchHUD) and
     // would land in the middle of every crop. It is the only hero-parented HUD the decompiled source
     // exposes; anything else drawing inside the crop shows up in the bro block's overlapProbe.
     private void HideOverlays()
@@ -1487,7 +1500,8 @@ public class AnimationCapture : MonoBehaviour
     {
         if (stateOnscreenCells == 0 || stateSawWritten) return;
 
-        AddStateError("state '" + currentName + "' blank capture: every pixel of the strip read back as zero");
+        AddStateError("state '" + currentName + "' blank capture: every pixel of the strip read back as zero"
+            + (backdropOn ? " or the backdrop colour" : ""));
 
         if (blankLogged) return;
         blankLogged = true;
@@ -2603,10 +2617,11 @@ public class AnimationCapture : MonoBehaviour
             {
                 offscreen = false;
 
+                List<Renderer> hidden = backdropOn ? PlainBackdrop.HiddenRenderers() : null;
                 captureTexture = ScreenSizedTexture(captureTexture);
-                RenderScene(captureTexture);
+                RenderScene(captureTexture, hidden);
                 Color32[] source = ReadRegion(captureTexture, readX, readY, readW, readH);
-                contributionFailure = CheckContribution(source, readX, readY, readW, readH);
+                contributionFailure = CheckContribution(source, readX, readY, readW, readH, hidden);
 
                 // Screen space and Texture2D space are both bottom-left origin, so the strip comes out upright
                 for (int y = 0; y < cellPx; y++)
@@ -2651,7 +2666,7 @@ public class AnimationCapture : MonoBehaviour
         }
     }
 
-    private string CheckContribution(Color32[] withCharacter, int x, int y, int width, int height)
+    private string CheckContribution(Color32[] withCharacter, int x, int y, int width, int height, List<Renderer> hidden)
     {
         Renderer[] renderers = character.GetComponentsInChildren<Renderer>(false);
         List<Renderer> disabled = new List<Renderer>();
@@ -2672,7 +2687,7 @@ public class AnimationCapture : MonoBehaviour
             if (disabled.Count == 0) return "the character has no enabled renderer";
 
             contributionTexture = ScreenSizedTexture(contributionTexture);
-            RenderScene(contributionTexture);
+            RenderScene(contributionTexture, hidden);
             withoutCharacter = ReadRegion(contributionTexture, x, y, width, height);
         }
         finally
@@ -2702,12 +2717,14 @@ public class AnimationCapture : MonoBehaviour
     // channels count: neither the backbuffer nor a render texture is guaranteed to carry alpha, and
     // a scene that draws only opaque black would read the same as one that never drew. The loop
     // stops at the first written pixel, so only a blank crop pays for the whole scan.
-    private static bool AnyWritten(Color32[] pixels)
+    private bool AnyWritten(Color32[] pixels)
     {
         for (int i = 0; i < pixels.Length; i++)
         {
             Color32 p = pixels[i];
-            if (p.a != 0 || p.r != 0 || p.g != 0 || p.b != 0) return true;
+            if (p.a == 0 && p.r == 0 && p.g == 0 && p.b == 0) continue;
+            if (backdropOn && p.r == backdropColour.r && p.g == backdropColour.g && p.b == backdropColour.b) continue;
+            return true;
         }
         return false;
     }
@@ -2716,8 +2733,14 @@ public class AnimationCapture : MonoBehaviour
     // whenever the window is not being presented at all, while the cameras themselves render fine.
     // So the sweep drives the render itself: every camera that draws to the screen is pointed at one
     // texture, in depth order, and each clears or composites into it exactly as it would on screen.
-    private void RenderScene(RenderTexture target)
+    private void RenderScene(RenderTexture target, List<Renderer> hidden)
     {
+        if (backdropOn)
+        {
+            if (PlainBackdrop.Render(target, backdropCamera, backdropColour, hidden) == 0) NoteNoCamera();
+            return;
+        }
+
         RenderTexture previousActive = RenderTexture.active;
         try
         {
@@ -2730,11 +2753,7 @@ public class AnimationCapture : MonoBehaviour
         }
 
         List<Camera> cameras = ScreenCameras();
-        if (cameras.Count == 0 && !noCameraLogged)
-        {
-            noCameraLogged = true;
-            Log("No screen camera to render: the crops will be empty");
-        }
+        if (cameras.Count == 0) NoteNoCamera();
 
         for (int i = 0; i < cameras.Count; i++)
         {
@@ -2754,6 +2773,13 @@ public class AnimationCapture : MonoBehaviour
                 cam.targetTexture = null;
             }
         }
+    }
+
+    private void NoteNoCamera()
+    {
+        if (noCameraLogged) return;
+        noCameraLogged = true;
+        Log("No screen camera to render: the crops will be empty");
     }
 
     private static RenderTexture ScreenSizedTexture(RenderTexture texture)
@@ -3103,4 +3129,6 @@ public class AnimationCapture : MonoBehaviour
     }
 
     #endregion
+
+    // #include PlainBackdrop
 }

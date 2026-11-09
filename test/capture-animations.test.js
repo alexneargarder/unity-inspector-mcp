@@ -41,7 +41,7 @@ import {
   loadStates,
   mergeStates,
   parseLevel,
-  partitionLethal,
+  partitionExcluded,
   runCapture,
   sameSequence,
   slotOf,
@@ -61,6 +61,7 @@ import {
   teardownGame,
   waitForSweepable,
 } from '../lib/animation-capture.js';
+import { BACKDROP_SOURCE_PATH } from '../lib/backdrop.js';
 import { UnityInspectorClient, commandTimeout } from '../lib/unity-client.js';
 import { CSHARP_SCRIPTS_DIR, SCRIPTS_DIR, listCSharpScripts } from '../lib/script-library.js';
 import { startStubServer, reply } from './support/stub-server.js';
@@ -429,10 +430,12 @@ test('every bundled state steps exactly as many frames as its expected column sp
   }
 
   for (const state of states) {
+    assert.ok(typeof state.note === 'string' && state.note.trim() !== '', `${state.name}: every state carries a note`);
+    assert.match(state.note, /\b(?:[A-Z]\w*\.)?(?:ChangeFrame|Animate[A-Z]\w*)\b/, `${state.name}: the note must cite the game member it rests on`);
+    assert.doesNotMatch(state.note, /\.cs:\d|:\d{3,}/, `${state.name}: the note cites by member, never by line`);
     if (state.unsupported) continue;
     assert.notEqual(expectedSequence(state), null, `${state.name}: its expect has a well-formed walk`);
     if (state.expectGun) assert.notEqual(expectedSequence(state, 'expectGun'), null, `${state.name}: and its expectGun`);
-    assert.ok(state.note && state.note.includes(':'), `${state.name}: the note must cite source lines`);
   }
 });
 
@@ -2159,17 +2162,68 @@ test('the bundled list marks the states that pin the bro dead', async () => {
   }
 });
 
-test('partitionLethal holds lethal states back unless they are asked for', () => {
+test('partitionExcluded holds lethal states back unless they are asked for', () => {
   const states = [
     { name: 'idle' },
     { name: 'death_grounded', lethal: true, lethalReason: 'pins the bro dead' },
   ];
 
-  assert.deepEqual(partitionLethal(states, false), {
+  assert.deepEqual(partitionExcluded(states, { includeLethal: false }), {
     states: [{ name: 'idle' }],
     excluded: [{ name: 'death_grounded', lethal: true, lethalReason: 'pins the bro dead' }],
   });
-  assert.deepEqual(partitionLethal(states, true), { states, excluded: [] });
+  assert.deepEqual(partitionExcluded(states, { includeLethal: true }), { states, excluded: [] });
+});
+
+test('partitionExcluded holds needsSideEffects states back unless side effects are allowed, and a lethal one needs both flags', () => {
+  const punch = { name: 'zipline_punch', needsSideEffects: 'reached through FireWeapon' };
+  const both = { name: 'grim', lethal: true, lethalReason: 'pins the bro dead', needsSideEffects: 'fires UseSpecial' };
+  const states = [{ name: 'idle' }, punch, both];
+  const names = (options) => {
+    const { states: swept, excluded } = partitionExcluded(states, options);
+    return { swept: swept.map((state) => state.name), excluded: excluded.map((state) => state.name) };
+  };
+
+  assert.deepEqual(names({}), { swept: ['idle'], excluded: ['zipline_punch', 'grim'] });
+  assert.deepEqual(names({ allowSideEffects: true }), { swept: ['idle', 'zipline_punch'], excluded: ['grim'] });
+  assert.deepEqual(names({ includeLethal: true }), { swept: ['idle'], excluded: ['zipline_punch', 'grim'] });
+  assert.deepEqual(names({ includeLethal: true, allowSideEffects: true }), { swept: ['idle', 'zipline_punch', 'grim'], excluded: [] });
+});
+
+test('validateStates refuses a needsSideEffects that is not a non-empty reason string', () => {
+  const { errors } = validateStates([
+    { name: 'ok', needsSideEffects: 'reached through FireWeapon', step: { values: [0] } },
+    { name: 'flag', needsSideEffects: true, step: { values: [0] } },
+    { name: 'blank', needsSideEffects: '  ', step: { values: [0] } },
+    { name: 'number', needsSideEffects: 1, step: { values: [0] } },
+    { name: 'unsupported_too', needsSideEffects: null, unsupported: 'unreachable from ChangeFrame' },
+  ]);
+
+  assert.deepEqual(errors, [
+    'flag: needsSideEffects must be a non-empty reason string',
+    'blank: needsSideEffects must be a non-empty reason string',
+    'number: needsSideEffects must be a non-empty reason string',
+    'unsupported_too: needsSideEffects must be a non-empty reason string',
+  ]);
+});
+
+test('validateStates refuses a lethal that is not true, and a lethal state without a lethalReason', () => {
+  const { errors } = validateStates([
+    { name: 'ok', lethal: true, lethalReason: 'pins the bro dead', step: { values: [0] } },
+    { name: 'false_flag', lethal: false, step: { values: [0] } },
+    { name: 'string_flag', lethal: 'true', lethalReason: 'pins the bro dead', step: { values: [0] } },
+    { name: 'no_reason', lethal: true, step: { values: [0] } },
+    { name: 'blank_reason', lethal: true, lethalReason: '  ', step: { values: [0] } },
+    { name: 'unsupported_too', lethal: true, lethalReason: 7, unsupported: 'unreachable from ChangeFrame' },
+  ]);
+
+  assert.deepEqual(errors, [
+    'false_flag: lethal must be true when present',
+    'string_flag: lethal must be true when present',
+    'no_reason: a lethal state needs lethalReason, a non-empty reason string',
+    'blank_reason: a lethal state needs lethalReason, a non-empty reason string',
+    'unsupported_too: a lethal state needs lethalReason, a non-empty reason string',
+  ]);
 });
 
 test('buildReport lists the excluded lethal states', () => {
@@ -2177,11 +2231,39 @@ test('buildReport lists the excluded lethal states', () => {
     capture: { bro: { type: 'Rambro' }, errors: [], states: [] },
     states: [],
     outDir: '/tmp/shots',
-    options: { excluded: [{ name: 'death_grounded', lethalReason: 'pins the bro dead' }] },
+    options: { excluded: [{ name: 'death_grounded', lethal: true, lethalReason: 'pins the bro dead' }] },
   });
 
   assert.match(report, /0 captured, 0 skipped, 1 excluded/);
   assert.match(report, /## Excluded \(1\)[\s\S]*death_grounded\*\* — pins the bro dead; set includeLethal: true/);
+});
+
+test('buildReport lists each excluded state once, with every reason that holds it back', () => {
+  const { text: report, summary } = buildReport({
+    capture: { bro: { type: 'Rambro' }, errors: [], states: [] },
+    states: [],
+    outDir: '/tmp/shots',
+    options: {
+      excluded: [
+        { name: 'zipline_punch', needsSideEffects: 'its first frame is reached through FireWeapon' },
+        { name: 'grim', lethal: true, lethalReason: 'pins the bro dead', needsSideEffects: 'fires UseSpecial' },
+      ],
+    },
+  });
+
+  assert.equal(summary.excluded, 2);
+  assert.equal(summary.mismatches, 0);
+  assert.equal(summary.errors, 0);
+  assert.match(report, /0 captured, 0 skipped, 2 excluded/);
+  assert.match(report, /## Excluded \(2\)\n\n- \*\*zipline_punch\*\* — its first frame is reached through FireWeapon; set allowSideEffects: true to sweep it\n- \*\*grim\*\* — pins the bro dead; fires UseSpecial; set includeLethal: true and allowSideEffects: true to sweep it\n/);
+
+  const lethalOnly = buildReport({
+    capture: { bro: { type: 'Rambro' }, errors: [], states: [] },
+    states: [],
+    outDir: '/tmp/shots',
+    options: { allowSideEffects: true, excluded: [{ name: 'grim', lethal: true, lethalReason: 'pins the bro dead', needsSideEffects: 'fires UseSpecial' }] },
+  }).text;
+  assert.match(lethalOnly, /- \*\*grim\*\* — pins the bro dead; set includeLethal: true to sweep it\n/, 'a gate that is open is not named');
 });
 
 test('runCapture leaves lethal states out of the list it sends the game', { timeout: 20000 }, async (t) => {
@@ -2662,6 +2744,66 @@ test('runCapture turns the script suppression off only when side effects are all
   assert.equal('suppress' in argsOf(), false, 'the script defaults to suppressing');
 });
 
+test('runCapture hands the script a backdrop and always sends the shared render nested in its class', { timeout: 20000 }, async (t) => {
+  const dir = await tempDir(t);
+  const statesPath = path.join(dir, 'input-states.json');
+  const outDir = path.join(dir, 'out');
+  await fs.writeFile(statesPath, JSON.stringify({ states: fixtureStates }));
+
+  const seen = [];
+  const stub = await startGameStub((request, socket) => {
+    seen.push(request);
+    if (request.method === 'execute_script') {
+      writeNow(path.join(outDir, 'capture.json'), JSON.stringify(fixtureCapture));
+      writeNow(path.join(outDir, 'done'), '');
+    }
+    reply(socket, request.id, { success: true });
+  });
+
+  const client = new UnityInspectorClient({ host: '127.0.0.1', port: stub.port });
+  t.after(async () => { client.disconnect(); await stub.close(); });
+
+  const base = { statesPaths: [statesPath], out: outDir, gameOut: outDir, timeoutMs: 5000, player: 0 };
+  const sentScript = () => seen.find((r) => r.method === 'execute_script').params;
+  const copiedBackdrop = async () => JSON.parse(await fs.readFile(path.join(outDir, STATES_COPY_NAME), 'utf-8')).params.backdrop;
+  const run = (extra) => runCapture({ ...base, ...extra }, client, { pollMs: 5 });
+  const script = await fs.readFile(SCRIPT_PATH, 'utf-8');
+  const nested = `public class PlainBackdrop\n{\n${await fs.readFile(BACKDROP_SOURCE_PATH, 'utf-8')}}\n`;
+
+  await run({ backdrop: '#00FF00' });
+  assert.equal(sentScript().args.backdrop, '#00FF00');
+  assert.equal(await copiedBackdrop(), '#00FF00');
+  const { source } = sentScript();
+  assert.ok(source.includes(nested), 'the shared source wrapped in a class');
+  assert.doesNotMatch(source, /\/\/ #include PlainBackdrop/);
+  assert.ok(source.indexOf(nested) > source.indexOf('public class AnimationCapture'), 'nested in the capture class');
+  assert.equal(source.length, script.length - '    // #include PlainBackdrop'.length + nested.length, 'only the include line is replaced');
+
+  seen.length = 0;
+  await run({ backdrop: null });
+  assert.equal('backdrop' in sentScript().args, false);
+  assert.equal(await copiedBackdrop(), null);
+  assert.ok(sentScript().source.includes(nested), 'the script references the class either way');
+});
+
+test('capture_animations takes backdrop as take_screenshot does, refusing any other value before the game', { timeout: 30000 }, async (t) => {
+  const outDir = path.join(await tempDir(t), 'out');
+  const { scriptArgs, seen } = await finishingStub(t, outDir);
+
+  await sweepPayload({ out: outDir, backdrop: true, timeout: 5 });
+  assert.equal(scriptArgs().backdrop, '#FF00FF');
+  await sweepPayload({ out: outDir, backdrop: '#123abc', timeout: 5 });
+  assert.equal(scriptArgs().backdrop, '#123abc');
+  await sweepPayload({ out: outDir, backdrop: false, timeout: 5 });
+  assert.equal('backdrop' in scriptArgs(), false);
+
+  const before = seen.length;
+  const refused = await callCapture({ out: outDir, backdrop: 'magenta', timeout: 5 });
+  assert.equal(refused.isError, true);
+  assert.equal(textOf(refused), 'Error: backdrop must be true, false or a colour as #RRGGBB, got "magenta"');
+  assert.equal(seen.length, before, 'nothing reached the game');
+});
+
 test('every Drunken Broster state pins the attack flags its ChangeFrame dispatches on', async () => {
   const layerPath = path.join(path.dirname(DEFAULT_STATES_PATH), 'drunken-broster.json');
   const { states } = validateStates(JSON.parse(await fs.readFile(layerPath, 'utf-8')));
@@ -2688,7 +2830,9 @@ test('the Drunken Broster layer restates special_new and validates', async () =>
 
   for (const state of states) {
     if (state.expect.cols) assert.equal(state.step.values.length, state.expect.cols[1] - state.expect.cols[0] + 1);
-    assert.match(state.note, /:\d+/, 'the note must cite source lines');
+    assert.ok(typeof state.note === 'string' && state.note.trim() !== '', `${state.name}: every state carries a note`);
+    assert.match(state.note, /\bDrunkenBroster\.[A-Z]\w*/, `${state.name}: the note must cite the DrunkenBroster member it rests on`);
+    assert.doesNotMatch(state.note, /\.cs:\d|:\d{3,}/, `${state.name}: the note cites by member, never by line`);
   }
   for (const state of [drinking, sober]) {
     assert.match(state.note, /--allow-side-effects/, 'the sheet swap needs the flag, and the note says so');
@@ -2714,8 +2858,8 @@ test('the Drunken Broster layer reaches the held-item gun sheet through before/a
   assert.equal(held.setup.gunFrame, 0, 'SetGunSprite only runs from the running frames while gunFrame <= 0');
   assert.notEqual(held.setup.chosenItem, 'ExplosiveBarrel', 'a barrel arms a timer the sweep would run down');
   assert.match(held.note, /melee-sheet row 8, columns 0-7/, 'the gun cells are recorded in the note');
-  assert.match(held.note, /DrunkenBroster\.cs:2752-2767/, 'the note names the source lines');
-  assert.match(held.note, /TestVanDammeAnim\.cs:4075-4078/, 'the Running arm, not the Idle one');
+  assert.match(held.note, /DrunkenBroster\.ChangeFrame forwards to base\.ChangeFrame/, 'the note names the override the body cells pass through');
+  assert.match(held.note, /TestVanDammeAnim\.ChangeFrame's Running arm -> AnimateRunning/, 'the Running arm, not the Idle one');
 });
 
 test('the Drunken Broster layer sweeps the held-item state before the bro picks a bottle up', async () => {
@@ -2848,7 +2992,7 @@ test('the capture_animations schema carries every argument and the bounds the sw
   assert.deepEqual(inputSchema.required, ['out'], 'only the output directory has no sensible default');
   assert.deepEqual(
     Object.keys(properties).sort(),
-    ['allowSideEffects', 'bro', 'box', 'gameOut', 'includeLethal', 'level', 'only', 'out', 'player', 'settle',
+    ['allowSideEffects', 'backdrop', 'bro', 'box', 'gameOut', 'includeLethal', 'level', 'only', 'out', 'player', 'settle',
       'states', 'swapSettle', 'swapTimeout', 'timeout'].sort(),
   );
 
@@ -2878,7 +3022,7 @@ test('the capture_animations schema carries every argument and the bounds the sw
   assert.match(properties.swapTimeout.description, new RegExp(`default: ${DEFAULT_SWAP_TIMEOUT_MS / 1000}`));
   assert.match(properties.timeout.description, new RegExp(`default: ${DEFAULT_TIMEOUT_MS / 1000}`));
   assert.match(description, /report\.md/, 'the description says what the sweep writes');
-  assert.match(description, /animation-capture\.md/, 'and where the full reference lives');
+  assert.match(description, /`AGENTS\.md`/, 'and where the full reference lives');
 });
 
 test('capture_animations refuses an out that is missing, relative or not a directory', async (t) => {
@@ -2940,7 +3084,7 @@ test('capture_animations resolves a relative states name under the state-list di
   assert.ok(!response.isError, textOf(response));
 
   // The bundled list is what a bare name reaches, and the sweep copies the merged result out
-  const bundled = partitionLethal(await loadStates([DEFAULT_STATES_PATH]), false).states;
+  const bundled = partitionExcluded(await loadStates([DEFAULT_STATES_PATH])).states;
   const copied = JSON.parse(await fs.readFile(path.join(outDir, STATES_COPY_NAME), 'utf-8'));
   assert.deepEqual(copied.states.map((state) => state.name), bundled.map((state) => state.name));
   assert.ok(bundled.length > 0);
@@ -3301,7 +3445,7 @@ test('capture_animations sweeps the bundled base list alone when states is absen
   const outDir = path.join(await tempDir(t), 'out');
   await finishingStub(t, outDir);
 
-  const bundled = partitionLethal(await loadStates([DEFAULT_STATES_PATH]), false).states.map((state) => state.name);
+  const bundled = partitionExcluded(await loadStates([DEFAULT_STATES_PATH])).states.map((state) => state.name);
   assert.ok(bundled.length > 0);
 
   for (const states of [undefined, 'base-states.json', ['base-states.json'], 'base-states']) {
@@ -3322,7 +3466,7 @@ test('capture_animations layers an absolute custom list over the bundled base, l
 
   await sweepPayload({ out: outDir, states: ['base-states.json', layerPath], timeout: 5 });
 
-  const base = partitionLethal(await loadStates([DEFAULT_STATES_PATH]), false).states.map((state) => state.name);
+  const base = partitionExcluded(await loadStates([DEFAULT_STATES_PATH])).states.map((state) => state.name);
   const copied = JSON.parse(await fs.readFile(path.join(outDir, STATES_COPY_NAME), 'utf-8')).states;
   assert.deepEqual(copied.map((state) => state.name), [...base, 'custom_only'], 'base order kept, a new state appended');
   assert.deepEqual(copied.find((state) => state.name === 'running').expect, restated.expect, 'the later layer replaces the base entry');
@@ -3496,6 +3640,66 @@ test('capture_animations sends lethal states only for includeLethal: true', { ti
   assert.equal(opted.summary.excluded, 0);
 });
 
+test('capture_animations sends needsSideEffects states only for allowSideEffects: true, and a lethal one only with includeLethal too', { timeout: 30000 }, async (t) => {
+  const dir = await tempDir(t);
+  const outDir = path.join(dir, 'out');
+  const statesPath = path.join(dir, 'with-side-effects.json');
+  await fs.writeFile(statesPath, JSON.stringify({
+    states: [
+      ...fixtureStates,
+      { name: 'zipline_punch', needsSideEffects: 'its first frame is reached through FireWeapon', step: { values: [0] }, expect: { sheet: 'main', row: 3, col: 0 } },
+      { name: 'grim', lethal: true, lethalReason: 'pins the bro dead', needsSideEffects: 'fires UseSpecial', step: { values: [0] } },
+    ],
+  }));
+  await finishingStub(t, outDir);
+
+  for (const allowSideEffects of [undefined, false]) {
+    const payload = await sweepPayload({ out: outDir, states: statesPath, timeout: 5, ...(allowSideEffects === undefined ? {} : { allowSideEffects }) });
+    const copied = await copiedStateNames(outDir);
+    assert.ok(!copied.includes('zipline_punch') && !copied.includes('grim'), `allowSideEffects ${JSON.stringify(allowSideEffects)}`);
+    assert.equal(payload.summary.excluded, 2);
+    assert.match(payload.report, /- \*\*zipline_punch\*\* — its first frame is reached through FireWeapon; set allowSideEffects: true to sweep it/);
+    assert.doesNotMatch(payload.report, /\*\*zipline_punch\*\* — addressed/, 'never a mismatch');
+    assert.doesNotMatch(payload.report, /^- zipline_punch$/m, 'never listed as never reached');
+  }
+
+  const allowed = await sweepPayload({ out: outDir, states: statesPath, allowSideEffects: true, timeout: 5 });
+  let copied = await copiedStateNames(outDir);
+  assert.ok(copied.includes('zipline_punch'), 'allowSideEffects sends it');
+  assert.ok(!copied.includes('grim'), 'a lethal one still waits for includeLethal');
+  assert.equal(allowed.summary.excluded, 1);
+  assert.match(allowed.report, /- \*\*grim\*\* — pins the bro dead; set includeLethal: true to sweep it/);
+
+  const lethalOnly = await sweepPayload({ out: outDir, states: statesPath, includeLethal: true, timeout: 5 });
+  assert.ok(!(await copiedStateNames(outDir)).includes('grim'), 'includeLethal alone does not send it');
+  assert.match(lethalOnly.report, /- \*\*grim\*\* — fires UseSpecial; set allowSideEffects: true to sweep it/);
+
+  const both = await sweepPayload({ out: outDir, states: statesPath, includeLethal: true, allowSideEffects: true, timeout: 5 });
+  copied = await copiedStateNames(outDir);
+  assert.ok(copied.includes('zipline_punch') && copied.includes('grim'), 'both flags send both');
+  assert.equal(both.summary.excluded, 0);
+});
+
+test('only naming a needsSideEffects state still leaves it out without allowSideEffects', { timeout: 30000 }, async (t) => {
+  const dir = await tempDir(t);
+  const outDir = path.join(dir, 'out');
+  const statesPath = path.join(dir, 'with-side-effects.json');
+  await fs.writeFile(statesPath, JSON.stringify({
+    states: [...fixtureStates, { name: 'zipline_punch', needsSideEffects: 'reached through FireWeapon', step: { values: [0] } }],
+  }));
+  await finishingStub(t, outDir, { capture: { bro: {}, errors: [], states: [] } });
+
+  const gated = await sweepPayload({ out: outDir, states: statesPath, only: ['zipline_punch', 'idle'], timeout: 5 });
+  assert.deepEqual(await copiedStateNames(outDir), ['idle']);
+  assert.equal(gated.summary.excluded, 1);
+  assert.match(gated.report, /- Only: 2 of 5 states/);
+  assert.match(gated.report, /## Excluded \(1\)\n\n- \*\*zipline_punch\*\* — reached through FireWeapon; set allowSideEffects: true to sweep it/);
+
+  const allowed = await sweepPayload({ out: outDir, states: statesPath, only: ['zipline_punch', 'idle'], allowSideEffects: true, timeout: 5 });
+  assert.deepEqual(await copiedStateNames(outDir), ['idle', 'zipline_punch']);
+  assert.equal(allowed.summary.excluded, 0);
+});
+
 test('capture_animations turns the script suppression off only for allowSideEffects: true', { timeout: 30000 }, async (t) => {
   const outDir = path.join(await tempDir(t), 'out');
   const { scriptArgs } = await finishingStub(t, outDir);
@@ -3596,6 +3800,8 @@ test('a sweep that times out answers with the log tail through the handler', { t
   const logPath = path.join(dir, 'Player.log');
   await fs.writeFile(statesPath, JSON.stringify({ states: fixtureStates }));
   await fs.writeFile(logPath, '[Script:animation-capture] a sweep from before this one\n');
+  setProcReader(fakeProcReader({}));
+  t.after(() => setProcReader(null));
 
   const savedLog = process.env.UNITY_INSPECTOR_LOG;
   process.env.UNITY_INSPECTOR_LOG = logPath;
@@ -3879,9 +4085,9 @@ test('a sweep holds the game: every tool that could change it is refused, and th
   }
   assert.equal(methods().length, before, 'none of them reached the game');
 
-  for (const name of ['game_state', 'ping', 'list_bros', 'take_screenshot']) {
-    const response = await callTool(name, {});
-    assert.doesNotMatch(textOf(response), /capture_animations sweep into/, `${name} only reads`);
+  for (const [name, args] of [['game_state', {}], ['ping', {}], ['list_bros', {}], ['take_screenshot', {}], ['take_screenshot', { backdrop: true }]]) {
+    const response = await callTool(name, args);
+    assert.doesNotMatch(textOf(response), /capture_animations sweep into/, `${name} ${JSON.stringify(args)} only reads`);
   }
 
   writeNow(path.join(outDir, 'error'), 'ended by the test');
@@ -4090,6 +4296,8 @@ async function cutsceneStub(t, outDir) {
   t.after(async () => { client.disconnect(); await stub.close(); });
   game.client = client;
   game.sleep = async (ms) => { if (ms > 5) game.seen.push(`sleep ${ms}`); };
+  // The stub is the game, running throughout; the machine's own process table never answers for it
+  game.isRunning = async () => true;
   game.reset = (pauseOn, named = false) => Object.assign(game, { pauseOn, named, paused: false, swapped: false, swappedWhilePaused: false, seen: [] });
   return game;
 }
@@ -4106,7 +4314,7 @@ test('on a level sweep a cutscene is pressed past before the swap, the settle ru
     statesPaths: [statesPath], out: outDir, gameOut: outDir, timeoutMs: 5000, player: 0,
   };
   game.reset('go_to_level');
-  const run = await runCapture(options, game.client, { pollMs: 5, sleep: game.sleep });
+  const run = await runCapture(options, game.client, { pollMs: 5, sleep: game.sleep, isRunning: game.isRunning });
   assert.equal(run.outcome.status, 'done');
   assert.deepEqual(game.seen, [
     'ping', 'execute_code', 'go_to_level', 'game_state', 'sleep 1700', 'game_state', 'simulate_input', 'game_state', 'sleep 1700',
@@ -4117,7 +4325,7 @@ test('on a level sweep a cutscene is pressed past before the swap, the settle ru
   assert.match(run.report, /^- Cutscene dismissed before the sweep: start pressed once$/m);
 
   game.reset('go_to_level', true);
-  const named = await runCapture(options, game.client, { pollMs: 5, sleep: game.sleep });
+  const named = await runCapture(options, game.client, { pollMs: 5, sleep: game.sleep, isRunning: game.isRunning });
   assert.equal(named.outcome.status, 'done');
   assert.deepEqual(game.seen, [
     'ping', 'execute_code', 'go_to_level', 'game_state', 'simulate_input', 'game_state', 'game_state', 'game_state', 'sleep 1700',
@@ -4127,7 +4335,7 @@ test('on a level sweep a cutscene is pressed past before the swap, the settle ru
 
   game.reset('swap_bro');
   await assert.rejects(
-    runCapture({ ...options, timeoutMs: 300 }, game.client, { pollMs: 5, sleep: game.sleep }),
+    runCapture({ ...options, timeoutMs: 300 }, game.client, { pollMs: 5, sleep: game.sleep, isRunning: game.isRunning }),
     (err) => /nothing was swept: after 0s the game is paused \(CutscenePause\); last game_state:/.test(err.message),
   );
   assert.ok(!game.seen.includes('simulate_input'), 'a cutscene the level path missed is not pressed after the swap');
@@ -4145,7 +4353,7 @@ test('without a level a cutscene up before the swap is pressed past first, and o
     statesPaths: [statesPath], out: outDir, gameOut: outDir, timeoutMs: 5000, player: 0,
   };
   game.reset('ping');
-  assert.equal((await runCapture(options, game.client, { pollMs: 5, sleep: game.sleep })).outcome.status, 'done');
+  assert.equal((await runCapture(options, game.client, { pollMs: 5, sleep: game.sleep, isRunning: game.isRunning })).outcome.status, 'done');
   assert.deepEqual(game.seen, [
     'ping', 'execute_code', 'game_state', 'simulate_input', 'game_state', `sleep ${DEFAULT_SETTLE_MS}`,
     'game_state', 'swap_bro', 'game_state', 'sleep 700', 'game_state', 'execute_script', 'unload_script',
@@ -4153,7 +4361,7 @@ test('without a level a cutscene up before the swap is pressed past first, and o
   assert.equal(game.swappedWhilePaused, false);
 
   game.reset('swap_bro');
-  assert.equal((await runCapture(options, game.client, { pollMs: 5, sleep: game.sleep })).outcome.status, 'done');
+  assert.equal((await runCapture(options, game.client, { pollMs: 5, sleep: game.sleep, isRunning: game.isRunning })).outcome.status, 'done');
   assert.deepEqual(game.seen, [
     'ping', 'execute_code', 'game_state', 'swap_bro', 'game_state', 'sleep 700', 'game_state', 'simulate_input', 'game_state',
     `sleep ${DEFAULT_SETTLE_MS + 700}`, 'game_state', 'execute_script', 'unload_script',
@@ -4381,7 +4589,7 @@ test('the sweep parameters travel with the state list into capture.json, and the
   const payload = await sweepPayload({ out: outDir, states: [statesPath], allowSideEffects: true, box: 20, level: '1:0', settle: 0, timeout: 5 });
   const copied = JSON.parse(await fs.readFile(path.join(outDir, STATES_COPY_NAME), 'utf-8'));
   assert.deepEqual(copied.params, {
-    allowSideEffects: true, includeLethal: false, only: null, states: [statesPath], level: '1:0', bro: null, box: 20,
+    allowSideEffects: true, includeLethal: false, only: null, states: [statesPath], level: '1:0', bro: null, box: 20, backdrop: null,
   });
   assert.match(payload.report, /- Side effects: allowed/);
 

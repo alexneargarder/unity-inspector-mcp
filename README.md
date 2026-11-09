@@ -5,12 +5,12 @@ This lets an MCP client inspect and change things in Broforce while the game is 
 ## Requirements
 
 - Node.js 18 or newer. I've tested on 22, and the MCP SDK is the only npm dependency.
-- Broforce with Unity Mod Manager and the Unity Inspector Mod.
+- Broforce with Unity Mod Manager, RocketLib and the Unity Inspector Mod.
 - An MCP client. There are configs below for Claude Code, Claude Desktop, Codex CLI, Cursor, VS Code and Windsurf.
 
 ## Installing the mod
 
-Install the mod first. There's no prebuilt download, so clone the [BroforceMods repo](https://github.com/alexneargarder/BroforceMods) and build the Unity Inspector Mod project yourself, then put the built folder in Broforce's `Mods` directory like any other Unity Mod Manager mod. On r2modman it goes in `UMM/Mods` inside the profile folder instead. Here's a [guide for installing Unity Mod Manager and mods](https://steamcommunity.com/sharedfiles/filedetails/?id=2434812447) if you haven't done that before.
+Install the mod first. It's on Thunderstore as [`AlexN-Unity_Inspector_Mod`](https://thunderstore.io/c/broforce/p/AlexN/Unity_Inspector_Mod/), and installing it with r2modman pulls in RocketLib too. You can also install it by hand by putting its folder in Unity Mod Manager's `Mods` folder, which is `UMM/Mods` inside the profile folder on r2modman. Here's a [guide for installing Unity Mod Manager and mods](https://steamcommunity.com/sharedfiles/filedetails/?id=2434812447) if you haven't done that before.
 
 Open the Unity Mod Manager overlay in game (Ctrl+F10 by default) and click on the mod. Its panel shows whether the TCP server is running, the port, the address it's bound to and how many clients are connected, and there's a Start Server button if it's stopped. If you change the port from 9999, set `UNITY_INSPECTOR_PORT` on the server side to match. Update the mod and the server together, since a mismatched pair refuses to connect and the error says which one to update.
 
@@ -97,7 +97,7 @@ All of these are optional and go in the `env` block (the `[mcp_servers.unity-ins
 | Variable | Default | Effect |
 |---|---|---|
 | `UNITY_INSPECTOR_PORT` | `9999` | TCP port the mod listens on. |
-| `BROFORCE_LAUNCH_CMD` | Steam's `-applaunch` of app 274190 with the `BROFORCE_PROFILE` profile's Doorstop arguments; on macOS, or with no Steam executable found, the Steam protocol launch | Command line `launch_game` runs to start your own game. |
+| `BROFORCE_LAUNCH_CMD` | [the Steam launch](#launching-your-game-through-steam) from the `BROFORCE_PROFILE` profile | Command line `launch_game` runs to start your own game. |
 | `BROFORCE_PROFILE` | `Default` | The r2modman profile the Steam launch loads Unity Mod Manager from: a name, or the profile's folder as an absolute path. Unset, with no `Default` profile, the game starts the way its own install loads mods. |
 | `BROFORCE_LAUNCH_TYPE` | `auto`, which is Proton when the game folder has a `.forceproton` file or an `.exe` | `native` or `proton`: how the Steam launch on Linux runs the game. |
 | `BROFORCE_INSTANCE_CMD` | unset, and there are no instances | The launcher that creates and runs this session's own game instance. |
@@ -105,14 +105,19 @@ All of these are optional and go in the `env` block (the `[mcp_servers.unity-ins
 | `UNITY_INSPECTOR_LOG` | unset, and the server searches for the log itself | Path to the log `read_log` reads: Unity's player log, or the Unity Mod Manager log. |
 | `UNITY_INSPECTOR_TOKEN_FILE` | unset, and the server searches the game's data folders itself | Path to the token file the mod writes. |
 | `UNITY_INSPECTOR_HOST` | `127.0.0.1`, or on WSL that and then the Windows host | Host your own game runs on. A game on another machine needs the mod's "Allow remote connections (LAN)" setting on, and a copy of its token file named in `UNITY_INSPECTOR_TOKEN_FILE`, taken again each time the mod's server starts; the server can't see or stop that game's process. |
+| `UNITY_INSPECTOR_TEST_RESULTS_DIR` | `$XDG_STATE_HOME/unity-inspector-mcp/test-results`, else `~/.local/state/unity-inspector-mcp/test-results` | Folder `run_test_script` writes each session's full results under. |
 
-The other eight are about your own game, never about a session's instance, which takes its port, its logs and its token from `BROFORCE_INSTANCE_CMD`'s launcher instead.
+Apart from `BROFORCE_INSTANCE_CMD` and `UNITY_INSPECTOR_TEST_RESULTS_DIR`, these are about your own game, never about a session's instance, which takes its port, its logs and its token from `BROFORCE_INSTANCE_CMD`'s launcher instead.
 
 `launch_game` goes through Steam by default. `BROFORCE_LAUNCH_CMD` replaces that with a full command line, like a Proton launcher script, parsed into a command plus arguments with shell-style quoting. It runs exactly as you configured it, with `--vanilla` added for a vanilla launch and whatever `launchArgs` holds appended. `launchArgs` reach whichever launch the call runs, this command with `steam: true` and the instance launcher's `instance <id> launch` by default, so an option of one is not an option of the other.
 
 If your launch command's `--help` lists `--args-help`, the server runs the command again with that flag and quotes what it prints in `launch_game`'s description. The instance launcher is asked the same way once its `--help` has shown it runs instances and this session has an instance of its own, and each answer is quoted under the launch it belongs to, 1 KB of each. A program that runs both launches can label what each one takes, in the form [the launcher contract](docs/launcher-contract.md) gives. A command whose `--help` doesn't list the flag is never handed it, and the description says instead that no argument help is published and `launchArgs` pass through as given.
 
 `stop_game` and `launch_game { restart: true }` run `BROFORCE_STOP_CMD` to stop your own game. If it doesn't stop the game, the server signals the game's own process and the reply says so. Leave it unset and the signal is all there is. It is never run for a session's instance, which stops through its own launcher.
+
+## Launching your game through Steam
+
+When `BROFORCE_LAUNCH_CMD` isn't set, `launch_game` starts your own game with mods through Steam, from the r2modman profile `BROFORCE_PROFILE` names, or `Default` if that isn't set. On Linux, Broforce's Launch Options in Steam need the line r2modman's Linux setup screen gives you, except under Proton with the regular r2modman, which needs none. The details for each platform are in [docs/steam-launch.md](docs/steam-launch.md).
 
 ## Separate game instances
 
@@ -138,7 +143,7 @@ There are 33, 32 from the server and `restart_server` from the wrapper. A call t
 | `query_gameobjects` | Search the loaded scenes' GameObjects by name pattern and/or component type. A component type on its own works, and it matches base types and interfaces, so asking for `Projectile` finds subclasses too. |
 | `inspect_gameobject` | Inspect one GameObject by path or `instanceId`, with optional component details. |
 | `inspect_component` | Inspect a single component, including its static fields and properties, or read one member of it. |
-| `take_screenshot` | Capture the game window and return the path. An optional `highlight` outlines a GameObject path, an `{instanceId}`, or a `{x, y, width, height}` rectangle in world units for that one frame. |
+| `take_screenshot` | Capture the game window and return the path. An optional `highlight` outlines a GameObject path, an `{instanceId}`, or a `{x, y, width, height}` rectangle in world units for that one frame; `backdrop` draws only the characters, their guns and effects on a flat colour (`true` for magenta, or `#RRGGBB`). |
 | `inspect_player` | Detailed state for the active player(s). |
 | `teleport_player` | Move a player (or all players) to a coordinate. |
 | `set_player_health` | Set a player's health. |
@@ -159,7 +164,7 @@ There are 33, 32 from the server and `restart_server` from the wrapper. A call t
 | `unload_script` | Unload a running script, unpatching it and destroying its GameObjects and the components it added. |
 | `list_test_scripts` | List the JSON test scripts. |
 | `run_test_script` | Run a JSON command sequence and report each step, checking any per-step `expect` so a step can be required to fail. |
-| `capture_animations` | Sweep a bro's animation states into PNG frame strips with the game clock held at zero, and report which sprite-sheet cells each state addressed against what the state list expected. |
+| `capture_animations` | Sweep a bro's animation states into PNG frame strips with the game clock held at zero, and report which sprite-sheet cells each state addressed against what the state list expected; `backdrop` renders the strips on a flat colour, as `take_screenshot`'s does. |
 | `read_log` | Read the last N lines of the game's log, with an optional filter, or with `onlyNew` only the lines written since the previous such call. |
 | `launch_game` | Launch Broforce and wait until it answers, with `restart`, `vanilla` and `launchArgs` options. If it never answers, it reports which failure mode it hit, same as `wait_for_game`. |
 | `stop_game` | Stop the Broforce process this server is responsible for. |
@@ -170,7 +175,7 @@ Under Proton and WSL the game returns Windows paths for screenshots, and the ser
 
 ## C# scripts
 
-`scripts/csharp/` has a library of scripts committed to the repo: `find-by-type`, `inspect-private-fields`, `watch-field`, `trace-method-calls`, `spawn-capture` and `dump-harmony-patches`, which work on any modded install, plus `menu-tweaker` and `diff-component` (both need the RocketLib mod) and `rogueforce-runner` (needs the Rogueforce mod), whose `action` starts a run while `execute_code` calls `RogueforceRunner.Status()`, `Skip()`, `Layout()`, `Seed()` or `Seed(n)` on a loaded one. Each one has a header of `// #name`, `// #description`, `// #tags` and `// #args` comments. `list_scripts` reports that metadata, so the agent can pick a script and fill in its arguments on its own.
+`scripts/csharp/` has a library of scripts committed to the repo: `find-by-type`, `inspect-private-fields`, `watch-field`, `trace-method-calls`, `spawn-capture` and `dump-harmony-patches`, which work on any modded install, plus `menu-tweaker` and `diff-component` (both need the RocketLib mod). Each one has a header of `// #name`, `// #description`, `// #tags` and `// #args` comments. `list_scripts` reports that metadata, so the agent can pick a script and fill in its arguments on its own.
 
 A script gets its own Harmony instance, a logger and a dictionary of its arguments, and its patches and GameObjects are cleaned up when it unloads. The format, the lifecycle, the ScriptContext API and the .NET 3.5 constraints are in [scripts/csharp/README.md](scripts/csharp/README.md). You can run a script that isn't in the library by passing an absolute path to it, it just won't show up in the catalog.
 
@@ -180,7 +185,7 @@ Once a script is loaded, the types it defines are in scope for `execute_code`, b
 
 Test scripts are JSON files with a sequence of game commands and optional waits between the steps, for reproducing the same scenario identically every run. Every test script in the repo is in `scripts/tests/`: three examples, the repo's own contract checks and the `scenario-*` scripts that play through the menus, a level, bro swaps and player joins. A script of your own runs by absolute path, and the format is covered in [scripts/README.md](scripts/README.md). Steps go straight to the game, so server side tools like `read_log` and `launch_game` get rejected before the run starts.
 
-The `capture_animations` tool drives its own in-game script end to end — level, bro swap, sweep, report — out of `lib/animation-capture/`, where relative `states` names resolve and `states/base-states.json` is the shape a state list follows.
+The `capture_animations` tool drives its own in-game script end to end (level, bro swap, sweep, report) out of `lib/animation-capture/`, where relative `states` names resolve and `states/base-states.json` is the shape a state list follows.
 
 ## Troubleshooting
 
@@ -199,7 +204,7 @@ If the game process is there but doesn't answer, `launch_game` reports that inst
 
 Each command's time budget sits above the longest the mod takes to answer it; a timeout usually means the game is busy with a long level load or a script overloading the main thread, and if the game dies partway through a command the server reports a likely crash.
 
-`read_log` reads Unity's player log (`Player.log` or `output_log.txt`, depending on the Unity version), which gets every Unity Mod Manager and mod line the moment it is logged, plus Unity's own errors. It looks under `~/.config/unity3d/Free Lives/Broforce/` on Linux, `%USERPROFILE%\AppData\LocalLow\Free Lives\Broforce\` on Windows, the same folder inside the Proton prefix, Flatpak Steam's folders, `~/Library/Logs/` on macOS, and `Broforce_Data/output_log.txt` next to the game. When no player log has been written since the game started, it falls back to the Unity Mod Manager log: the profile's `UMM/Core/Log.txt` under `~/.config/r2modmanPlus-local/Broforce/profiles/` on Linux or `%APPDATA%\r2modmanPlus-local\Broforce\profiles\` on Windows, and for a direct install in a Steam library on Linux, `Broforce_Data/Managed/UnityModManager/Log.txt` in the game folder. `UNITY_INSPECTOR_LOG` overrides the search entirely, and if no log turns up the error lists every path that was tried.
+`read_log` reads Unity's player log (`Player.log` or `output_log.txt`, depending on the Unity version), which gets every Unity Mod Manager and mod line the moment it is logged, plus Unity's own errors. It looks under `~/.config/unity3d/Free Lives/Broforce/` on Linux, `%USERPROFILE%\AppData\LocalLow\Free Lives\Broforce\` on Windows, the same folder inside the Proton prefix, Flatpak Steam's folders, `~/Library/Logs/` on macOS, and `Broforce_Data/output_log.txt` next to the game. When no player log has been written since the game started, it falls back to the Unity Mod Manager log: the profile's `UMM/Core/Log.txt` in the r2modman profiles folders [the Steam launch](docs/steam-launch.md#finding-the-profile) looks in, and for a direct install in a Steam library on Linux, `Broforce_Data/Managed/UnityModManager/Log.txt` in the game folder. `UNITY_INSPECTOR_LOG` overrides the search entirely, and if no log turns up the error lists every path that was tried.
 
 It reports which file it read and when it was last written, and if the game is running and that file is older than the game process, it says so instead of quietly handing back a log nothing is writing to. `onlyNew` starts a new baseline when the game is relaunched onto the same file.
 

@@ -8,6 +8,7 @@ import path from 'node:path';
 import { startStubServer, reply } from './support/stub-server.js';
 import { CSHARP_SCRIPTS_DIR } from '../lib/script-library.js';
 import { wslMountRoot } from '../lib/unity-client.js';
+import { BACKDROP_SOURCE_PATH } from '../lib/backdrop.js';
 
 const requests = [];
 const answers = new Map();
@@ -369,7 +370,7 @@ test('every tool refuses an argument of the wrong type, naming it, the type and 
   for (const [name, schemas] of toolArguments()) {
     for (const [key, schema] of Object.entries(schemas)) {
       const types = [schema.type].flat();
-      const [value, sent] = types.includes('string') ? [true, 'true'] : WRONG_TYPED[types[0]];
+      const [value, sent] = types.includes('string') ? (types.includes('boolean') ? [5, '5'] : [true, 'true']) : WRONG_TYPED[types[0]];
       const expected = `${name}: ${key} must be ${types.map((type) => typeNames[type]).join(' or ')}, got ${sent}`;
       const text = await assertRefusedBeforeTheGame(name, { [key]: value }, /must be/);
       assert.ok(text.includes(expected), `${name}.${key}: ${text}`);
@@ -615,7 +616,8 @@ test('execute_script sends the file it read as the origin, whatever form named i
     assert.equal(lastRequest('execute_script').params.origin, library, form);
   }
 
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'origin-'));
+  // The origin is the file's real path, and TMPDIR can be a symlink
+  const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'origin-')));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const elsewhere = path.join(dir, 'watch-field.cs');
   await fs.writeFile(elsewhere, 'public static class Elsewhere {}\n');
@@ -683,6 +685,75 @@ test('take_screenshot translates the game-side path the way the platform needs',
   assert.equal(await shot('C:/users/steamuser/shot.png', 'linux', '/pfx'), '/pfx/dosdevices/c:/users/steamuser/shot.png');
   assert.equal(await shot('/home/me/shot.png', 'linux', '/pfx'), '/home/me/shot.png');
   assert.equal(await shot('C:/shot.png', 'linux'), 'C:/shot.png', 'a native Linux game has no drive letters to map');
+});
+
+test('take_screenshot with backdrop sends the render as one execute_code and answers its path and colour', async (t) => {
+  t.after(() => {
+    answers.delete('execute_code');
+    resetPlatformDetection();
+  });
+  answers.set('execute_code', { success: true, resultSet: true, result: 'Z:/tmp/shot.png', output: '' });
+  unityClient.platform = 'linux';
+  unityClient.protonPrefix = '/pfx';
+  const shot = async (args) => {
+    const before = requests.length;
+    const response = await call('take_screenshot', args);
+    assert.ok(!response.isError, textOf(response));
+    assert.ok(!requests.slice(before).some((r) => r.method === 'take_screenshot'), 'the mod\'s capture is not asked for');
+    return JSON.parse(textOf(response));
+  };
+
+  assert.deepEqual(await shot({ backdrop: true }), { success: true, path: '/tmp/shot.png', backdrop: '#FF00FF' });
+  const { code } = lastRequest('execute_code').params;
+  assert.ok(code.startsWith(`public class PlainBackdrop\n{\n${await fs.readFile(BACKDROP_SOURCE_PATH, 'utf-8')}}\n`), 'the shared source wrapped in its own class');
+  assert.ok(code.endsWith('return PlainBackdrop.Screenshot("#FF00FF");\n'));
+
+  assert.deepEqual(await shot({ backdrop: '#00ff80' }), { success: true, path: '/tmp/shot.png', backdrop: '#00ff80' });
+  assert.match(lastRequest('execute_code').params.code, /Screenshot\("#00ff80"\);\n$/);
+});
+
+test('take_screenshot with backdrop false or absent is the ordinary shot', async () => {
+  for (const args of [{ backdrop: false }, { backdrop: null }, { backdrop: false, highlight: '/Player' }]) {
+    const before = requests.length;
+    const response = await call('take_screenshot', args);
+    assert.ok(!response.isError, textOf(response));
+    assert.deepEqual(requests.slice(before).map((r) => r.method), ['take_screenshot']);
+    assert.deepEqual(lastRequest('take_screenshot').params, args.highlight ? { highlight: args.highlight } : {});
+  }
+});
+
+test('take_screenshot refuses a backdrop that is no colour, and one with a highlight, before the game', async () => {
+  for (const backdrop of ['red', '#12345', '#1234567', 'FF00FF', '#GG0000']) {
+    const text = await assertRefusedBeforeTheGame('take_screenshot', { backdrop }, /backdrop must be/);
+    assert.equal(text, `Error: backdrop must be true, false or a colour as #RRGGBB, got ${JSON.stringify(backdrop)}`);
+  }
+  for (const highlight of ['/Player', { x: 0, y: 0, width: 1, height: 1 }]) {
+    for (const backdrop of [true, '#000000']) {
+      const text = await assertRefusedBeforeTheGame('take_screenshot', { backdrop, highlight }, /backdrop cannot take highlight/);
+      assert.match(text, /the outline is the mod's own/);
+    }
+  }
+  await assertRefusedBeforeTheGame('take_screenshot', { backdrop: 5 }, /take_screenshot: backdrop must be a boolean or a string, got 5/);
+});
+
+test('a failed backdrop render is a plain error naming it, never the render source\'s position', async (t) => {
+  t.after(() => answers.delete('execute_code'));
+
+  answers.set('execute_code', {
+    success: false, error: 'boom', stackTrace: 'at PlainBackdrop.Render', position: { line: 300, column: 1 }, statement: 'return PlainBackdrop.Screenshot("#FF00FF");',
+  });
+  const thrown = await call('take_screenshot', { backdrop: true });
+  assert.equal(thrown.isError, true);
+  assert.equal(textOf(thrown), 'Error: The backdrop render failed: boom');
+
+  answers.set('execute_code', { success: true, resultSet: false, result: null });
+  assert.equal(textOf(await call('take_screenshot', { backdrop: true })), 'Error: The backdrop render failed: the render returned no path');
+
+  const stalled = { success: false, error: 'The main thread did not answer within 9s', mainThreadAnswered: false };
+  answers.set('execute_code', stalled);
+  const response = await call('take_screenshot', { backdrop: true });
+  assert.equal(response.isError, true);
+  assert.deepEqual(JSON.parse(textOf(response)), stalled, 'the main-thread answer is every tool\'s');
 });
 
 test('WSL drives sit under the automount root /etc/wsl.conf names, /mnt/ without one', async (t) => {

@@ -1,6 +1,6 @@
 {
   "name": "Script constants from execute_code",
-  "description": "Checks that the constants a script declares are readable from execute_code with their exact values: long, ulong, char, bool, float, double, string, a null string, and a private constant read through a public method. Naming an enum that a script or execute_code defined is refused with a message pointing at the underlying values, and naming a member a script type lacks reports CS0117. A class declared through execute_code, with an int constant and a null string constant, is readable from a later execute_code call.",
+  "description": "Checks that the constants a script declares are readable from execute_code with their exact values: long, ulong, char, bool, float, double, string, a null string, and a private constant read through a public method. Naming an enum that a script or execute_code defined is refused with a message pointing at the underlying values, and naming a member a script type lacks reports CS0117. A class declared through execute_code, with an int constant and a null string constant, is readable from a later execute_code call. It unloads the script at the end, and its cleanup unloads it again whatever ended the steps.",
   "steps": [
     {
       "command": "execute_script",
@@ -258,6 +258,28 @@
         "success": false,
         "contains": [
           "Enum 'ScriptConstTestInputMode' is defined by a script or by execute_code"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "script-constants-test"
+      },
+      "expect": {
+        "success": true
+      }
+    }
+  ],
+  "cleanup": [
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "script-constants-test"
+      },
+      "expect": {
+        "notContains": [
+          "\"warnings\""
         ]
       }
     }

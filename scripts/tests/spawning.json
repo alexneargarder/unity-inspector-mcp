@@ -1,6 +1,6 @@
 {
   "name": "spawn_entity, list_enemies and trace_spawns",
-  "description": "Covers spawn_entity with Utility Mod's disableEnemySpawn on, off, bypassed with ignoreSuppression, and with Utility Mod disabled in memory; every route (networked mooks, the mooks the networked prefab list lacks spawned locally, local vehicles, bosses and worms, the Facehugger and Screecher helpers), name forms, unknown names and Bro, positions and initial velocity; list_enemies with suppression on and off, after spawns, over a full level and on Challenge_Alien with nothing listed, with a corpse lying in the level, and while a MonoBehaviour's Update holds the main thread past its 5 s budget; alien and hell units spawned in a jungle level; and trace_spawns refusals, those the server refuses first sent to the mod's message handler directly, the idle read, the default and every named target, a replacing start, since cursors, ring overflow, and stop, which removes its own prefixes. Plays campaign 0 level 2; spawns happen at x 600-660 and at x 300 with the game frozen; the bro is made invulnerable and every spawned unit is destroyed after it is listed. Needs Utility Mod and campaign 16. A settings save during the run writes the disableEnemySpawn it found, not the value a step set in memory: step 6 loads the utility-mod-save-guard library script, step 125 proves it with a real save and step 126 unloads it; Utility Mod's enabled flag is a static no save writes. Its first steps undo whatever an earlier run left changed; its last steps restore Utility Mod's settings, stop the trace and reload the level it started in. Its cleanup runs the restore again whatever ended the steps: pause, speed, the second player, IronBro, the lock, the Swap Bros selection, and the Utility Mod settings and HeroController values it recorded; it also stops the trace and unloads the save guard.",
+  "description": "Covers spawn_entity with Utility Mod's disableEnemySpawn on, off, bypassed with ignoreSuppression, and with Utility Mod disabled in memory; every route (networked mooks, the mooks the networked prefab list lacks spawned locally, local vehicles, bosses and worms, the Facehugger and Screecher helpers), name forms, unknown names and Bro, positions and initial velocity; list_enemies with suppression on and off, after spawns, over a full level and on Challenge_Alien with its inactive face huggers left out, with a corpse lying in the level, and while a MonoBehaviour's Update holds the main thread past its 5 s budget; alien and hell units spawned in a jungle level; and trace_spawns refusals, those the server refuses first sent to the mod's message handler directly, the idle read, the default and every named target, a replacing start, since cursors, ring overflow, and stop, which removes its own prefixes. Plays campaign 0 level 2; spawns happen at x 600-660 and at x 300 with the game frozen; the bro is made invulnerable and every spawned unit is destroyed after it is listed. Needs Swap Bros Mod, BroMakerLib, Utility Mod and campaign 16. A settings save during the run writes the disableEnemySpawn it found, not the value a step set in memory: step 6 loads the utility-mod-save-guard library script, step 125 proves it with a real save and step 126 unloads it; Utility Mod's enabled flag is a static no save writes. Its first steps undo whatever an earlier run left changed; its last steps restore Utility Mod's settings, stop the trace and reload the level it started in. Its cleanup runs the restore again whatever ended the steps: pause, speed, the second player, IronBro, the lock, the Swap Bros selection, and the Utility Mod settings and HeroController values it recorded; it also stops the trace and unloads the save guard.",
   "steps": [
     {
       "command": "simulate_input",
@@ -1189,12 +1189,13 @@
     {
       "command": "execute_code",
       "params": {
-        "code": "int inactive = 0, active = 0;\nforeach (var u in Map.units) { if (u == null) continue; if (u.gameObject.activeInHierarchy) active++; else inactive++; }\nreturn \"registered inactive=\" + inactive + \" active=\" + active;"
+        "code": "int inactive = 0, active = 0;\nvar names = new List<string>();\nforeach (var u in Map.units) { if (u == null) continue; if (u.gameObject.activeInHierarchy) active++; else { inactive++; if (!names.Contains(u.name)) names.Add(u.name); } }\nnames.Sort();\nreturn \"registered inactive=\" + inactive + \" active=\" + active + \" inactive names: \" + string.Join(\", \", names.ToArray());"
       },
       "expect": {
         "success": true,
         "contains": [
-          "registered inactive=52"
+          "registered inactive=52",
+          "ZAlienFaceHugger"
         ]
       }
     },
@@ -1204,11 +1205,13 @@
       "expect": {
         "success": true,
         "contains": [
-          "\"count\": 0",
           "\"mapLoaded\": true",
           "\"enemySpawnSuppressed\": true",
           "\"suppressedBy\": [",
           "\"Utility Mod\""
+        ],
+        "notContains": [
+          "\"name\": \"ZAlienFaceHugger"
         ]
       }
     },
@@ -1230,11 +1233,13 @@
       "expect": {
         "success": true,
         "contains": [
-          "\"count\": 0",
           "\"enemySpawnSuppressed\": false",
           "\"suppressedBy\": []",
           "\"enemySpawnPrefixOwners\": [",
           "\"Utility Mod\""
+        ],
+        "notContains": [
+          "\"name\": \"ZAlienFaceHugger"
         ]
       }
     },

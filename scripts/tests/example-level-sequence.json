@@ -35,8 +35,7 @@
       "params": {
         "campaignIndex": 0,
         "levelIndex": 0
-      },
-      "wait": 3000
+      }
     },
     {
       "command": "inspect_player"
@@ -53,8 +52,7 @@
       "params": {
         "campaignIndex": 0,
         "levelIndex": 1
-      },
-      "wait": 3000
+      }
     },
     {
       "command": "take_screenshot"
@@ -69,8 +67,7 @@
         "contains": [
           "success=True"
         ]
-      },
-      "wait": 6000
+      }
     },
     {
       "command": "game_state",
@@ -95,8 +92,19 @@
         "notContains": [
           "failed"
         ]
+      }
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
       },
-      "wait": 6000
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
     }
   ]
 }

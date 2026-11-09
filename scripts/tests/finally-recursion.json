@@ -1,0 +1,473 @@
+{
+  "name": "Finally recursion",
+  "description": "Runaway recursion through finally blocks and catch filters leaves the game alive, a ping following each check: a runaway the code catches, and a static initializer that does not recurse, answer success; every other case answers an error. Cases: a static initializer; a runaway caught twice in a row; a finally whose cleanup runs before the runaway is caught; recursion inside a finally from a void method, a method returning a value, a method with an argument, a generic method, a constructor, and a finally that also calls compiled code; a finally that throws; using and lock cleanup, the lock checked free from another thread; a throwing catch filter; a filter that calls compiled code; deep finite recursion with a throwing finally; an iterator's finally. Its first step stops the run on a mod build without the handler guard.",
+  "steps": [
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return typeof(MainThreadDispatcher).GetMethod(\"SkipHandler\") != null;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": true"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class Stat4 { public static int v; static Stat4() { v = 7; } }"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return Stat4.v;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 7"
+        ]
+      }
+    },
+    {
+      "command": "ping",
+      "expect": {
+        "success": true,
+        "contains": [
+          "pong"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class Rt4 { public static int Depth(int d) { return Depth(d + 1); } }"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "string a = \"\", b = \"\"; try { Rt4.Depth(0); } catch (Exception e) { a = e.GetType().Name; } try { Rt4.Depth(0); } catch (Exception e) { b = e.GetType().Name; } return a + \"/\" + b;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "RunawayRecursionException/RunawayRecursionException"
+        ]
+      }
+    },
+    {
+      "command": "ping",
+      "expect": {
+        "success": true,
+        "contains": [
+          "pong"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class Rf4 { public static int cleaned; public static void Clean() { cleaned++; } public static void R() { try { R(); } finally { Clean(); } } }"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "try { Rf4.R(); } catch (Exception e) { return e is Unity_Inspector_Mod.MainThreadDispatcher.RunawayRecursionException && Rf4.cleaned > 0; } return false;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": true"
+        ]
+      }
+    },
+    {
+      "command": "ping",
+      "expect": {
+        "success": true,
+        "contains": [
+          "pong"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class Rz4 { public static void F() { try { F(); } finally { F(); } } }"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "Rz4.F(); return 1;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "RunawayRecursionException"
+        ]
+      }
+    },
+    {
+      "command": "ping",
+      "expect": {
+        "success": true,
+        "contains": [
+          "pong"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class Rs4 { public static string G() { try { return G(); } finally { G(); } } }"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return Rs4.G();"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "RunawayRecursionException"
+        ]
+      }
+    },
+    {
+      "command": "ping",
+      "expect": {
+        "success": true,
+        "contains": [
+          "pong"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class Rj4 { public static int H(int d) { try { return H(d + 1); } finally { H(d + 1); } } }"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return Rj4.H(0);"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "RunawayRecursionException"
+        ]
+      }
+    },
+    {
+      "command": "ping",
+      "expect": {
+        "success": true,
+        "contains": [
+          "pong"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class Rg4 { public static T K<T>() { try { return K<T>(); } finally { K<T>(); } } }"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return Rg4.K<int>();"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "RunawayRecursionException"
+        ]
+      }
+    },
+    {
+      "command": "ping",
+      "expect": {
+        "success": true,
+        "contains": [
+          "pong"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class Rc4 { public Rc4() { try { new Rc4(); } finally { new Rc4(); } } }"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "new Rc4(); return 1;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "RunawayRecursionException"
+        ]
+      }
+    },
+    {
+      "command": "ping",
+      "expect": {
+        "success": true,
+        "contains": [
+          "pong"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class Ry4 { static object O() { return new object(); } public static void F() { try { F(); } finally { F(); O().ToString(); } } }"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "Ry4.F(); return 1;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "RunawayRecursionException"
+        ]
+      }
+    },
+    {
+      "command": "ping",
+      "expect": {
+        "success": true,
+        "contains": [
+          "pong"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class Rx4 { public static void F() { try { F(); } finally { throw new InvalidOperationException(\"from finally\"); } } }"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "Rx4.F(); return 1;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Exception"
+        ]
+      }
+    },
+    {
+      "command": "ping",
+      "expect": {
+        "success": true,
+        "contains": [
+          "pong"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class Ru4 { public static int disposed; class D : IDisposable { public void Dispose() { disposed++; } } public static readonly object gate = new object(); public static void R() { lock (gate) { using (new D()) { R(); } } } }"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "try { Ru4.R(); } catch (Exception e) { bool free = false; var t = new System.Threading.Thread(() => { free = System.Threading.Monitor.TryEnter(Ru4.gate); if (free) System.Threading.Monitor.Exit(Ru4.gate); }); t.Start(); t.Join(); return e.GetType().Name + \" disposed=\" + Ru4.disposed + \" lockFree=\" + free; } return \"no throw\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "RunawayRecursionException disposed=",
+          "lockFree=True"
+        ],
+        "notContains": [
+          "no throw",
+          "disposed=0 "
+        ]
+      }
+    },
+    {
+      "command": "ping",
+      "expect": {
+        "success": true,
+        "contains": [
+          "pong"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class Rw4 { public static void F() { try { F(); } catch (Exception e) when (e.Data[\"x\"].ToString() == \"\") { } } }"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "Rw4.F(); return 1;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Exception"
+        ]
+      }
+    },
+    {
+      "command": "ping",
+      "expect": {
+        "success": true,
+        "contains": [
+          "pong"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class Rk4 { static bool Deep(int d) { return d > 50 ? false : Deep(d + 1); } public static void F() { try { F(); } catch (Exception e) when (Deep(0)) { } } }"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "Rk4.F(); return 1;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "RunawayRecursionException"
+        ]
+      }
+    },
+    {
+      "command": "ping",
+      "expect": {
+        "success": true,
+        "contains": [
+          "pong"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class Rv4 { public static void F(int n) { try { if (n > 0) F(n - 1); else throw new Exception(\"bottom\"); } finally { throw new InvalidOperationException(\"from finally\"); } } }"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "Rv4.F(3000); return 1;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "InvalidOperationException"
+        ]
+      }
+    },
+    {
+      "command": "ping",
+      "expect": {
+        "success": true,
+        "contains": [
+          "pong"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public static class Ri4 { static IEnumerable<int> Seq() { try { yield return 1; } finally { Walk(); } } public static void Walk() { foreach (int x in Seq()) { Walk(); } } }"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "Ri4.Walk(); return 1;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "RunawayRecursionException"
+        ]
+      }
+    },
+    {
+      "command": "ping",
+      "expect": {
+        "success": true,
+        "contains": [
+          "pong"
+        ]
+      }
+    }
+  ]
+}

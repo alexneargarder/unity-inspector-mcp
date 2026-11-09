@@ -35,8 +35,7 @@
       "params": {
         "campaignIndex": 1,
         "levelIndex": 0
-      },
-      "wait": 3000
+      }
     },
     {
       "command": "simulate_input",
@@ -78,8 +77,7 @@
         "contains": [
           "success=True"
         ]
-      },
-      "wait": 6000
+      }
     },
     {
       "command": "game_state",
@@ -104,8 +102,19 @@
         "notContains": [
           "failed"
         ]
+      }
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
       },
-      "wait": 6000
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
     }
   ]
 }

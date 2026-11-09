@@ -96,14 +96,17 @@ You can use any game-side Unity Inspector MCP tool in your scripts:
 
 ### Level Control
 - `go_to_level` - Load a specific level
+- `restart_level` - Restart the current level
 - `list_campaigns` - List available campaigns
 
 ### Input Simulation
 - `simulate_input` - Simulate controller input
   - Actions: up, down, left, right, fire, jump, special, highFive, gesture, sprint, start, escape
   - Supports duration (hold time), count (repeated presses), and sequence (ordered steps run back to back)
+  - `binding` presses a mod's RocketLib key binding in place of an action
 
 ### Inspection
+- `game_state` - Get the loaded level, game mode and player status
 - `inspect_player` - Get player information
 - `list_enemies` - List enemies in scene
 - `list_gameobjects` - List GameObjects
@@ -116,14 +119,18 @@ You can use any game-side Unity Inspector MCP tool in your scripts:
 - `set_player_health` - Set player health
 - `set_game_speed` - Change time scale
 - `modify_component` - Modify component properties
+- `spawn_entity` - Spawn a unit at a position
 
 ### Bros and Scripts
+- `list_bros` - List the bros players can swap to
 - `swap_bro` - Swap a player's bro, or with `nextSpawn` choose the bro they spawn as next
 - `execute_script` - Run a C# script, or with `compileOnly` only compile it
+- `unload_script` - Unload a C# script
 
 ### Utilities
 - `take_screenshot` - Capture game screenshot
 - `execute_code` - Execute C# code
+- `trace_spawns` - Record the game's spawn calls
 - `ping` - Test connection
 
 ## Example Scripts
@@ -137,8 +144,7 @@ You can use any game-side Unity Inspector MCP tool in your scripts:
   "steps": [
     {
       "command": "go_to_level",
-      "params": { "campaignIndex": 0, "levelIndex": 0 },
-      "wait": 3000
+      "params": { "campaignIndex": 0, "levelIndex": 0 }
     },
     {
       "command": "simulate_input",
@@ -165,8 +171,7 @@ You can use any game-side Unity Inspector MCP tool in your scripts:
   "steps": [
     {
       "command": "go_to_level",
-      "params": { "campaignIndex": 1, "levelIndex": 0 },
-      "wait": 3000
+      "params": { "campaignIndex": 1, "levelIndex": 0 }
     },
     {
       "command": "simulate_input",
@@ -194,8 +199,7 @@ You can use any game-side Unity Inspector MCP tool in your scripts:
   "steps": [
     {
       "command": "go_to_level",
-      "params": { "campaignIndex": 0, "levelIndex": 0 },
-      "wait": 3000
+      "params": { "campaignIndex": 0, "levelIndex": 0 }
     },
     {
       "command": "teleport_player",
@@ -217,7 +221,11 @@ You can use any game-side Unity Inspector MCP tool in your scripts:
 ## Tips
 
 ### Wait Times
-- Add wait times after level loads (typically 2-3 seconds)
+- `go_to_level` and `restart_level` reply once a bro is alive, so the next step needs no wait. If a bro's intro cutscene holds the game, the reply carries `cutscene: "CutscenePause"` and a `warning` instead. Give that step `"wait": 1500`, since the game ignores a skip in a cutscene's first second, then add a `simulate_input` `start` step and poll `game_state` with `until` for `"pauseState": "UnPaused"` and a live bro, as `levels.json` does. On a level where the bro spawns straight in, the intro starts just after the reply, so the reply carries no `cutscene`. A script loading one with a bro whose intro hasn't played polls `game_state` with `until` for `"pauseState": "CutscenePause"` first, then waits and skips it the same way
+- After any other load (a load started from `execute_code`, menu input), poll `game_state` with `until` instead of a fixed wait:
+  ```json
+  { "command": "game_state", "until": { "timeout": 60, "interval": 1 }, "expect": { "contains": ["\"state\": \"alive\""] } }
+  ```
 - Add short waits after input to let animations complete
 - No wait needed if the next command doesn't depend on the previous one
 
@@ -238,8 +246,7 @@ You can use any game-side Unity Inspector MCP tool in your scripts:
 ```json
 {
   "command": "go_to_level",
-  "params": { "campaignIndex": 0, "levelIndex": 0 },
-  "wait": 3000
+  "params": { "campaignIndex": 0, "levelIndex": 0 }
 },
 {
   "command": "inspect_player"
@@ -313,7 +320,8 @@ A failure is `passed: false` with either a failed step, whose `preview` says whi
 
 Mod settings in the profile the game runs shape the results:
 
-- **Utility Mod `disableEnemySpawn`** leaves a level with no enemies. The level-run driver, which the bro swap also runs, turns it off in memory for its run and restores it, and reports that under `enemySuppression`; a settings save during the run still writes it on. The player join and the menu pass leave it as it is
+- **Utility Mod `disableEnemySpawn`** skips the mooks, aliens, vehicles and hell enemies a level places but places its bosses, the bone worm miniboss and any enemy the level's triggers reference. It also blocks most mooks spawned while the level runs, but not the tanks and mechs a bro's grenades drop or the drivers who bail out of a vehicle. The level-run driver, which the bro swap also runs, turns it off in memory for its run and restores it, and reports that under `enemySuppression`; a settings save during the run still writes it on. The player join and the menu pass leave it as it is
+- **Control Enemies Mod `spawnAsEnemyEnabled`** replaces each spawning bro with an enemy unit. The level-run driver, which the bro swap also runs, turns it off in memory for its run and restores it, and reports that under `spawnAsEnemy`; a settings save during the run still writes it on. The player join and the menu pass leave it as it is
 - **Utility Mod `infiniteLives`** pins every player's lives, so the level run's forced death costs no life and the bro swap's `lives` has no effect
 
 The level run refuses a level on an IronBro save, whose lives and dead bros a run would write, unless it only surveys; a level run that reaches the exit leaves the level finished, with its outcome held so the save is not written, until the next load; from arming until the run's level is left or the script unloaded, a won level's outcome and a campaign finish are skipped, whatever finished the level, and a freed bro or an unlock never reaches the progress, so a rescue still hands the player a bro but counts toward no unlock. Its timeout and its kit holds, like the player join's phases, do not count time under the pause menu.
@@ -324,4 +332,3 @@ The level run and the bro swap default to campaign 0 level 0, Intro level 1, whi
 
 - Check `tests/` for complete working examples
 - See main README.md for Unity Inspector setup
-- Unity Inspector Mod documentation for available game commands

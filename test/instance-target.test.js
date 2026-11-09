@@ -11,7 +11,8 @@ import { startStubServer, reply } from './support/stub-server.js';
 
 const isLinux = process.platform === 'linux';
 const SESSION = 'target-session-8c02';
-const root = await fs.mkdtemp(path.join(os.tmpdir(), 'instances-'));
+// The server canonicalises the instances root the launcher reports, and TMPDIR can be a symlink
+const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'instances-')));
 const binDir = await fs.mkdtemp(path.join(os.tmpdir(), 'launcher-bin-'));
 const { instanceDir, stagePath } = await useStubLauncher({ session: SESSION, root, binDir });
 
@@ -26,6 +27,7 @@ const {
   resolveTarget,
   serverStateFields,
   setTarget,
+  staleCodeNotice,
   targetLogPaths,
   unityClient,
 } = await import('../index.js');
@@ -44,13 +46,15 @@ test.after(() => fs.rm(binDir, { recursive: true, force: true }));
 // assertion here can be answered by the user's real game
 const STEAM_PORT = Number(NO_LISTENER_PORT);
 
+const TARGET_SENTENCE = "A restart puts the target back on this session's default.";
+
 const portFile = path.join(instanceDir, 'port');
 const noGameStart = async () => null;
 
 beforeEach(async () => {
   resetInstanceModeProbe();
   resetTargetResolution();
-  setProcReader(null);
+  setProcReader(fakeProcReader({}));
   unityClient.disconnect();
   process.env.CLAUDE_SESSION_ID = SESSION;
   process.env.UNITY_INSPECTOR_PORT = NO_LISTENER_PORT;
@@ -443,4 +447,30 @@ test('list_campaigns with no game gives the same no-port reason as every tool', 
   assert.match(text, new RegExp(`No inspector port is known for instance ${SESSION}`));
   assert.match(text, /no game of this instance is running/);
   assert.equal(unityClient.connected, false);
+});
+
+test("the stale-code notice warns of the target only when a restart would move it", { skip: !isLinux }, async () => {
+  const notice = (isError) => staleCodeNotice(['lib/a.js'], { isError });
+
+  assert.doesNotMatch(notice(false), /restart puts/, 'nothing has resolved a target yet');
+  await resolveTarget();
+  assert.equal(activeTarget(), 'instance');
+  assert.doesNotMatch(notice(false), /restart puts/);
+
+  await setTarget('steam');
+  assert.ok(notice(false).endsWith(TARGET_SENTENCE));
+  assert.ok(notice(true).endsWith(`then repeat this call unless it may already have acted. ${TARGET_SENTENCE}`));
+
+  await setTarget('instance');
+  assert.doesNotMatch(notice(false), /restart puts/);
+});
+
+test("the stale-code notice leaves the target alone on a launcher with no instance mode, whose session stays on steam", { skip: !isLinux }, async (t) => {
+  await fs.writeFile(path.join(root, 'no-instance-mode'), '');
+  t.after(() => fs.rm(path.join(root, 'no-instance-mode'), { force: true }));
+
+  await resolveTarget();
+
+  assert.equal(activeTarget(), 'steam');
+  assert.doesNotMatch(staleCodeNotice(['lib/a.js']), /restart puts/);
 });

@@ -127,6 +127,8 @@ test('a refused step fails the script before any command is sent', async (t) => 
     [{ command: 'swap_bro', params: { broName: 'Rambro', nextSpawn: true, ignoreUnlocks: true } }, /nextSpawn cannot take ignoreUnlocks/],
     [{ command: 'execute_script', params: { path: 'watch-field', compileOnly: true, args: { a: 1 } } }, /compileOnly cannot take args/],
     [{ command: 'read_log', params: { onlyNew: true } }, /implemented by the MCP server/],
+    [{ command: 'take_screenshot', params: { backdrop: true, highlight: '/Player' } }, /backdrop cannot take highlight/],
+    [{ command: 'take_screenshot', params: { backdrop: 'pink' } }, /backdrop must be true, false or a colour as #RRGGBB/],
   ]) {
     startRecording();
     const run = await runTestScript(await writeScript(t, { steps: [{ command: 'ping' }, step] }), client);

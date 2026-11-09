@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 
 import { INSTANCE_STOP_TIMEOUT_MS, instanceConfig } from './lib/instance.js';
+import { WRAPPER_CODE_FILES, changedSince } from './lib/stale-code.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -492,6 +493,13 @@ async function handleRestart(request) {
   }
 }
 
+function restartNote() {
+  const subagents = 'A subagent already running keeps the tool list it started with, so a changed tool reaches only a new subagent.';
+  const changed = changedSince(WRAPPER_CODE_FILES, performance.timeOrigin);
+  if (changed.length === 0) return subagents;
+  return `${subagents} ${changed.join(', ')} changed after this wrapper started and a restart does not reload the wrapper: reconnect the server in the client (/mcp in Claude Code) to load it.`;
+}
+
 async function performRestart() {
   if (shuttingDown) return { success: false, error: 'The wrapper is shutting down' };
   log('Restart requested');
@@ -511,6 +519,7 @@ async function performRestart() {
       message: tools === null
         ? 'MCP server restarted successfully'
         : `MCP server restarted successfully, listing ${tools} tools`,
+      note: restartNote(),
     };
   } catch (err) {
     log(`Restart failed: ${err.message}`);

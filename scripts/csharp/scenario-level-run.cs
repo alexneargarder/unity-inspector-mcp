@@ -36,10 +36,17 @@ public static class ScenarioLevelRun
     private static Harmony kitHarmony;
     private static readonly HashSet<MethodBase> KitPatched = new HashSet<MethodBase>();
 
-    private static object suppressionSettings;
-    private static FieldInfo suppressionField;
-    private static bool suppressionChanged;
+    private class SettingGuard
+    {
+        public object Settings;
+        public FieldInfo Field;
+        public Dictionary<string, object> Record;
+        public string Mod;
+    }
+
+    private static readonly List<SettingGuard> Guards = new List<SettingGuard>();
     internal static Dictionary<string, object> Suppression = new Dictionary<string, object>();
+    internal static Dictionary<string, object> SpawnAsEnemy = new Dictionary<string, object>();
 
     public static void Main()
     {
@@ -65,8 +72,10 @@ public static class ScenarioLevelRun
         }
 
         Patch(ScriptContext.Harmony);
-        TurnOffEnemySuppression();
-        PatchSuppressionSave(ScriptContext.Harmony);
+        Guards.Clear();
+        Suppression = TurnOffSetting("Utility Mod", "Utility_Mod.Main", "disableEnemySpawn");
+        SpawnAsEnemy = TurnOffSetting("Control Enemies Mod", "Control_Enemies_Mod.Main", "spawnAsEnemyEnabled");
+        PatchSettingSaves(ScriptContext.Harmony);
 
         var go = new GameObject("ScenarioLevelRun");
         go.tag = "Unpausable";
@@ -91,7 +100,7 @@ public static class ScenarioLevelRun
             if (agent != null) UnityEngine.Object.Destroy(agent);
         }
         AddedAgents.Clear();
-        RestoreEnemySuppression();
+        RestoreSettings();
         Runner = null;
         kitHarmony = null;
     }
@@ -390,93 +399,96 @@ public static class ScenarioLevelRun
         return found;
     }
 
-    private static void TurnOffEnemySuppression()
+    private static Dictionary<string, object> TurnOffSetting(string mod, string mainTypeName, string fieldName)
     {
-        Suppression = new Dictionary<string, object>();
-        Suppression["setting"] = "Utility Mod disableEnemySpawn";
+        var record = new Dictionary<string, object>();
+        record["setting"] = mod + " " + fieldName;
         Type mainType = null;
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
-            if (asm.GetName().Name == "Utility Mod") { mainType = asm.GetType("Utility_Mod.Main"); break; }
+            if (asm.GetName().Name == mod) { mainType = asm.GetType(mainTypeName); break; }
         }
-        if (mainType == null) { Suppression["found"] = false; Suppression["note"] = "Utility Mod is not loaded"; return; }
+        if (mainType == null) { record["found"] = false; record["note"] = mod + " is not loaded"; return record; }
         const BindingFlags sf = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
         FieldInfo settingsField = mainType.GetField("settings", sf);
         object settings = settingsField == null ? null : settingsField.GetValue(null);
-        FieldInfo field = settings == null ? null : settings.GetType().GetField("disableEnemySpawn",
+        FieldInfo field = settings == null ? null : settings.GetType().GetField(fieldName,
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
         if (field == null || field.FieldType != typeof(bool))
         {
-            Suppression["found"] = false;
-            Suppression["note"] = "Utility Mod is loaded but its disableEnemySpawn setting could not be read";
-            return;
+            record["found"] = false;
+            record["note"] = mod + " is loaded but its " + fieldName + " setting could not be read";
+            return record;
         }
         FieldInfo enabledField = mainType.GetField("enabled", sf);
         object enabled = enabledField == null ? null : enabledField.GetValue(null);
         bool was = (bool)field.GetValue(settings);
-        Suppression["found"] = true;
-        Suppression["modEnabled"] = enabled is bool && (bool)enabled;
-        Suppression["was"] = was;
-        Suppression["turnedOff"] = was;
-        Suppression["restored"] = false;
+        record["found"] = true;
+        record["modEnabled"] = enabled is bool && (bool)enabled;
+        record["was"] = was;
+        record["turnedOff"] = was;
+        record["restored"] = false;
         if (was)
         {
-            suppressionSettings = settings;
-            suppressionField = field;
+            Guards.Add(new SettingGuard { Settings = settings, Field = field, Record = record, Mod = mod });
             field.SetValue(settings, false);
-            suppressionChanged = true;
-            Log("Utility Mod disableEnemySpawn turned off in memory for this run");
+            Log(mod + " " + fieldName + " turned off in memory for this run");
+        }
+        return record;
+    }
+
+    private static void PatchSettingSaves(Harmony harmony)
+    {
+        const BindingFlags flags = BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public;
+        var prefix = new HarmonyMethod(typeof(ScenarioLevelRun).GetMethod("SettingSavePrefix", flags));
+        var finalizer = new HarmonyMethod(typeof(ScenarioLevelRun).GetMethod("SettingSaveFinalizer", flags));
+        foreach (var g in Guards)
+        {
+            int patched = 0;
+            foreach (var m in g.Settings.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+            {
+                if (!m.Name.StartsWith("Save") || m.IsAbstract) continue;
+                try
+                {
+                    harmony.Patch(m, prefix, null, null, finalizer);
+                    patched++;
+                }
+                catch (Exception e)
+                {
+                    NoteError("patching " + g.Mod + "'s " + m.Name + ": " + e.Message);
+                }
+            }
+            g.Record["savePatched"] = patched > 0;
+            if (patched == 0) NoteError("no " + g.Mod + " settings save to patch: a settings save during the run would write " + g.Field.Name + " off");
         }
     }
 
-    private static void PatchSuppressionSave(Harmony harmony)
+    private static void SettingSavePrefix(object __instance)
     {
-        if (!suppressionChanged) return;
-        const BindingFlags flags = BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public;
-        var prefix = new HarmonyMethod(typeof(ScenarioLevelRun).GetMethod("SuppressionSavePrefix", flags));
-        var finalizer = new HarmonyMethod(typeof(ScenarioLevelRun).GetMethod("SuppressionSaveFinalizer", flags));
-        int patched = 0;
-        foreach (var m in suppressionSettings.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+        foreach (var g in Guards) if (ReferenceEquals(g.Settings, __instance)) g.Field.SetValue(g.Settings, true);
+    }
+
+    private static void SettingSaveFinalizer(object __instance)
+    {
+        foreach (var g in Guards) if (ReferenceEquals(g.Settings, __instance)) g.Field.SetValue(g.Settings, false);
+    }
+
+    internal static void RestoreSettings()
+    {
+        foreach (var g in Guards)
         {
-            if (!m.Name.StartsWith("Save") || m.IsAbstract) continue;
             try
             {
-                harmony.Patch(m, prefix, null, null, finalizer);
-                patched++;
+                g.Field.SetValue(g.Settings, true);
+                g.Record["restored"] = true;
+                Log(g.Mod + " " + g.Field.Name + " restored");
             }
             catch (Exception e)
             {
-                NoteError("patching Utility Mod's " + m.Name + ": " + e.Message);
+                NoteError("restoring " + g.Field.Name + ": " + e.Message);
             }
         }
-        Suppression["savePatched"] = patched > 0;
-        if (patched == 0) NoteError("no Utility Mod settings save to patch: a settings save during the run would write disableEnemySpawn off");
-    }
-
-    private static void SuppressionSavePrefix()
-    {
-        if (suppressionChanged) suppressionField.SetValue(suppressionSettings, true);
-    }
-
-    private static void SuppressionSaveFinalizer()
-    {
-        if (suppressionChanged) suppressionField.SetValue(suppressionSettings, false);
-    }
-
-    internal static void RestoreEnemySuppression()
-    {
-        if (!suppressionChanged) return;
-        try
-        {
-            suppressionField.SetValue(suppressionSettings, true);
-            Suppression["restored"] = true;
-            Log("Utility Mod disableEnemySpawn restored");
-        }
-        catch (Exception e)
-        {
-            NoteError("restoring disableEnemySpawn: " + e.Message);
-        }
-        suppressionChanged = false;
+        Guards.Clear();
     }
 
     internal static class Json
@@ -2418,7 +2430,7 @@ public class ScenarioLevelRunner : MonoBehaviour
         if (hold != null) EndHold(hold, KitDone(hold.Rec) ? "ran" : "run-ended", null);
         ReleaseRescues();
         for (int i = 0; i < 4; i++) { ScenarioLevelRun.Owned[i] = false; Array.Clear(ScenarioLevelRun.Desired[i], 0, 10); }
-        ScenarioLevelRun.RestoreEnemySuppression();
+        ScenarioLevelRun.RestoreSettings();
         try
         {
             ScenarioLevelRun.ReportJson = ScenarioLevelRun.Json.Write(BuildReport());
@@ -2542,6 +2554,7 @@ public class ScenarioLevelRunner : MonoBehaviour
         }
         report["mechanics"] = mechanics;
         report["enemySuppression"] = ScenarioLevelRun.Suppression;
+        report["spawnAsEnemy"] = ScenarioLevelRun.SpawnAsEnemy;
         report["errors"] = ScenarioLevelRun.Errors.ToList();
         return report;
     }

@@ -55,8 +55,10 @@ test('wait_for_game ends at once on a handshake refusal', { timeout: 30000 }, as
   assert.ok(elapsed < 5000, `a refusal waited ${elapsed}ms of a 20s budget`);
 });
 
-test('wait_for_game reads a hello that goes unanswered as an unresponsive game', { timeout: 30000 }, async () => {
+test('wait_for_game reads a hello that goes unanswered as an unresponsive game', { timeout: 30000 }, async (t) => {
   stub.hello = 'silent';
+  setProcReader(fakeProcReader({}));
+  t.after(() => setProcReader(null));
   const previous = unityClient.connectTimeoutMs;
   unityClient.connectTimeoutMs = 300;
   try {

@@ -84,6 +84,7 @@ const SHIPPED_TEST_SCRIPTS = [
   'example-movement-test.json',
   'execute-code-errors.json',
   'execute-code-shapes.json',
+  'finally-recursion.json',
   'game-states.json',
   'input-sequence.json',
   'input.json',
@@ -448,9 +449,10 @@ import { CSHARP_SCRIPTS_DIR, NODE_ONLY_TOOLS, listCSharpScripts } from '../lib/s
 import { toolArguments } from '../index.js';
 
 async function scratchDir(t, files = {}) {
-  const { mkdtemp, mkdir, writeFile, rm } = await import('fs/promises');
+  const { mkdtemp, mkdir, writeFile, rm, realpath } = await import('fs/promises');
   const { tmpdir } = await import('os');
-  const dir = await mkdtemp(path.join(tmpdir(), 'script-library-'));
+  // The server reads the file it was given through its real path, and TMPDIR can be a symlink
+  const dir = await realpath(await mkdtemp(path.join(tmpdir(), 'script-library-')));
   t.after(() => rm(dir, { recursive: true, force: true }));
   for (const [name, content] of Object.entries(files)) {
     if (content === null) await mkdir(path.join(dir, name));
@@ -659,6 +661,37 @@ test('a take_screenshot step reports the path as this machine sees it', async (t
 
   const run = await runTestScript(scriptPath, client);
   assert.equal(run.results[0].result.path, '/tmp/shot.png');
+});
+
+test('a take_screenshot step with backdrop sends the render and records its path and colour, or a plain failure', async (t) => {
+  const scriptPath = await writeTestScript(t, [
+    { command: 'take_screenshot', params: { backdrop: true } },
+    { command: 'take_screenshot', params: { backdrop: '#102030' } },
+  ]);
+  const failure = { success: false, error: 'boom', position: { line: 9, column: 1 }, statement: 'x' };
+  const client = stubClient([{ success: true, resultSet: true, result: 'Z:/tmp/shot.png' }, failure]);
+  client.translateScreenshotPath = (p) => p.replace(/^Z:/, '');
+
+  const run = await runTestScript(scriptPath, client);
+  assert.deepEqual(client.sent.map((s) => s.command), ['execute_code', 'execute_code']);
+  assert.match(client.sent[0].params.code, /return PlainBackdrop\.Screenshot\("#FF00FF"\);\n$/);
+  assert.match(client.sent[1].params.code, /return PlainBackdrop\.Screenshot\("#102030"\);\n$/);
+  assert.deepEqual(run.results[0].result, { success: true, path: '/tmp/shot.png', backdrop: '#FF00FF' });
+  assert.deepEqual(run.results[0].params, { backdrop: true }, 'the record shows the step as written');
+  assert.equal(run.results[1].success, false);
+  assert.equal(run.results[1].error, 'The backdrop render failed: boom');
+});
+
+test('a take_screenshot step whose backdrop is no colour or comes with a highlight is refused', () => {
+  const problems = validateTestScriptSteps([
+    { command: 'take_screenshot', params: { backdrop: 'magenta' } },
+    { command: 'take_screenshot', params: { backdrop: true, highlight: '/Player' } },
+    { command: 'take_screenshot', params: { backdrop: false, highlight: '/Player' } },
+  ], { toolArguments: toolArguments() });
+  assert.deepEqual(problems, [
+    'step 1: backdrop must be true, false or a colour as #RRGGBB, got "magenta"',
+    "step 2: take_screenshot's backdrop cannot take highlight: the outline is the mod's own, drawn outside the backdrop render",
+  ]);
 });
 
 test('a step whose params carry a key its tool does not declare is refused', () => {

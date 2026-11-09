@@ -44,7 +44,9 @@ paths:
 
 | | class | covered by |
 |---|---|---|
-| C | from a level, with the suppression warning; the reply once the level is in play (`loaded`), naming no cutscene | levels 7-9, 14, 17, 25, 29 |
+| C | from a level; the reply once the level is in play (`loaded`) | levels 7-9, 14, 17, 25, 29 |
+| C | a level in play with no cutscene: the reply names none | levels 29 |
+| M | Utility Mod's `disableEnemySpawn` on at load: no suppression warning | levels 5, 7 |
 | S | a bro's intro on a level whose bros arrive by transport: answered at once with `cutscene` and its warning, the bro `arriving`, `start` skipping it | levels 86-91 |
 | C | every challenge and Muscle Temple campaign | levels 76-84 |
 | C | a fractional index, sent to the mod's message handler directly | levels 85 |
@@ -119,6 +121,7 @@ paths:
 | S | second player | player-states 101 |
 | S | after a respawn | player-states 75 |
 | M | Swap Bros Mod missing, in memory | bros 66 |
+| M | Swap Bros Mod older than 2.2.0, without its API, in memory: `swap-bros-incompatible` naming the installed version | bros 104, 107 |
 
 ## list_campaigns
 
@@ -130,12 +133,12 @@ paths:
 
 | | class | covered by |
 |---|---|---|
-| M | suppression on, enemies left; on, count 0 | spawning 12, 87 |
+| M | suppression on, enemies left; on, inactive units left out | spawning 12, 87 |
 | C | after spawns: mooks, a villager, bosses, vehicles, a worm, aliens | spawning 24, 31, 43 |
-| M | suppression off with units; off and empty | spawning 50, 89 |
+| M | suppression off with units | spawning 50 |
 | M | a full level after suppression is turned off; back on | spawning 52-58 |
-| M | the suppressor mod disabled | spawning 64 |
-| C | registered units that are inactive | spawning 86-87 |
+| M | the suppressor mod disabled | spawning 64, 89 |
+| C | registered units that are inactive: not listed | spawning 86-87 |
 | C | the main thread held past the 5 s budget: `success: false` with `error` and nothing else; the call after | spawning 100-102 |
 | C | a corpse: `isAlive` false, beside `aliveCount` | spawning 110-113 |
 | S | main menu; world map | game-states 48, 81 |
@@ -340,6 +343,7 @@ paths:
 | S | `BrosReleased` false over a level in play: a live bro swapped, a hidden one `held` | player-states 169-171 |
 | C | the selection restored when `CreateBroList` throws | not produced by any step: code review |
 | M | Swap Bros Mod missing, in memory, with and without `nextSpawn` | bros 63-65 |
+| M | Swap Bros Mod older than 2.2.0, without its API, in memory, with and without `nextSpawn`: `swap-bros-incompatible` naming the installed version | bros 104-106 |
 | C | `swap-failed`: Swap Bros Mod refusing the swap and the selection, in memory | bros 68-74 |
 | C | `nextSpawn`: a vanilla bro, then the respawn | bros 47-49 |
 | M | `nextSpawn`: a custom bro, then the respawn | bros 50-52 |
@@ -368,6 +372,8 @@ paths:
 | C | more than 50 screenshots kept; the newest a complete PNG | inspection 152-154 |
 | S | a screenshot file that never appears | not produced by any step: code review only |
 | S | two captures from two connections in one frame | not produced by any step: a test script sends one command at a time; the capture lock is code review only |
+| C | `backdrop` true and a colour | inspection 182-183 |
+| S | a backdrop render on the starting level: over half its PNG exactly `#FF00FF`, and the enabled renderers the same before and after it | inspection 184 |
 
 ## teleport_player
 

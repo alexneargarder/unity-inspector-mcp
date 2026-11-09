@@ -12,6 +12,12 @@ await fs.writeFile(logPath, 'first line\nsecond line\n');
 process.env.UNITY_INSPECTOR_LOG = logPath;
 
 const { handleToolCall, findLogPath, logFileInfo, resetPlatformDetection, resolveLogFile } = await import('../index.js');
+const { setProcReader } = await import('../lib/game-process.js');
+const { fakeProcReader } = await import('./support/fake-proc.js');
+
+// No game is running in these tests: the game's start time and profile come from this empty table
+setProcReader(fakeProcReader({}));
+test.after(() => setProcReader(null));
 
 // os.homedir() reads the registry on Windows, so a fake HOME proves nothing there
 const fakeHomeWorks = { skip: process.platform === 'win32' && 'HOME is not honoured on Windows' };
@@ -167,6 +173,46 @@ test('an explicit UNITY_INSPECTOR_LOG that is missing is reported, not silently 
     assert.match(text, /does-not-exist\.txt/);
   } finally {
     process.env.UNITY_INSPECTOR_LOG = logPath;
+  }
+});
+
+test('the log search reaches the Flatpak r2modman\'s profiles, and an absolute XDG_CONFIG_HOME in place of ~/.config', fakeHomeWorks, async () => {
+  const fakeHome = await fs.mkdtemp(path.join(os.tmpdir(), 'fake-home-'));
+  const xdg = path.join(fakeHome, 'xdg');
+  const write = async (root, profile, contents, mtime) => {
+    const file = path.join(root, 'r2modmanPlus-local/Broforce/profiles', profile, 'UMM/Core/Log.txt');
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, contents);
+    await fs.utimes(file, mtime, mtime);
+    return file;
+  };
+  const fromXdg = await write(xdg, 'Test-Xdg-a41f', 'xdg profile\n', new Date('2023-01-01T00:00:00Z'));
+  const flatpak = await write(path.join(fakeHome, '.var/app/com.github.ebkr.r2modman/config'), 'Test-Flatpak-a41f', 'flatpak profile\n', new Date('2024-01-01T00:00:00Z'));
+  const dotConfig = await write(path.join(fakeHome, '.config'), 'Test-Dotconfig-a41f', 'dot config profile\n', new Date('2025-01-01T00:00:00Z'));
+
+  const saved = Object.fromEntries(['HOME', 'XDG_CONFIG_HOME', 'APPDATA', 'USERPROFILE', 'UNITY_INSPECTOR_LOG'].map((key) => [key, process.env[key]]));
+  process.env.HOME = fakeHome;
+  for (const key of ['XDG_CONFIG_HOME', 'APPDATA', 'USERPROFILE', 'UNITY_INSPECTOR_LOG']) delete process.env[key];
+  resetPlatformDetection();
+
+  try {
+    assert.equal(await findLogPath(async () => null, noGameStart), dotConfig);
+    assert.equal(await findLogPath(async () => 'Test-Flatpak-a41f', noGameStart), flatpak);
+
+    process.env.XDG_CONFIG_HOME = xdg;
+    assert.equal(await findLogPath(async () => null, noGameStart), flatpak, '~/.config is not searched once XDG_CONFIG_HOME names the folder');
+    assert.equal(await findLogPath(async () => 'Test-Xdg-a41f', noGameStart), fromXdg);
+    assert.equal(await findLogPath(async () => 'Test-Dotconfig-a41f', noGameStart), flatpak);
+
+    process.env.XDG_CONFIG_HOME = 'xdg';
+    assert.equal(await findLogPath(async () => null, noGameStart), dotConfig, 'a relative XDG_CONFIG_HOME is ignored');
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    resetPlatformDetection();
+    await fs.rm(fakeHome, { recursive: true, force: true });
   }
 });
 

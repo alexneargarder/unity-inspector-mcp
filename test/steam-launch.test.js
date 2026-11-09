@@ -11,7 +11,7 @@ import { reply, startStubServer } from './support/stub-server.js';
 
 const { configureLaunchTiming, handleToolCall, setLaunchResolver, unityClient } = await import('../index.js');
 const { LINUX_GAME_COMM, composeExtraLaunchArgs, resolveLaunchCommand, setProcReader, wineserverHoldsPrefix } = await import('../lib/game-process.js');
-const { LAUNCH_REFUSED, parseRegQuery, preflightSteamLaunch, prepareSteamLaunch, realOnPath, realProfilesRoot, resolveSteamLaunch, withWinhttpOverride } = await import('../lib/steam-launch.js');
+const { LAUNCH_REFUSED, parseRegQuery, preflightSteamLaunch, prepareSteamLaunch, r2modmanProfileRoots, realFlatpakDataRoot, realOnPath, realProfilesRoot, resolveSteamLaunch, withWinhttpOverride, withdrawWrapperArgs } = await import('../lib/steam-launch.js');
 const { COMMAND_CANCELLED, FLATPAK_STEAM_ROOT } = await import('../lib/unity-client.js');
 
 const scratch = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'steam-launch-')));
@@ -24,7 +24,7 @@ async function write(file, text = '') {
   await fs.writeFile(file, text);
 }
 
-async function fixture({ profile = 'Default', doorstop = '4.4.1', gameFiles = {}, root = `home-${++counter}` } = {}) {
+async function fixture({ profile = 'Default', doorstop = '4.4.1', gameFiles = {}, root = `home-${++counter}`, flatpakProfile = null } = {}) {
   const home = path.join(scratch, root);
   const profiles = path.join(home, 'profiles');
   const steamapps = path.join(home, 'library/steamapps');
@@ -38,14 +38,22 @@ async function fixture({ profile = 'Default', doorstop = '4.4.1', gameFiles = {}
     await write(preloader);
     if (doorstop !== null) await write(path.join(profileDir, '.doorstop_version'), `${doorstop}\n`);
   }
+  const flatpakRoot = path.join(home, 'flatpak/r2modmanPlus-local/Broforce');
+  const flatpakProfileDir = path.join(flatpakRoot, 'profiles', flatpakProfile ?? 'unused');
+  const flatpakPreloader = path.join(flatpakProfileDir, 'UMM/Core/UnityModManager.dll');
+  if (flatpakProfile !== null) {
+    await write(flatpakPreloader);
+    if (doorstop !== null) await write(path.join(flatpakProfileDir, '.doorstop_version'), `${doorstop}\n`);
+  }
   return {
-    home, profiles, steamapps, gamePath, profileDir, preloader,
+    home, profiles, steamapps, gamePath, profileDir, preloader, flatpakRoot, flatpakProfileDir, flatpakPreloader,
     lookups: {
       onPath: async (name) => name === 'steam',
       steamRoots: () => [],
       registry: async (key) => (key.startsWith('HKLM') ? 'C:/Steam' : null),
       findSteamGame: async () => ({ gamePath, protonPrefix: null, steamapps }),
       profilesRoot: () => profiles,
+      flatpakDataRoot: () => flatpakRoot,
     },
   };
 }
@@ -131,6 +139,22 @@ test('a program is on PATH only as an executable file, and the profiles root is 
   assert.equal(realProfilesRoot({ APPDATA: '/roaming' }, 'win32'), path.join('/roaming', 'r2modmanPlus-local/Broforce/profiles'));
   assert.equal(realProfilesRoot({}, 'win32'), path.join(os.homedir(), 'AppData/Roaming/r2modmanPlus-local/Broforce/profiles'));
   assert.equal(realProfilesRoot({ APPDATA: '/roaming' }, 'linux'), path.join(os.homedir(), '.config/r2modmanPlus-local/Broforce/profiles'));
+});
+
+test('the Linux profiles root follows an absolute XDG_CONFIG_HOME, and the log search takes the launch\'s roots in its order', () => {
+  const dotConfig = path.join(os.homedir(), '.config/r2modmanPlus-local/Broforce/profiles');
+  assert.equal(realProfilesRoot({ XDG_CONFIG_HOME: '/xdg' }, 'linux'), '/xdg/r2modmanPlus-local/Broforce/profiles');
+  assert.equal(realProfilesRoot({ XDG_CONFIG_HOME: ' /xdg ' }, 'linux'), '/xdg/r2modmanPlus-local/Broforce/profiles');
+  assert.equal(realProfilesRoot({ XDG_CONFIG_HOME: 'relative' }, 'linux'), dotConfig);
+  assert.equal(realProfilesRoot({ XDG_CONFIG_HOME: '' }, 'linux'), dotConfig);
+  assert.equal(realProfilesRoot({ XDG_CONFIG_HOME: '/xdg', APPDATA: '/roaming' }, 'win32'), path.join('/roaming', 'r2modmanPlus-local/Broforce/profiles'));
+
+  const flatpakProfiles = path.join(realFlatpakDataRoot('linux'), 'profiles');
+  const roaming = path.join(os.homedir(), 'AppData/Roaming/r2modmanPlus-local/Broforce/profiles');
+  assert.deepEqual(r2modmanProfileRoots({ XDG_CONFIG_HOME: '/xdg', APPDATA: '/roaming' }), [
+    '/xdg/r2modmanPlus-local/Broforce/profiles', flatpakProfiles, path.join('/roaming', 'r2modmanPlus-local/Broforce/profiles'), roaming,
+  ]);
+  assert.deepEqual(r2modmanProfileRoots({}), [dotConfig, flatpakProfiles, roaming]);
 });
 
 test('Linux native: the target is the profile\'s real path, with --r2profile and the scripts to make executable', async () => {
@@ -313,7 +337,8 @@ test('Linux refuses a Doorstop target or launchArgs token holding a space; Windo
 test('the likely causes are split by what each launch path can actually hit', async () => {
   const native = await resolve({}, { lookups: (await fixture()).lookups });
   assert.match(native.startCauses.confirmation, /Allow game launch\?/);
-  assert.match(native.startCauses.launchOptions, /linux_wrapper\.sh %command%/);
+  assert.match(native.startCauses.launchOptions, /Steam Launch Options must run r2modman's linux_wrapper\.sh before %command%, as r2modman's setup screen gives them/);
+  assert.doesNotMatch(native.startCauses.launchOptions, /only with/);
 
   const proton = await resolve({}, { lookups: (await fixture({ gameFiles: { 'Broforce.exe': '' } })).lookups });
   assert.match(proton.startCauses.launchOptions, /under Proton, Broforce's Steam Launch Options must be empty/);
@@ -331,6 +356,152 @@ test('resolveSteamLaunch answers null on macOS, leaving the protocol launch', as
   const mac = await resolveLaunchCommand({ vanilla: true, extraArgs: ['-x'] }, {}, 'darwin');
   assert.equal(mac.command, 'open');
   assert.deepEqual(mac.ignoredArgs, ['--vanilla', '-x']);
+});
+
+const FLATPAK = 'steam-flatpak-r2modman';
+
+test('a profile name is looked up in r2modman\'s folder, then the Flatpak r2modman\'s, unset meaning Default, and an absent one names both', async () => {
+  assert.equal(realFlatpakDataRoot('linux'), path.join(os.homedir(), '.var/app/com.github.ebkr.r2modman/config/r2modmanPlus-local/Broforce'));
+  assert.equal(realFlatpakDataRoot('win32'), null);
+
+  const both = await fixture({ profile: 'Shared', flatpakProfile: 'Shared' });
+  const first = await resolve({}, { env: { BROFORCE_PROFILE: 'Shared' }, lookups: both.lookups });
+  assert.equal(first.source, 'steam-applaunch');
+  assert.ok(first.args.includes(both.preloader));
+
+  const flatpakOnly = await fixture({ profile: null, flatpakProfile: 'Mine' });
+  const named = await resolve({}, { env: { BROFORCE_PROFILE: 'Mine' }, lookups: flatpakOnly.lookups });
+  assert.equal(named.source, FLATPAK);
+  assert.equal(named.prepare.wrapperArgs.file, path.join(flatpakOnly.flatpakRoot, 'wrapper_args.txt'));
+  assert.ok(named.prepare.wrapperArgs.text.includes(flatpakOnly.flatpakPreloader));
+
+  const defaults = await fixture({ profile: null, flatpakProfile: 'Default' });
+  assert.equal((await resolve({}, { lookups: defaults.lookups })).source, FLATPAK);
+  const defaultInBoth = await fixture({ flatpakProfile: 'Default' });
+  assert.equal((await resolve({}, { lookups: defaultInBoth.lookups })).source, 'steam-applaunch');
+
+  await assert.rejects(
+    resolve({}, { env: { BROFORCE_PROFILE: 'Absent' }, lookups: flatpakOnly.lookups }),
+    (err) => err.code === LAUNCH_REFUSED &&
+      err.message.includes(path.join(flatpakOnly.profiles, 'Absent/UMM/Core/UnityModManager.dll')) &&
+      err.message.includes(path.join(flatpakOnly.flatpakRoot, 'profiles/Absent/UMM/Core/UnityModManager.dll')),
+  );
+  await assert.rejects(
+    resolve({}, { env: { BROFORCE_PROFILE: 'Mine' }, platform: 'win32', lookups: flatpakOnly.lookups }),
+    (err) => err.code === LAUNCH_REFUSED && !err.message.includes(flatpakOnly.flatpakRoot),
+    'Windows has no Flatpak r2modman',
+  );
+});
+
+test('an absolute BROFORCE_PROFILE is a Flatpak profile when it lies under the Flatpak r2modman\'s profiles folder', async () => {
+  const f = await fixture({ flatpakProfile: 'Mine' });
+  for (const given of [f.flatpakProfileDir, `${f.flatpakProfileDir}/`]) {
+    const launch = await resolve({}, { env: { BROFORCE_PROFILE: given }, lookups: f.lookups });
+    assert.equal(launch.source, FLATPAK, given);
+    assert.ok(launch.prepare.wrapperArgs.text.endsWith('--r2profile\nMine'), launch.prepare.wrapperArgs.text);
+  }
+
+  assert.equal((await resolve({}, { env: { BROFORCE_PROFILE: f.profileDir }, lookups: f.lookups })).source, 'steam-applaunch');
+  const beside = path.join(f.flatpakRoot, 'profiles-old/Mine');
+  await write(path.join(beside, 'UMM/Core/UnityModManager.dll'));
+  assert.equal((await resolve({}, { env: { BROFORCE_PROFILE: beside }, lookups: f.lookups })).source, 'steam-applaunch');
+});
+
+test('a modded Flatpak launch writes r2modman\'s lines to wrapper_args.txt: linux_wrapper.sh or -- first, then Doorstop and launchArgs, spaces kept', async () => {
+  setProcReader(fakeProcReader({}));
+  const requested = composeExtraLaunchArgs({ launchArgs: '-x "two words"' });
+
+  const native = await fixture({ profile: null, flatpakProfile: 'Default' });
+  const launch = await resolve(requested, { lookups: native.lookups });
+  assert.equal(launch.command, 'xdg-open');
+  assert.deepEqual(launch.args, ['steam://run/274190/']);
+  assert.equal(launch.display, 'xdg-open steam://run/274190/');
+  assert.equal(launch.vanilla, false);
+  assert.deepEqual(launch.ignoredArgs, []);
+  assert.equal(launch.waitsOnExit, false);
+  assert.equal(launch.prepare.scriptsDir, native.flatpakProfileDir);
+  assert.equal(launch.startCauses.confirmation, null, 'steam://run carries no arguments for Steam to confirm');
+  const lines = [
+    path.join(native.flatpakRoot, 'linux_wrapper.sh'),
+    '--doorstop-enabled', 'true', '--doorstop-target-assembly', native.flatpakPreloader, '--r2profile', 'Default', '-x', 'two words',
+  ].join('\n');
+  assert.equal(launch.prepare.wrapperArgs.text, lines);
+  assert.deepEqual(await prepare(launch.prepare), []);
+  assert.equal(await fs.readFile(path.join(native.flatpakRoot, 'wrapper_args.txt'), 'utf8'), lines);
+
+  const proton = await fixture({ profile: null, flatpakProfile: 'Default', doorstop: '3.4.0', gameFiles: { 'Broforce.exe': '' } });
+  const viaProton = await resolve(requested, { lookups: proton.lookups });
+  assert.equal(viaProton.prepare.wrapperArgs.text, [
+    '--', '--doorstop-enable', 'true', '--doorstop-target', `Z:${proton.flatpakPreloader}`, '--r2profile', 'Default', '-x', 'two words',
+  ].join('\n'));
+  assert.equal(viaProton.prepare.userReg, path.join(proton.steamapps, 'compatdata/274190/pfx/user.reg'));
+  setProcReader(null);
+});
+
+test('a vanilla Flatpak launch writes r2modman\'s vanilla arguments the same way, honoured with nothing ignored', async () => {
+  const native = await fixture({ profile: null, flatpakProfile: 'Default' });
+  const launch = await resolve({ vanilla: true, extraArgs: ['-x', 'two words'] }, { lookups: native.lookups });
+  assert.equal(launch.vanilla, true);
+  assert.deepEqual(launch.ignoredArgs, []);
+  assert.deepEqual(Object.keys(launch.prepare), ['wrapperArgs'], 'a vanilla launch prepares nothing else');
+  assert.equal(launch.prepare.wrapperArgs.text,
+    [path.join(native.flatpakRoot, 'linux_wrapper.sh'), '--doorstop-enabled', 'false', '-x', 'two words'].join('\n'));
+
+  const proton = await fixture({ profile: null, flatpakProfile: 'Default', doorstop: '3.4.0', gameFiles: { 'Broforce.exe': '' } });
+  const viaProton = await resolve({ vanilla: true }, { lookups: proton.lookups });
+  assert.equal(viaProton.prepare.wrapperArgs.text, ['--', '--doorstop-enable', 'false'].join('\n'));
+  assert.deepEqual(Object.keys(viaProton.prepare), ['wrapperArgs']);
+});
+
+test('a Flatpak launch refuses only an argument the wrapper cannot read back: a line break, an empty one, one starting with #', async () => {
+  const f = await fixture({ profile: null, flatpakProfile: 'Default' });
+  for (const unreadable of ['one\ntwo', '', '#tag']) {
+    for (const vanilla of [false, true]) {
+      await assert.rejects(
+        resolve({ vanilla, extraArgs: ['-x', unreadable] }, { lookups: f.lookups }),
+        (err) => err.code === LAUNCH_REFUSED && /reads one argument per line/.test(err.message) && err.message.includes(JSON.stringify(unreadable)),
+      );
+    }
+  }
+  assert.equal((await resolve({ extraArgs: ['a b', ' ', 'x#y'] }, { lookups: f.lookups })).source, FLATPAK);
+});
+
+test('withdrawing blanks wrapper_args.txt only while it still holds what the server wrote', async () => {
+  const f = await fixture({ profile: null, flatpakProfile: 'Default' });
+  const file = path.join(f.flatpakRoot, 'wrapper_args.txt');
+  const launch = await resolve({ vanilla: true }, { lookups: f.lookups });
+
+  await write(file, launch.prepare.wrapperArgs.text);
+  assert.equal(await withdrawWrapperArgs(launch.prepare), false, 'a file this launch never wrote is not its own');
+
+  await prepare(launch.prepare);
+  assert.equal(await withdrawWrapperArgs(launch.prepare), true);
+  assert.equal(await fs.readFile(file, 'utf8'), '');
+  assert.equal(await withdrawWrapperArgs(launch.prepare), false);
+
+  await prepare(launch.prepare);
+  await fs.writeFile(file, '\n');
+  assert.equal(await withdrawWrapperArgs(launch.prepare), false, 'what web_start_wrapper.sh leaves once it has read the file');
+  assert.equal(await fs.readFile(file, 'utf8'), '\n');
+
+  assert.equal(await withdrawWrapperArgs(null), false);
+  assert.equal(await withdrawWrapperArgs({ scriptsDir: f.flatpakProfileDir }), false);
+});
+
+test('the pre-flight refuses a Flatpak data folder or wrapper_args.txt it could not write, and passes a file not yet there', async () => {
+  const f = await fixture({ profile: null, flatpakProfile: 'Default' });
+  const file = path.join(f.flatpakRoot, 'wrapper_args.txt');
+  const target = { wrapperArgs: { file, text: '--' } };
+  await preflightSteamLaunch(target);
+
+  await write(file, '');
+  await fs.chmod(file, 0o444);
+  await assert.rejects(preflightSteamLaunch(target), (err) => err.code === 'EACCES');
+  await fs.chmod(file, 0o644);
+
+  await fs.chmod(f.flatpakRoot, 0o555);
+  await assert.rejects(preflightSteamLaunch(target), (err) => err.code === 'EACCES');
+  await fs.chmod(f.flatpakRoot, 0o755);
 });
 
 const USER_REG = 'WINE REGISTRY Version 2\n;; All keys relative to \\\\User\n\n' +
@@ -647,7 +818,7 @@ test('a modded launch through Steam that leaves no process polls the cold-start 
 
   assert.equal(payload.state, 'no-process', payload.message);
   assert.match(payload.message, /Allow game launch\?/);
-  assert.match(payload.message, /linux_wrapper\.sh %command%/);
+  assert.match(payload.message, /Steam Launch Options must run r2modman's linux_wrapper\.sh before %command%/);
   assert.doesNotMatch(payload.message, /the launch command exited without leaving a game running/);
 });
 
@@ -659,7 +830,7 @@ test('a modded launch through Steam whose game runs with nothing listening names
   const payload = JSON.parse(textOf(await launch({})));
 
   assert.equal(payload.state, 'connection-refused', payload.message);
-  assert.match(payload.message, /linux_wrapper\.sh %command%/);
+  assert.match(payload.message, /Steam Launch Options must run r2modman's linux_wrapper\.sh before %command%/);
   assert.doesNotMatch(payload.message, /Allow game launch/, 'the game is up, so nothing held it back');
   assert.match(payload.message, /wait_for_game/);
 });
@@ -753,6 +924,94 @@ test('a preparation that fails launches nothing and is a tool error', { timeout:
   assert.equal(response.isError, true, textOf(response));
   assert.match(textOf(response), /Could not prepare the Steam launch/);
   assert.match(textOf(response), /nothing was stopped/);
+  assert.equal(existsSync(marker), false);
+});
+
+async function stubFlatpak(t, script, options = {}) {
+  const f = await fixture({ profile: null, flatpakProfile: 'Default', ...options });
+  const command = path.join(f.home, 'xdg-open');
+  const file = path.join(f.flatpakRoot, 'wrapper_args.txt');
+  await write(command, `#!/bin/sh\n${typeof script === 'function' ? script({ ...f, file }) : script}\n`);
+  await fs.chmod(command, 0o755);
+  setLaunchResolver(async (requested, _env, platform, config) =>
+    ({ ...await resolveLaunchCommand(requested, {}, 'linux', config, f.lookups), command, args: [] }));
+  delete process.env.BROFORCE_LAUNCH_CMD;
+  configureLaunchTiming({ steamStartMs: 800, startConfirmMs: 100, startStableMs: 150, startPollMs: 50, vanillaExitWaitMs: 60000 });
+  t.after(clearLaunch);
+  return { ...f, file };
+}
+
+test('a Flatpak launch Steam never read is withdrawn: wrapper_args.txt blanked, and the no-process reply says so and names web_start_wrapper.sh alone', { timeout: 30000, skip: !isLinux }, async (t) => {
+  const f = await stubFlatpak(t, 'exit 0');
+  noGame();
+
+  for (const vanilla of [false, true]) {
+    const payload = JSON.parse(textOf(await launch({ vanilla, launchArgs: '-x "two words"' })));
+
+    assert.equal(payload.state, 'no-process', payload.message);
+    assert.equal(payload.launchCommand, 'xdg-open steam://run/274190/');
+    assert.match(payload.message, new RegExp(`the ${vanilla ? 'vanilla' : 'modded'} launch arguments, so they were withdrawn`));
+    assert.ok(payload.message.includes(`withdrawn from ${f.file}`), payload.message);
+    assert.match(payload.message, /Launch again\./);
+    assert.ok(payload.message.includes(`Steam Launch Options must run "${path.join(f.flatpakRoot, 'web_start_wrapper.sh')}" before %command%, as r2modman's setup screen gives them`), payload.message);
+    assert.doesNotMatch(payload.message, /only with/);
+    assert.doesNotMatch(payload.message, /Allow game launch/);
+    assert.equal(payload.note, undefined, 'nothing was ignored');
+    assert.equal(await fs.readFile(f.file, 'utf8'), '');
+  }
+});
+
+test('a Flatpak launch whose wrapper read the file leaves it alone: with the game up and nothing listening it names web_start_wrapper.sh', { timeout: 30000, skip: !isLinux }, async (t) => {
+  const marker = path.join(scratch, `flatpak-read-${++counter}`);
+  const f = await stubFlatpak(t, (fixed) => `echo '' > '${fixed.file}'\n: > '${marker}'`);
+  gameOnceLaunched(marker);
+
+  const payload = JSON.parse(textOf(await launch({})));
+
+  assert.equal(payload.state, 'connection-refused', payload.message);
+  assert.ok(payload.message.includes(`Steam Launch Options must run "${path.join(f.flatpakRoot, 'web_start_wrapper.sh')}" before %command%, as r2modman's setup screen gives them`), payload.message);
+    assert.doesNotMatch(payload.message, /only with/);
+  assert.doesNotMatch(payload.message, /withdrawn|Allow game launch/);
+  assert.equal(await fs.readFile(f.file, 'utf8'), '\n');
+
+  await fs.rm(marker);
+  noGame();
+  const gone = JSON.parse(textOf(await launch({})));
+  assert.equal(gone.state, 'no-process', gone.message);
+  assert.doesNotMatch(gone.message, /withdrawn/, 'the wrapper had read the arguments, so the game did start with them');
+  assert.equal(await fs.readFile(f.file, 'utf8'), '\n');
+});
+
+test('a cancelled Flatpak launch withdraws the arguments Steam never read', { timeout: 30000, skip: !isLinux }, async (t) => {
+  const f = await stubFlatpak(t, 'exit 0');
+  noGame();
+  configureLaunchTiming({ steamStartMs: 20000 });
+  const controller = new AbortController();
+
+  const pending = handleToolCall({ params: { name: 'launch_game', arguments: {} } }, { signal: controller.signal });
+  setTimeout(() => controller.abort(), 200);
+  const response = await pending;
+
+  assert.equal(response.isError, true, textOf(response));
+  assert.match(textOf(response), /was cancelled/);
+  assert.equal(await fs.readFile(f.file, 'utf8'), '');
+});
+
+test('a wrapper_args.txt write that fails launches nothing and names the file', { timeout: 30000, skip: !isLinux }, async (t) => {
+  const marker = path.join(scratch, `flatpak-unwritten-${++counter}`);
+  const f = await stubFlatpak(t, `: > '${marker}'`);
+  noGame();
+  const realWriteFile = fs.writeFile;
+  t.mock.method(fs, 'writeFile', async (file, ...rest) => {
+    if (file === f.file) throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+    return realWriteFile(file, ...rest);
+  });
+
+  const response = await launch({});
+
+  assert.equal(response.isError, true, textOf(response));
+  assert.ok(textOf(response).includes(`Could not write the launch arguments to ${f.file}: EACCES`), textOf(response));
+  assert.match(textOf(response), /Nothing was launched\./);
   assert.equal(existsSync(marker), false);
 });
 

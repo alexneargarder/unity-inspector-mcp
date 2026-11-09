@@ -1,6 +1,6 @@
 {
   "name": "Inspection tools over value kinds and path forms",
-  "description": "Covers list_gameobjects, inspect_gameobject, inspect_component, modify_component and query_gameobjects over every value kind (int, float, bool, string, enum, Vector2/Vector3, Color, Quaternion, arrays, Lists and Dictionaries, null, UnityEngine.Object references, private fields, properties, statics, consts), dotted member paths, shared* twins, unknown members with suggestions, and every path form: by name, by path, a [local] suffix, duplicates, inactive roots and children, a root whose name holds a slash. Also the detailed walk, the size of the largest replies with the 100-child cap and the detailed budget, and both caps through inspect_gameobject itself on a probe with 105 children and ten 9,000-character fields, whole-name * and ? globs, a component named by its full type name, a member read while a MonoBehaviour's Update holds the main thread past the read's 5 s budget, then the read once it is free; instance ids, a GameObject and a component resolved by instanceId directly and as a highlight, matches and asset refusals, direct and through a reference, list indexes and collections, static getters left unrun, read errors, strict conversion, write read-back with a value the game resets each frame, a stale script type, the screenshot folder recreated and pruned, and ping and game_state with the main thread held. Writes go to probe objects the script creates (UimProbe, UimDup, UimInactive, UimBudgetProbe) and to HeroController statics and fields it records first. It changes no Utility Mod setting itself: its restore only puts back what a failed spawning.json run recorded, so a settings save during the run writes the user's values. Its first steps undo whatever an earlier run left changed; its last steps restore the HeroController values, destroy the probes and reload the level it started in. Its cleanup runs the restore again whatever ended the steps: pause, speed, the second player, IronBro, the lock, the Swap Bros selection, the Utility Mod settings that a failed spawning run recorded, and the HeroController values it recorded.",
+  "description": "Covers list_gameobjects, inspect_gameobject, inspect_component, modify_component and query_gameobjects over every value kind (int, float, bool, string, enum, Vector2/Vector3, Color, Quaternion, arrays, Lists and Dictionaries, null, UnityEngine.Object references, private fields, properties, statics, consts), dotted member paths, shared* twins, unknown members with suggestions, and every path form: by name, by path, a [local] suffix, duplicates, inactive roots and children, a root whose name holds a slash. Also the detailed walk, the size of the largest replies with the 100-child cap and the detailed budget, and both caps through inspect_gameobject itself on a probe with 105 children and ten 9,000-character fields, whole-name * and ? globs, a component named by its full type name, a member read while a MonoBehaviour's Update holds the main thread past the read's 5 s budget, then the read once it is free; instance ids, a GameObject and a component resolved by instanceId directly and as a highlight, matches and asset refusals, direct and through a reference, list indexes and collections, static getters left unrun, read errors, strict conversion, write read-back with a value the game resets each frame, a stale script type, the screenshot folder recreated and pruned, ping and game_state with the main thread held, and a backdrop screenshot that is mostly the backdrop colour and leaves the enabled renderers as it found them. Writes go to probe objects the script creates (UimProbe, UimDup, UimInactive, UimBudgetProbe) and to HeroController statics and fields it records first. It changes no Utility Mod setting itself: its restore only puts back what a failed spawning.json run recorded, so a settings save during the run writes the user's values. Its first steps undo whatever an earlier run left changed; its last steps restore the HeroController values, destroy the probes and reload the level it started in. Its cleanup runs the restore again whatever ended the steps: pause, speed, the second player, IronBro, the lock, the Swap Bros selection, the Utility Mod settings that a failed spawning run recorded, and the HeroController values it recorded.",
   "steps": [
     {
       "command": "simulate_input",
@@ -2729,6 +2729,49 @@
         ],
         "notContains": [
           "Internal error"
+        ]
+      }
+    },
+    {
+      "command": "take_screenshot",
+      "params": {
+        "backdrop": true
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"backdrop\": \"#FF00FF\"",
+          "screenshot_"
+        ],
+        "notContains": [
+          "position",
+          "statement"
+        ]
+      }
+    },
+    {
+      "command": "take_screenshot",
+      "params": {
+        "backdrop": "#00FF00"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"backdrop\": \"#00FF00\"",
+          "screenshot_"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var before = new System.Collections.Generic.HashSet<int>();\nforeach (var r in UnityEngine.Object.FindObjectsOfType<Renderer>()) if (r.enabled) before.Add(r.GetInstanceID());\nvar path = PlainBackdrop.Screenshot(\"#FF00FF\");\nvar after = new System.Collections.Generic.HashSet<int>();\nforeach (var r in UnityEngine.Object.FindObjectsOfType<Renderer>()) if (r.enabled) after.Add(r.GetInstanceID());\nvar shot = new Texture2D(2, 2);\nint magenta = 0;\nint total = 0;\ntry\n{\n    shot.LoadImage(System.IO.File.ReadAllBytes(path));\n    var pixels = shot.GetPixels32();\n    total = pixels.Length;\n    foreach (var px in pixels) if (px.r == 255 && px.g == 0 && px.b == 255) magenta++;\n}\nfinally\n{\n    UnityEngine.Object.Destroy(shot);\n}\nreturn (before.SetEquals(after) ? \"enabled renderers unchanged\" : \"enabled renderers changed: \" + before.Count + \" -> \" + after.Count)\n    + \", \" + (magenta * 2 > total ? \"mostly backdrop\" : \"under half backdrop\") + \" (\" + magenta + \" of \" + total + \" pixels #FF00FF)\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "enabled renderers unchanged",
+          "mostly backdrop"
         ]
       }
     }

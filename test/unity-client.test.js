@@ -13,7 +13,7 @@ import {
   DEFAULT_COMMAND_TIMEOUT_MS,
   MAIN_THREAD_COMMAND_TIMEOUT_MS,
 } from '../lib/unity-client.js';
-import { startStubServer, reply } from './support/stub-server.js';
+import { startStubBesideLoopback, startStubServer, reply } from './support/stub-server.js';
 import { fakeProcReader } from './support/fake-proc.js';
 import { LINUX_GAME_COMM, setProcReader, setWslProbe } from '../lib/game-process.js';
 import { NOT_WSL, NO_LISTENER_PORT } from './support/session.js';
@@ -187,6 +187,23 @@ test('toolCommand picks the mod command and strips the flag that chose it', () =
   const params = { a: 1 };
   assert.deepEqual(toolCommand('ping', params), { method: 'ping', params });
   assert.deepEqual(toolCommand('ping'), { method: 'ping', params: {} });
+});
+
+test('toolCommand sends a take_screenshot backdrop as the render on execute_code, and refuses it with a highlight', () => {
+  assert.deepEqual(toolCommand('take_screenshot', { highlight: '/Player', backdrop: false }), {
+    method: 'take_screenshot', params: { highlight: '/Player' },
+  });
+  assert.deepEqual(toolCommand('take_screenshot', {}), { method: 'take_screenshot', params: {} });
+
+  const shot = toolCommand('take_screenshot', { backdrop: true });
+  assert.equal(shot.method, 'execute_code');
+  assert.equal(shot.backdrop, '#FF00FF');
+  assert.deepEqual(Object.keys(shot.params), ['code']);
+  assert.equal(commandTimeout(shot.method), commandTimeout('execute_code'), 'the shot runs on execute_code\'s budget');
+  assert.equal(toolCommand('take_screenshot', { backdrop: '#a0B1c2' }).backdrop, '#a0B1c2');
+
+  assert.throws(() => toolCommand('take_screenshot', { backdrop: true, highlight: { instanceId: 4 } }), /backdrop cannot take highlight/);
+  assert.throws(() => toolCommand('take_screenshot', { backdrop: '#fff' }), /backdrop must be true, false or a colour as #RRGGBB, got "#fff"/);
 });
 
 test('a routed tool call waits on its mod command\'s budget', () => {
@@ -564,7 +581,7 @@ test('cancelling a call takes its queued command out unwritten and leaves the ru
 });
 
 test('UNITY_INSPECTOR_HOST points the user\'s game elsewhere, and never the instance', { timeout: 10000, skip: process.platform !== 'linux' }, async (t) => {
-  const stub = await startStubServer((request, socket) => reply(socket, request.id, { from: 'elsewhere' }), { host: '127.0.0.2' });
+  const stub = await startStubBesideLoopback((request, socket) => reply(socket, request.id, { from: 'elsewhere' }));
   process.env.UNITY_INSPECTOR_HOST = '127.0.0.2';
   t.after(async () => { delete process.env.UNITY_INSPECTOR_HOST; await stub.close(); });
   processTable(t, NO_GAME);
@@ -582,7 +599,7 @@ test('UNITY_INSPECTOR_HOST points the user\'s game elsewhere, and never the inst
 });
 
 test('on WSL the Windows host behind the default route is tried after loopback', { timeout: 10000, skip: process.platform !== 'linux' }, async (t) => {
-  const stub = await startStubServer((request, socket) => reply(socket, request.id, { from: 'windows' }), { host: '127.0.0.2' });
+  const stub = await startStubBesideLoopback((request, socket) => reply(socket, request.id, { from: 'windows' }));
   t.after(() => stub.close());
   const client = new UnityInspectorClient({ port: stub.port, connectTimeoutMs: 2000 });
   client.platform = 'wsl';

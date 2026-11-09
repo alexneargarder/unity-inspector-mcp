@@ -12,7 +12,8 @@ import { conditionalProcReader, fakeFileSystem, fakeProcReader } from './support
 
 const isLinux = process.platform === 'linux';
 const SESSION = 'launch-session-a41f';
-const root = await fs.mkdtemp(path.join(os.tmpdir(), 'instances-'));
+// The server canonicalises the instances root the launcher reports, and TMPDIR can be a symlink
+const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'instances-')));
 const binDir = await fs.mkdtemp(path.join(os.tmpdir(), 'launcher-bin-'));
 const { instanceDir, launcher, stagePath } = await useStubLauncher({ session: SESSION, root, binDir });
 

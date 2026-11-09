@@ -1,6 +1,6 @@
 {
   "name": "execute_code input shapes",
-  "description": "Covers execute_code's return forms (expression, trailing return, trailing expression, void, a return inside if and inside try), the result shapes (anonymous type, dictionary, list, over 100 items, Vector3, GameObject, Component, null, a 40 KB string, a self-containing list, nesting past the depth limit, enum, Type, decimal, a destroyed object, a throwing ToString), language features (using directives before statements, a local function with and without static or an access modifier, and inside a declared type's method, no local-function hint for a method inside a declared type, LINQ and lambdas, a throwing lambda, foreach over Dictionary Keys, Values and SortedDictionary, generics, unqualified Object and Math, reflection, comments, a 1000-character line), declared types (nested, redeclared, a declaration with a trailing statement, several statics assigned in one input), runtime and compiler errors with their position, statement and stack trace, types from RocketLib, BroMakerLib, Swap Bros Mod and a class-only script, and a call that holds the main thread past 9 seconds and returns, one that holds it past the 9s budget and 2s grace and is reported still running, followed by a trivial call. A block comment right before a trailing return, after a statement and as the first thing in the input, compiles. A generic class declared by execute_code runs when used in the same input and in a later one, its field named from a sibling class of that input included. A generic method runs when called in the same input and in a later one, a lambda in one included, capturing or not, and a call to itself or to another generic method of the same input with its own type arguments or from elsewhere, in execute_code and in a script; one with other type arguments from inside its own body, or a virtual or interface one with fixed type arguments from the compile that declares it, is refused and names the rewrites, which run. A declaration that was refused does not stay declared: calling it says the type does not exist, an earlier declaration of the name stays, and its input's using directives stay out. Naming JsonConvert works at the first naming in a new Evaluator, in statements and in a declaration, with its unloadable overloads missing and reading their attributes throwing; other library types do too, and JsonConvert of an anonymous type and of a generic class with a public field, and the fields of an anonymous type, read by reflection, answer. An anonymous type with the names of an earlier one and other types compiles. The same alias with another target fails with CS1537 and a line saying to pick another name, leaving the earlier one in force, the preamble's Object alias included. A delegate declared again replaces the earlier one, as a class does. A using directive is replayed after the Evaluator is rebuilt for an unloaded script and after a compiler crash, a crash is built once and not retried, a CS0584 carries its Cause lines in execute_code and a script compile while the mod's nested-type import fix is taken away and put back, a caller error in a request is answered at once under its own id, without the Internal error prefix, over a second connection that opens with the hello and its token, and a reply past 64 KB carrying surrogate pairs and BMP characters comes back whole. Six real calls that once failed to compile: Harmony Unpatch as a statement and as the last statement, Harmony's patch registry, a LevelSelectionController static property and constant, and JsonConvert. Constants and enums are covered by script-constants.json. Needs RocketLib, BroMakerLib with Cobro installed and Swap Bros Mod. Its first step unloads the script an earlier failed run left loaded; its later steps unload it and check nothing is left, and its cleanup runs the first step again, which unloads the scripts and puts the import fix back and removes the crash counter if a failed run left them changed, then rebuilds the Evaluator through a compiler crash, since an Evaluator that imported Dictionary<int,int>.KeyCollection.Enumerator while the fix was away keeps that broken import after the fix is back.",
+  "description": "Covers execute_code's return forms (expression, trailing return, trailing expression, void, a return inside if and inside try), the result shapes (anonymous type, dictionary, list, over 100 items, Vector3, GameObject, Component, null, a 40 KB string, a self-containing list, nesting past the depth limit, enum, Type, decimal, a destroyed object, a throwing ToString), language features (using directives before statements, a local function with and without static or an access modifier, and inside a declared type's method, no local-function hint for a method inside a declared type, LINQ and lambdas, a throwing lambda, foreach over Dictionary Keys, Values and SortedDictionary, generics, unqualified Object and Math, reflection, comments, a 1000-character line), declared types (nested, redeclared, a declaration with a trailing statement, several statics assigned in one input), runtime and compiler errors with their position, statement and stack trace, types from RocketLib, BroMakerLib, Swap Bros Mod and a class-only script, and a call that holds the main thread past 9 seconds and returns, one that holds it past the 9s budget and 2s grace and is reported still running, followed by a trivial call. A block comment right before a trailing return, after a statement and as the first thing in the input, compiles. A generic class declared by execute_code runs when used in the same input and in a later one, its field named from a sibling class of that input included. A generic method runs when called in the same input and in a later one, a lambda in one included, capturing or not, and a call to itself or to another generic method of the same input with its own type arguments or from elsewhere, in execute_code and in a script; one with other type arguments from inside its own body, or a virtual or interface one with fixed type arguments from the compile that declares it, is refused and names the rewrites, which run. A declaration that was refused does not stay declared: calling it says the type does not exist, an earlier declaration of the name stays, and its input's using directives stay out. Naming JsonConvert works at the first naming in a new Evaluator, in statements and in a declaration, with its unloadable overloads missing and reading their attributes throwing; other library types do too, and JsonConvert of an anonymous type and of a generic class with a public field, and the fields of an anonymous type, read by reflection, answer. An anonymous type with the names of an earlier one and other types compiles. The same alias with another target fails with CS1537 and a line saying to pick another name, leaving the earlier one in force, the preamble's Object alias included. A delegate declared again replaces the earlier one, as a class does. A using directive is replayed after the Evaluator is rebuilt for an unloaded script and after a compiler crash, a crash is built once and not retried, a CS0584 carries its Cause lines in execute_code and a script compile while the mod's nested-type import fix is taken away and put back, a caller error in a request is answered at once under its own id, without the Internal error prefix, over a second connection that opens with the hello and its token, and a reply past 64 KB carrying surrogate pairs and BMP characters comes back whole. A declared generic class's field emitted into a DynamicMethod by hand is refused at the emit, owner-typed with ldfld and anonymously hosted with ldsfld, naming the field and the rewrites, while a non-generic declared class's field and an mscorlib generic class's field emit; no step creates a DynamicMethod. AccessTools.FieldRefAccess over the field fails with an error, after a check that a direct emit is refused and that MonoMod's generator switches are at their defaults, and returns skipped otherwise. Six real calls that once failed to compile: Harmony Unpatch as a statement and as the last statement, Harmony's patch registry, a LevelSelectionController static property and constant, and JsonConvert. Constants and enums are covered by script-constants.json. A method whose signature names an assembly the game does not ship (JsonConvert's XNode overloads, which name System.Xml.Linq) fails with a FileNotFoundException naming that assembly when script code asks for its parameters or generic arguments, whether it is generic, or to invoke it, each step skipping itself, and failing, on a build without the guard that rewrites those calls; ordinary methods, constructors and an indexer answer as before, JsonConvert's methods return as a result, and a trivial call at the end answers. Formatting such a method as a string inside library code (StringBuilder.Append, string.Concat, concatenation, interpolation, String.Format, and concatenation again once its verdict is cached) is refused with 'as a string was refused' naming that assembly, and a method, a constructor and a property whose signatures hold a function-pointer type, each checked as flagged first, are refused naming the function pointer; a search for a constructor or a getter-less property naming an absent assembly reports none found when the game has none; an ordinary method still formats and the names of JsonConvert's methods read; each step skips itself, and fails, on a build without the guard's prefix on MonoMethod, MonoCMethod and MonoProperty ToString, and the game answers after each. A script's Update formatting the function-pointer method ComputeSegmentsCore records the refusal as a NotSupportedException, polled until it lands, after checking that those prefixes are the guard that judges every caller and recording skipped without touching the member otherwise; the game answers after it and the script unloads, in cleanup too. Needs RocketLib, BroMakerLib with Cobro installed and Swap Bros Mod. Its first step unloads the script an earlier failed run left loaded; its later steps unload it and check nothing is left, and its cleanup runs the first step again, which unloads the scripts and puts the import fix back and removes the crash counter if a failed run left them changed, then rebuilds the Evaluator through a compiler crash, since an Evaluator that imported Dictionary<int,int>.KeyCollection.Enumerator while the fix was away keeps that broken import after the fix is back.",
   "steps": [
     {
       "command": "execute_code",
@@ -2931,9 +2931,605 @@
           "\"result\": \"still answering\""
         ]
       }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "public class GenFieldDmBox<T> { public T Value; public static T Shared; public T Get() { return Value; } }\npublic class GenFieldDmPlain { public int V; }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"resultSet\": false"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var f = typeof(GenFieldDmBox<int>).GetField(\"Value\");\nvar dm = new System.Reflection.Emit.DynamicMethod(\"GenFieldDmOwned\", typeof(int), new[] { typeof(GenFieldDmBox<int>) }, typeof(GenFieldDmBox<int>));\nvar il = dm.GetILGenerator();\nil.Emit(System.Reflection.Emit.OpCodes.Ldarg_0);\nil.Emit(System.Reflection.Emit.OpCodes.Ldfld, f);\nreturn \"emitted\";"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "NotSupportedException",
+          "This code puts the field GenFieldDmBox.Value",
+          "Creating that method would kill the game",
+          "public T Value { get; set; }"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var f = typeof(GenFieldDmBox<string>).GetField(\"Shared\");\nvar dm = new System.Reflection.Emit.DynamicMethod(\"GenFieldDmHosted\", typeof(string), Type.EmptyTypes);\nvar il = dm.GetILGenerator();\nil.Emit(System.Reflection.Emit.OpCodes.Ldsfld, f);\nreturn \"emitted\";"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "NotSupportedException",
+          "This code puts the field GenFieldDmBox.Shared"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var dm = new System.Reflection.Emit.DynamicMethod(\"GenFieldDmControl\", typeof(int), new[] { typeof(GenFieldDmPlain) }, typeof(GenFieldDmPlain));\nvar il = dm.GetILGenerator();\nil.Emit(System.Reflection.Emit.OpCodes.Ldarg_0);\nil.Emit(System.Reflection.Emit.OpCodes.Ldfld, typeof(GenFieldDmPlain).GetField(\"V\"));\nil.Emit(System.Reflection.Emit.OpCodes.Ldsfld, typeof(List<int>).GetFields(BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance)[0]);\nreturn \"emitted\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"emitted\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var b = new GenFieldDmBox<int>();\ntypeof(GenFieldDmBox<int>).GetField(\"Value\").SetValue(b, 7);\nreturn b.Get();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 7,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var probe = new System.Reflection.Emit.DynamicMethod(\"GenFieldDmGate\", typeof(int), new[] { typeof(GenFieldDmBox<int>) }, typeof(GenFieldDmBox<int>));\nbool guarded = false;\ntry { probe.GetILGenerator().Emit(System.Reflection.Emit.OpCodes.Ldfld, typeof(GenFieldDmBox<int>).GetField(\"Value\")); } catch (NotSupportedException) { guarded = true; }\nif (!guarded) return \"skipped: a direct emit was not refused\";\nvar switches = typeof(Harmony).Assembly.GetType(\"MonoMod.Switches\");\nvar tryGet = switches == null ? null : switches.GetMethod(\"TryGetSwitchValue\", BindingFlags.Public | BindingFlags.Static);\nif (tryGet == null) return \"skipped: MonoMod.Switches.TryGetSwitchValue not found\";\nforeach (var name in new[] { \"DMDType\", \"DMDDebug\" }) { var args = new object[] { name, null }; if ((bool)tryGet.Invoke(null, args)) return \"skipped: MonoMod switch \" + name + \" is set to \" + args[1]; }\nAccessTools.FieldRefAccess<GenFieldDmBox<int>, int>(\"Value\");\nreturn \"created\";"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "FieldRefAccess<GenFieldDmBox`1[System.Int32], System.Int32> for Value caused an exception"
+        ],
+        "notContains": [
+          "skipped:"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return 2 + 2;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 4,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var p = \"\".GetType().GetMethod(\"Substring\", new[] { typeof(int) }).GetParameters();\nreturn p.Length + \":\" + p[0].ParameterType.Name + \":\" + p[0].Name;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"1:Int32:startIndex\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return typeof(System.Math).GetMethod(\"Max\", new[] { typeof(int), typeof(int) }).Invoke(null, new object[] { 3, 9 });"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": 9,"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var c = typeof(System.Text.StringBuilder).GetConstructor(new[] { typeof(string) });\nreturn c.Invoke(new object[] { \"abc\" }).ToString();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"abc\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var m = typeof(System.Linq.Enumerable).GetMethod(\"Cast\");\nvar g = m.MakeGenericMethod(typeof(int));\nreturn m.IsGenericMethod + \",\" + m.ContainsGenericParameters + \",\" + m.GetGenericArguments().Length + \",\" + g.IsGenericMethod + \",\" + g.ContainsGenericParameters + \",\" + g.GetGenericArguments()[0].Name;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"True,True,1,True,False,Int32\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var ip = typeof(List<int>).GetProperty(\"Item\").GetIndexParameters();\nreturn ip.Length + \":\" + ip[0].ParameterType.Name;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"1:Int32\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "try { typeof(int).GetMethod(\"Parse\", new[] { typeof(string) }).Invoke(null, new object[] { \"x\" }); return \"no throw\"; }\ncatch (System.Reflection.TargetInvocationException e) { return \"TIE:\" + e.InnerException.GetType().Name; }"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"TIE:FormatException\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "class GuardProbe : System.Reflection.MethodBase\n{\n    public override System.Reflection.ParameterInfo[] GetParameters() { return new System.Reflection.ParameterInfo[0]; }\n    public override System.Reflection.MethodAttributes Attributes { get { throw new InvalidOperationException(\"guard-probe\"); } }\n    public override System.Reflection.MethodImplAttributes GetMethodImplementationFlags() { return System.Reflection.MethodImplAttributes.IL; }\n    public override object Invoke(object obj, System.Reflection.BindingFlags invokeAttr, System.Reflection.Binder binder, object[] parameters, System.Globalization.CultureInfo culture) { return null; }\n    public override RuntimeMethodHandle MethodHandle { get { throw new NotSupportedException(); } }\n    public override Type DeclaringType { get { return null; } }\n    public override Type ReflectedType { get { return null; } }\n    public override string Name { get { return \"GuardProbe\"; } }\n    public override System.Reflection.MemberTypes MemberType { get { return System.Reflection.MemberTypes.Method; } }\n    public override object[] GetCustomAttributes(bool inherit) { return new object[0]; }\n    public override object[] GetCustomAttributes(Type attributeType, bool inherit) { return new object[0]; }\n    public override bool IsDefined(Type attributeType, bool inherit) { return false; }\n}\nSystem.Reflection.MethodBase probe = new GuardProbe();\nbool guarded = false;\ntry { probe.GetParameters(); } catch (InvalidOperationException e) { guarded = e.Message == \"guard-probe\"; }\nif (!guarded) return \"skipped: the absent-assembly reflection guard is not in this build\";\nreturn typeof(Newtonsoft.Json.JsonConvert).GetMethods().Select(m => m.GetParameters().Length).ToArray();"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "FileNotFoundException",
+          "System.Xml.Linq"
+        ],
+        "notContains": [
+          "skipped:"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "class GuardProbe : System.Reflection.MethodBase\n{\n    public override System.Reflection.ParameterInfo[] GetParameters() { return new System.Reflection.ParameterInfo[0]; }\n    public override System.Reflection.MethodAttributes Attributes { get { throw new InvalidOperationException(\"guard-probe\"); } }\n    public override System.Reflection.MethodImplAttributes GetMethodImplementationFlags() { return System.Reflection.MethodImplAttributes.IL; }\n    public override object Invoke(object obj, System.Reflection.BindingFlags invokeAttr, System.Reflection.Binder binder, object[] parameters, System.Globalization.CultureInfo culture) { return null; }\n    public override RuntimeMethodHandle MethodHandle { get { throw new NotSupportedException(); } }\n    public override Type DeclaringType { get { return null; } }\n    public override Type ReflectedType { get { return null; } }\n    public override string Name { get { return \"GuardProbe\"; } }\n    public override System.Reflection.MemberTypes MemberType { get { return System.Reflection.MemberTypes.Method; } }\n    public override object[] GetCustomAttributes(bool inherit) { return new object[0]; }\n    public override object[] GetCustomAttributes(Type attributeType, bool inherit) { return new object[0]; }\n    public override bool IsDefined(Type attributeType, bool inherit) { return false; }\n}\nSystem.Reflection.MethodBase probe = new GuardProbe();\nbool guarded = false;\ntry { probe.GetParameters(); } catch (InvalidOperationException e) { guarded = e.Message == \"guard-probe\"; }\nif (!guarded) return \"skipped: the absent-assembly reflection guard is not in this build\";\nvar m = typeof(Newtonsoft.Json.JsonConvert).GetMethods().First(x => x.Name == \"SerializeXNode\");\nreturn m.IsGenericMethod;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "FileNotFoundException",
+          "System.Xml.Linq"
+        ],
+        "notContains": [
+          "skipped:"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "class GuardProbe : System.Reflection.MethodBase\n{\n    public override System.Reflection.ParameterInfo[] GetParameters() { return new System.Reflection.ParameterInfo[0]; }\n    public override System.Reflection.MethodAttributes Attributes { get { throw new InvalidOperationException(\"guard-probe\"); } }\n    public override System.Reflection.MethodImplAttributes GetMethodImplementationFlags() { return System.Reflection.MethodImplAttributes.IL; }\n    public override object Invoke(object obj, System.Reflection.BindingFlags invokeAttr, System.Reflection.Binder binder, object[] parameters, System.Globalization.CultureInfo culture) { return null; }\n    public override RuntimeMethodHandle MethodHandle { get { throw new NotSupportedException(); } }\n    public override Type DeclaringType { get { return null; } }\n    public override Type ReflectedType { get { return null; } }\n    public override string Name { get { return \"GuardProbe\"; } }\n    public override System.Reflection.MemberTypes MemberType { get { return System.Reflection.MemberTypes.Method; } }\n    public override object[] GetCustomAttributes(bool inherit) { return new object[0]; }\n    public override object[] GetCustomAttributes(Type attributeType, bool inherit) { return new object[0]; }\n    public override bool IsDefined(Type attributeType, bool inherit) { return false; }\n}\nSystem.Reflection.MethodBase probe = new GuardProbe();\nbool guarded = false;\ntry { probe.GetParameters(); } catch (InvalidOperationException e) { guarded = e.Message == \"guard-probe\"; }\nif (!guarded) return \"skipped: the absent-assembly reflection guard is not in this build\";\nvar m = typeof(Newtonsoft.Json.JsonConvert).GetMethods().First(x => x.Name == \"SerializeXNode\");\nreturn m.ContainsGenericParameters;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "FileNotFoundException",
+          "System.Xml.Linq"
+        ],
+        "notContains": [
+          "skipped:"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "class GuardProbe : System.Reflection.MethodBase\n{\n    public override System.Reflection.ParameterInfo[] GetParameters() { return new System.Reflection.ParameterInfo[0]; }\n    public override System.Reflection.MethodAttributes Attributes { get { throw new InvalidOperationException(\"guard-probe\"); } }\n    public override System.Reflection.MethodImplAttributes GetMethodImplementationFlags() { return System.Reflection.MethodImplAttributes.IL; }\n    public override object Invoke(object obj, System.Reflection.BindingFlags invokeAttr, System.Reflection.Binder binder, object[] parameters, System.Globalization.CultureInfo culture) { return null; }\n    public override RuntimeMethodHandle MethodHandle { get { throw new NotSupportedException(); } }\n    public override Type DeclaringType { get { return null; } }\n    public override Type ReflectedType { get { return null; } }\n    public override string Name { get { return \"GuardProbe\"; } }\n    public override System.Reflection.MemberTypes MemberType { get { return System.Reflection.MemberTypes.Method; } }\n    public override object[] GetCustomAttributes(bool inherit) { return new object[0]; }\n    public override object[] GetCustomAttributes(Type attributeType, bool inherit) { return new object[0]; }\n    public override bool IsDefined(Type attributeType, bool inherit) { return false; }\n}\nSystem.Reflection.MethodBase probe = new GuardProbe();\nbool guarded = false;\ntry { probe.GetParameters(); } catch (InvalidOperationException e) { guarded = e.Message == \"guard-probe\"; }\nif (!guarded) return \"skipped: the absent-assembly reflection guard is not in this build\";\nvar m = typeof(Newtonsoft.Json.JsonConvert).GetMethods().First(x => x.Name == \"SerializeXNode\");\nreturn m.GetGenericArguments();"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "FileNotFoundException",
+          "System.Xml.Linq"
+        ],
+        "notContains": [
+          "skipped:"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "class GuardProbe : System.Reflection.MethodBase\n{\n    public override System.Reflection.ParameterInfo[] GetParameters() { return new System.Reflection.ParameterInfo[0]; }\n    public override System.Reflection.MethodAttributes Attributes { get { throw new InvalidOperationException(\"guard-probe\"); } }\n    public override System.Reflection.MethodImplAttributes GetMethodImplementationFlags() { return System.Reflection.MethodImplAttributes.IL; }\n    public override object Invoke(object obj, System.Reflection.BindingFlags invokeAttr, System.Reflection.Binder binder, object[] parameters, System.Globalization.CultureInfo culture) { return null; }\n    public override RuntimeMethodHandle MethodHandle { get { throw new NotSupportedException(); } }\n    public override Type DeclaringType { get { return null; } }\n    public override Type ReflectedType { get { return null; } }\n    public override string Name { get { return \"GuardProbe\"; } }\n    public override System.Reflection.MemberTypes MemberType { get { return System.Reflection.MemberTypes.Method; } }\n    public override object[] GetCustomAttributes(bool inherit) { return new object[0]; }\n    public override object[] GetCustomAttributes(Type attributeType, bool inherit) { return new object[0]; }\n    public override bool IsDefined(Type attributeType, bool inherit) { return false; }\n}\nSystem.Reflection.MethodBase probe = new GuardProbe();\nbool guarded = false;\ntry { probe.GetParameters(); } catch (InvalidOperationException e) { guarded = e.Message == \"guard-probe\"; }\nif (!guarded) return \"skipped: the absent-assembly reflection guard is not in this build\";\nvar m = typeof(Newtonsoft.Json.JsonConvert).GetMethods().First(x => x.Name == \"SerializeXNode\");\nreturn m.MakeGenericMethod(typeof(int));"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "FileNotFoundException",
+          "System.Xml.Linq"
+        ],
+        "notContains": [
+          "skipped:"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "class GuardProbe : System.Reflection.MethodBase\n{\n    public override System.Reflection.ParameterInfo[] GetParameters() { return new System.Reflection.ParameterInfo[0]; }\n    public override System.Reflection.MethodAttributes Attributes { get { throw new InvalidOperationException(\"guard-probe\"); } }\n    public override System.Reflection.MethodImplAttributes GetMethodImplementationFlags() { return System.Reflection.MethodImplAttributes.IL; }\n    public override object Invoke(object obj, System.Reflection.BindingFlags invokeAttr, System.Reflection.Binder binder, object[] parameters, System.Globalization.CultureInfo culture) { return null; }\n    public override RuntimeMethodHandle MethodHandle { get { throw new NotSupportedException(); } }\n    public override Type DeclaringType { get { return null; } }\n    public override Type ReflectedType { get { return null; } }\n    public override string Name { get { return \"GuardProbe\"; } }\n    public override System.Reflection.MemberTypes MemberType { get { return System.Reflection.MemberTypes.Method; } }\n    public override object[] GetCustomAttributes(bool inherit) { return new object[0]; }\n    public override object[] GetCustomAttributes(Type attributeType, bool inherit) { return new object[0]; }\n    public override bool IsDefined(Type attributeType, bool inherit) { return false; }\n}\nSystem.Reflection.MethodBase probe = new GuardProbe();\nbool guarded = false;\ntry { probe.GetParameters(); } catch (InvalidOperationException e) { guarded = e.Message == \"guard-probe\"; }\nif (!guarded) return \"skipped: the absent-assembly reflection guard is not in this build\";\nvar m = typeof(Newtonsoft.Json.JsonConvert).GetMethods().First(x => x.Name == \"SerializeXNode\");\nreturn m.Invoke(null, new object[] { null });"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "FileNotFoundException",
+          "System.Xml.Linq"
+        ],
+        "notContains": [
+          "skipped:"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return typeof(Newtonsoft.Json.JsonConvert).GetMethods();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "ToString threw: FileNotFoundException",
+          "get_DefaultSettings()"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return \"still answering\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"result\": \"still answering\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "bool _prefixed = true;\nforeach (var _n in new[] { \"System.Reflection.MonoMethod\", \"System.Reflection.MonoCMethod\", \"System.Reflection.MonoProperty\" })\n{\n    var _mi = typeof(object).Assembly.GetType(_n).GetMethod(\"ToString\", Type.EmptyTypes);\n    var _pi = HarmonyLib.Harmony.GetPatchInfo(_mi);\n    if (_pi == null || !_pi.Prefixes.Any(p => p.owner == \"scriptcompiler.internal\")) _prefixed = false;\n}\nif (!_prefixed) return \"skipped: a scriptcompiler.internal prefix is missing on MonoMethod, MonoCMethod or MonoProperty ToString\";\nvar sb = new System.Text.StringBuilder();\nforeach (var x in typeof(Newtonsoft.Json.JsonConvert).GetMethods()) sb.Append(x);\nreturn sb.Length;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "as a string was refused",
+          "System.Xml.Linq"
+        ],
+        "notContains": [
+          "skipped:"
+        ]
+      }
+    },
+    {
+      "command": "ping"
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "bool _prefixed = true;\nforeach (var _n in new[] { \"System.Reflection.MonoMethod\", \"System.Reflection.MonoCMethod\", \"System.Reflection.MonoProperty\" })\n{\n    var _mi = typeof(object).Assembly.GetType(_n).GetMethod(\"ToString\", Type.EmptyTypes);\n    var _pi = HarmonyLib.Harmony.GetPatchInfo(_mi);\n    if (_pi == null || !_pi.Prefixes.Any(p => p.owner == \"scriptcompiler.internal\")) _prefixed = false;\n}\nif (!_prefixed) return \"skipped: a scriptcompiler.internal prefix is missing on MonoMethod, MonoCMethod or MonoProperty ToString\";\nreturn string.Concat(typeof(Newtonsoft.Json.JsonConvert).GetMethods());"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "as a string was refused",
+          "System.Xml.Linq"
+        ],
+        "notContains": [
+          "skipped:"
+        ]
+      }
+    },
+    {
+      "command": "ping"
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "bool _prefixed = true;\nforeach (var _n in new[] { \"System.Reflection.MonoMethod\", \"System.Reflection.MonoCMethod\", \"System.Reflection.MonoProperty\" })\n{\n    var _mi = typeof(object).Assembly.GetType(_n).GetMethod(\"ToString\", Type.EmptyTypes);\n    var _pi = HarmonyLib.Harmony.GetPatchInfo(_mi);\n    if (_pi == null || !_pi.Prefixes.Any(p => p.owner == \"scriptcompiler.internal\")) _prefixed = false;\n}\nif (!_prefixed) return \"skipped: a scriptcompiler.internal prefix is missing on MonoMethod, MonoCMethod or MonoProperty ToString\";\nvar m = typeof(Newtonsoft.Json.JsonConvert).GetMethods().First(x => x.Name == \"SerializeXNode\");\nobject o = m;\nreturn \"\" + o;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "as a string was refused",
+          "System.Xml.Linq"
+        ],
+        "notContains": [
+          "skipped:"
+        ]
+      }
+    },
+    {
+      "command": "ping"
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "bool _prefixed = true;\nforeach (var _n in new[] { \"System.Reflection.MonoMethod\", \"System.Reflection.MonoCMethod\", \"System.Reflection.MonoProperty\" })\n{\n    var _mi = typeof(object).Assembly.GetType(_n).GetMethod(\"ToString\", Type.EmptyTypes);\n    var _pi = HarmonyLib.Harmony.GetPatchInfo(_mi);\n    if (_pi == null || !_pi.Prefixes.Any(p => p.owner == \"scriptcompiler.internal\")) _prefixed = false;\n}\nif (!_prefixed) return \"skipped: a scriptcompiler.internal prefix is missing on MonoMethod, MonoCMethod or MonoProperty ToString\";\nvar m = typeof(Newtonsoft.Json.JsonConvert).GetMethods().First(x => x.Name == \"SerializeXNode\");\nobject o = m;\nreturn $\"{o}\";"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "as a string was refused",
+          "System.Xml.Linq"
+        ],
+        "notContains": [
+          "skipped:"
+        ]
+      }
+    },
+    {
+      "command": "ping"
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "bool _prefixed = true;\nforeach (var _n in new[] { \"System.Reflection.MonoMethod\", \"System.Reflection.MonoCMethod\", \"System.Reflection.MonoProperty\" })\n{\n    var _mi = typeof(object).Assembly.GetType(_n).GetMethod(\"ToString\", Type.EmptyTypes);\n    var _pi = HarmonyLib.Harmony.GetPatchInfo(_mi);\n    if (_pi == null || !_pi.Prefixes.Any(p => p.owner == \"scriptcompiler.internal\")) _prefixed = false;\n}\nif (!_prefixed) return \"skipped: a scriptcompiler.internal prefix is missing on MonoMethod, MonoCMethod or MonoProperty ToString\";\nvar m = typeof(Newtonsoft.Json.JsonConvert).GetMethods().First(x => x.Name == \"SerializeXNode\");\nobject o = m;\nreturn String.Format(\"{0}\", o);"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "as a string was refused",
+          "System.Xml.Linq"
+        ],
+        "notContains": [
+          "skipped:"
+        ]
+      }
+    },
+    {
+      "command": "ping"
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "bool _prefixed = true;\nforeach (var _n in new[] { \"System.Reflection.MonoMethod\", \"System.Reflection.MonoCMethod\", \"System.Reflection.MonoProperty\" })\n{\n    var _mi = typeof(object).Assembly.GetType(_n).GetMethod(\"ToString\", Type.EmptyTypes);\n    var _pi = HarmonyLib.Harmony.GetPatchInfo(_mi);\n    if (_pi == null || !_pi.Prefixes.Any(p => p.owner == \"scriptcompiler.internal\")) _prefixed = false;\n}\nif (!_prefixed) return \"skipped: a scriptcompiler.internal prefix is missing on MonoMethod, MonoCMethod or MonoProperty ToString\";\nvar m = typeof(Newtonsoft.Json.JsonConvert).GetMethods().First(x => x.Name == \"SerializeXNode\");\nobject o = m;\nreturn \"\" + o;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "as a string was refused",
+          "System.Xml.Linq"
+        ],
+        "notContains": [
+          "skipped:"
+        ]
+      }
+    },
+    {
+      "command": "ping"
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "bool _prefixed = true;\nforeach (var _n in new[] { \"System.Reflection.MonoMethod\", \"System.Reflection.MonoCMethod\", \"System.Reflection.MonoProperty\" })\n{\n    var _mi = typeof(object).Assembly.GetType(_n).GetMethod(\"ToString\", Type.EmptyTypes);\n    var _pi = HarmonyLib.Harmony.GetPatchInfo(_mi);\n    if (_pi == null || !_pi.Prefixes.Any(p => p.owner == \"scriptcompiler.internal\")) _prefixed = false;\n}\nif (!_prefixed) return \"skipped: a scriptcompiler.internal prefix is missing on MonoMethod, MonoCMethod or MonoProperty ToString\";\nvar bf = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly;\nforeach (var asm in AppDomain.CurrentDomain.GetAssemblies())\n{\n    Type[] types;\n    try { types = asm.GetTypes(); } catch (System.Reflection.ReflectionTypeLoadException e) { types = e.Types.Where(t => t != null).ToArray(); } catch (Exception) { continue; }\n    foreach (var t in types)\n    {\n        if (t.IsGenericTypeDefinition) continue;\n        System.Reflection.ConstructorInfo[] cs;\n        try { cs = t.GetConstructors(bf); } catch (Exception) { continue; }\n        foreach (var c in cs)\n        {\n            try { var a = c.Attributes; } catch (System.IO.FileNotFoundException) { object o = c; return \"\" + o; } catch (NotSupportedException) { }\n        }\n    }\n}\nreturn \"none found: no loaded type has a constructor whose Attributes throw FileNotFoundException\";\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "none found"
+        ]
+      }
+    },
+    {
+      "command": "ping"
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "bool _prefixed = true;\nforeach (var _n in new[] { \"System.Reflection.MonoMethod\", \"System.Reflection.MonoCMethod\", \"System.Reflection.MonoProperty\" })\n{\n    var _mi = typeof(object).Assembly.GetType(_n).GetMethod(\"ToString\", Type.EmptyTypes);\n    var _pi = HarmonyLib.Harmony.GetPatchInfo(_mi);\n    if (_pi == null || !_pi.Prefixes.Any(p => p.owner == \"scriptcompiler.internal\")) _prefixed = false;\n}\nif (!_prefixed) return \"skipped: a scriptcompiler.internal prefix is missing on MonoMethod, MonoCMethod or MonoProperty ToString\";\nvar bf = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly;\nforeach (var asm in AppDomain.CurrentDomain.GetAssemblies())\n{\n    Type[] types;\n    try { types = asm.GetTypes(); } catch (System.Reflection.ReflectionTypeLoadException e) { types = e.Types.Where(t => t != null).ToArray(); } catch (Exception) { continue; }\n    foreach (var t in types)\n    {\n        if (t.IsGenericTypeDefinition) continue;\n        System.Reflection.PropertyInfo[] ps;\n        try { ps = t.GetProperties(bf); } catch (Exception) { continue; }\n        foreach (var p in ps)\n        {\n            System.Reflection.MethodInfo g, s;\n            try { g = p.GetGetMethod(true); s = p.GetSetMethod(true); } catch (NotSupportedException) { continue; }\n            if (g != null || s == null) continue;\n            try { var a = s.Attributes; } catch (System.IO.FileNotFoundException) { object o = p; return \"\" + o; } catch (NotSupportedException) { }\n        }\n    }\n}\nreturn \"none found: no loaded type has a getter-less property whose setter Attributes throw FileNotFoundException\";\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "none found"
+        ]
+      }
+    },
+    {
+      "command": "ping"
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "bool _prefixed = true;\nforeach (var _n in new[] { \"System.Reflection.MonoMethod\", \"System.Reflection.MonoCMethod\", \"System.Reflection.MonoProperty\" })\n{\n    var _mi = typeof(object).Assembly.GetType(_n).GetMethod(\"ToString\", Type.EmptyTypes);\n    var _pi = HarmonyLib.Harmony.GetPatchInfo(_mi);\n    if (_pi == null || !_pi.Prefixes.Any(p => p.owner == \"scriptcompiler.internal\")) _prefixed = false;\n}\nif (!_prefixed) return \"skipped: a scriptcompiler.internal prefix is missing on MonoMethod, MonoCMethod or MonoProperty ToString\";\nvar bf = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly;\nvar fps = typeof(Unity_Inspector_Mod.MainThreadDispatcher).Assembly.GetType(\"Unity_Inspector_Mod.FunctionPointerSignatures\");\nvar describe = fps.GetMethod(\"Describe\", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);\nvar asm = typeof(HarmonyLib.Harmony).Assembly;\nvar t = asm.GetType(\"MonoMod.Core.Utils.BytePattern\");\nvar m = t.GetMethods(bf).First(x => x.Name == \"ComputeSegmentsCore\");\nif (describe.Invoke(null, new object[] { m }) == null) return \"skipped: ComputeSegmentsCore is not flagged as a function-pointer member\";\nobject o = m;\nreturn \"\" + o;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "as a string was refused",
+          "function pointer"
+        ],
+        "notContains": [
+          "skipped:"
+        ]
+      }
+    },
+    {
+      "command": "ping"
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "bool _prefixed = true;\nforeach (var _n in new[] { \"System.Reflection.MonoMethod\", \"System.Reflection.MonoCMethod\", \"System.Reflection.MonoProperty\" })\n{\n    var _mi = typeof(object).Assembly.GetType(_n).GetMethod(\"ToString\", Type.EmptyTypes);\n    var _pi = HarmonyLib.Harmony.GetPatchInfo(_mi);\n    if (_pi == null || !_pi.Prefixes.Any(p => p.owner == \"scriptcompiler.internal\")) _prefixed = false;\n}\nif (!_prefixed) return \"skipped: a scriptcompiler.internal prefix is missing on MonoMethod, MonoCMethod or MonoProperty ToString\";\nvar bf = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly;\nvar fps = typeof(Unity_Inspector_Mod.MainThreadDispatcher).Assembly.GetType(\"Unity_Inspector_Mod.FunctionPointerSignatures\");\nvar describe = fps.GetMethod(\"Describe\", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);\nvar asm = typeof(HarmonyLib.Harmony).Assembly;\nvar t = asm.GetType(\"MonoMod.Core.Interop.CoreCLR+InvokeCompileMethodPtr\");\nvar m = t.GetConstructors(bf).First();\nif (describe.Invoke(null, new object[] { m }) == null) return \"skipped: InvokeCompileMethodPtr..ctor is not flagged as a function-pointer member\";\nobject o = m;\nreturn \"\" + o;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "as a string was refused",
+          "function pointer"
+        ],
+        "notContains": [
+          "skipped:"
+        ]
+      }
+    },
+    {
+      "command": "ping"
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "bool _prefixed = true;\nforeach (var _n in new[] { \"System.Reflection.MonoMethod\", \"System.Reflection.MonoCMethod\", \"System.Reflection.MonoProperty\" })\n{\n    var _mi = typeof(object).Assembly.GetType(_n).GetMethod(\"ToString\", Type.EmptyTypes);\n    var _pi = HarmonyLib.Harmony.GetPatchInfo(_mi);\n    if (_pi == null || !_pi.Prefixes.Any(p => p.owner == \"scriptcompiler.internal\")) _prefixed = false;\n}\nif (!_prefixed) return \"skipped: a scriptcompiler.internal prefix is missing on MonoMethod, MonoCMethod or MonoProperty ToString\";\nvar bf = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly;\nvar fps = typeof(Unity_Inspector_Mod.MainThreadDispatcher).Assembly.GetType(\"Unity_Inspector_Mod.FunctionPointerSignatures\");\nvar describe = fps.GetMethod(\"Describe\", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);\nvar asm = typeof(HarmonyLib.Harmony).Assembly;\nvar t = asm.GetType(\"MonoMod.Core.Interop.CoreCLR+InvokeCompileMethodPtr\");\nvar m = t.GetProperties(bf).First(x => x.Name == \"InvokeCompileMethod\");\nif (describe.Invoke(null, new object[] { m }) == null) return \"skipped: InvokeCompileMethod is not flagged as a function-pointer member\";\nobject o = m;\nreturn \"\" + o;"
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "as a string was refused",
+          "function pointer"
+        ],
+        "notContains": [
+          "skipped:"
+        ]
+      }
+    },
+    {
+      "command": "ping"
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "bool _prefixed = true;\nforeach (var _n in new[] { \"System.Reflection.MonoMethod\", \"System.Reflection.MonoCMethod\", \"System.Reflection.MonoProperty\" })\n{\n    var _mi = typeof(object).Assembly.GetType(_n).GetMethod(\"ToString\", Type.EmptyTypes);\n    var _pi = HarmonyLib.Harmony.GetPatchInfo(_mi);\n    if (_pi == null || !_pi.Prefixes.Any(p => p.owner == \"scriptcompiler.internal\")) _prefixed = false;\n}\nif (!_prefixed) return \"skipped: a scriptcompiler.internal prefix is missing on MonoMethod, MonoCMethod or MonoProperty ToString\";\nreturn \"\" + (object)typeof(string).GetMethod(\"Substring\", new[] { typeof(int) });"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "System.String Substring(Int32)"
+        ],
+        "notContains": [
+          "skipped:"
+        ]
+      }
+    },
+    {
+      "command": "ping"
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "bool _prefixed = true;\nforeach (var _n in new[] { \"System.Reflection.MonoMethod\", \"System.Reflection.MonoCMethod\", \"System.Reflection.MonoProperty\" })\n{\n    var _mi = typeof(object).Assembly.GetType(_n).GetMethod(\"ToString\", Type.EmptyTypes);\n    var _pi = HarmonyLib.Harmony.GetPatchInfo(_mi);\n    if (_pi == null || !_pi.Prefixes.Any(p => p.owner == \"scriptcompiler.internal\")) _prefixed = false;\n}\nif (!_prefixed) return \"skipped: a scriptcompiler.internal prefix is missing on MonoMethod, MonoCMethod or MonoProperty ToString\";\nreturn typeof(Newtonsoft.Json.JsonConvert).GetMethods().Select(m => m.Name).Distinct().Count();"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "skipped:"
+        ]
+      }
+    },
+    {
+      "command": "ping"
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return 1 + 1;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "2"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "shapes-tostring-update",
+        "source": "public class ToStringUpdateProbe : MonoBehaviour\n{\n    public static string Result = \"pending\";\n    public static int Updates;\n\n    void Update()\n    {\n        Updates++;\n        if (Result != \"pending\")\n        {\n            return;\n        }\n\n        try\n        {\n            foreach (var name in new[] { \"System.Reflection.MonoMethod\", \"System.Reflection.MonoCMethod\", \"System.Reflection.MonoProperty\" })\n            {\n                var toString = typeof(object).Assembly.GetType(name).GetMethod(\"ToString\", Type.EmptyTypes);\n                var info = HarmonyLib.Harmony.GetPatchInfo(toString);\n                if (info == null || !info.Prefixes.Any(p => p.owner == \"scriptcompiler.internal\"))\n                {\n                    Result = \"skipped: no scriptcompiler.internal prefix on \" + name + \".ToString\";\n                    return;\n                }\n                if (!info.Prefixes.Any(p => p.owner == \"scriptcompiler.internal\" && (p.PatchMethod.Name == \"GuardMethodToString\" || p.PatchMethod.Name == \"GuardPropertyToString\")))\n                {\n                    Result = \"skipped: the scriptcompiler.internal prefix on \" + name + \".ToString does not guard every caller in this build\";\n                    return;\n                }\n            }\n\n            var t = typeof(HarmonyLib.Harmony).Assembly.GetType(\"MonoMod.Core.Utils.BytePattern\");\n            var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly;\n            var m = t.GetMethods(flags).First(x => x.Name == \"ComputeSegmentsCore\");\n            var fps = AppDomain.CurrentDomain.GetAssemblies().SelectMany(a => a.GetTypes()).FirstOrDefault(x => x.FullName == \"Unity_Inspector_Mod.FunctionPointerSignatures\");\n            var describe = fps.GetMethod(\"Describe\", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);\n            if (describe.Invoke(null, new object[] { m }) == null)\n            {\n                Result = \"skipped: ComputeSegmentsCore is not flagged as a function-pointer member\";\n                return;\n            }\n\n            try\n            {\n                Result = \"formatted: \" + (\"\" + (object)m);\n            }\n            catch (Exception e)\n            {\n                Result = e.GetType().Name + \": \" + e.Message;\n            }\n        }\n        catch (Exception e)\n        {\n            Result = \"probe error \" + e.GetType().Name + \": \" + e.Message;\n        }\n    }\n}\n\npublic static class ToStringUpdateScript\n{\n    public static void Main()\n    {\n        ToStringUpdateProbe.Result = \"pending\";\n        ToStringUpdateProbe.Updates = 0;\n        var go = new GameObject(\"ToStringUpdateGO\");\n        ScriptContext.GameObjects.Add(go);\n        go.AddComponent<ToStringUpdateProbe>();\n        ScriptContext.Logger(\"tostring update probe added\");\n    }\n\n    public static void Unload() { }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"executed\": true",
+          "\"tostring update probe added\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return ToStringUpdateProbe.Result;"
+      },
+      "until": {
+        "timeout": 10,
+        "interval": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "NotSupportedException: Formatting MonoMod.Core.Utils.BytePattern.ComputeSegmentsCore as a string was refused: ",
+          "function pointer"
+        ],
+        "notContains": [
+          "skipped:",
+          "probe error",
+          "pending",
+          "formatted:"
+        ]
+      }
+    },
+    {
+      "command": "ping"
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "shapes-tostring-update"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"destroyedObjects\": 1"
+        ],
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
     }
   ],
   "cleanup": [
+    {
+      "command": "unload_script",
+      "params": {
+        "name": "shapes-tostring-update"
+      },
+      "expect": {
+        "notContains": [
+          "\"warnings\""
+        ]
+      }
+    },
     {
       "command": "execute_code",
       "params": {
