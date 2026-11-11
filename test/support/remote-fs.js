@@ -7,7 +7,7 @@ const BUILDERS = {
   read: ({ segments }) => readCode(segments),
   stat: ({ paths }) => statCode(paths),
   write: writeCode,
-  removeDir: ({ path: folder }) => removeDirCode(folder),
+  removeDir: ({ path: folder, pruneParent }) => removeDirCode(folder, { pruneParent }),
   list: listCode,
   sentinel: sentinelCode,
   logSync: logSyncCode,
@@ -22,11 +22,13 @@ export function fakeRemoteFs({
   dataPath = '/game/Broforce/Broforce_Data',
   ummLog = '/game/Broforce/Broforce_Data/Managed/UnityModManager/Log.txt',
   temporaryCachePath = '/game/home/.cache/unity3d/Free Lives/Broforce',
+  processId = 7310,
+  machine = { files: new Map(), clock: Date.parse('2026-05-01T00:00:00Z') },
 } = {}) {
-  const files = new Map();
-  let clock = Date.parse('2026-05-01T00:00:00Z');
+  const { files } = machine;
   const remote = {
     files,
+    machine,
     calls: [],
     hooks: {},
     fail: {},
@@ -34,8 +36,10 @@ export function fakeRemoteFs({
     dataPath,
     ummLog,
     temporaryCachePath,
+    processId,
     playerLog: path.posix.join(persistentDataPath, 'Player.log'),
-    write(file, bytes, mtimeMs = (clock += 1000)) {
+    now: () => machine.clock,
+    write(file, bytes, mtimeMs = (machine.clock += 1000)) {
       files.set(file, { bytes: Buffer.from(bytes), mtimeMs });
     },
     append(file, bytes) {
@@ -92,15 +96,27 @@ const ANSWERS = {
   },
   list(remote, { path: folder, underCache }) {
     const root = underCache ? path.posix.join(remote.temporaryCachePath, folder) : folder;
-    const dirs = new Set();
+    const dirs = new Map();
     const files = [];
-    for (const file of remote.files.keys()) {
+    for (const [file, { mtimeMs }] of remote.files) {
       if (!file.startsWith(`${root}/`)) continue;
-      const [first, ...rest] = file.slice(root.length + 1).split('/');
-      if (rest.length > 0) dirs.add(first);
-      else files.push(first);
+      const [first, second, ...rest] = file.slice(root.length + 1).split('/');
+      if (second === undefined) {
+        files.push(first);
+        continue;
+      }
+      const dir = dirs.get(first) ?? { name: first, newest: mtimeMs, runs: new Map() };
+      dir.newest = Math.max(dir.newest, mtimeMs);
+      if (rest.length > 0) dir.runs.set(second, Math.max(dir.runs.get(second) ?? mtimeMs, mtimeMs));
+      dirs.set(first, dir);
     }
-    return JSON.stringify({ root, dirs: [...dirs], files });
+    return JSON.stringify({
+      root,
+      pid: remote.processId,
+      now: remote.now(),
+      dirs: [...dirs.values()].map(({ name, newest, runs }) => ({ name, newest, dirs: [...runs].map(([run, latest]) => ({ name: run, newest: latest })) })),
+      files,
+    });
   },
   sentinel(remote, { path: folder, done, error, progress }) {
     const at = (name) => remote.files.get(path.posix.join(folder, name));

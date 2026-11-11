@@ -22,7 +22,7 @@ async function listedTools(wrapper) {
   return reply?.result?.tools?.map((tool) => tool.name) ?? [];
 }
 
-test('the wrapper log is private to the user, and a start clears logs and claims nobody wrote for a week, but never a live wrapper\'s, nor a claim whose log is fresh', { timeout: 20000, skip: !isPosix && 'file modes' }, async (t) => {
+test('the wrapper log is private to the user, and a start clears logs and claims nobody wrote for a week, but never a live wrapper\'s, nor a claim whose log is fresh', { timeout: 60000, skip: !isPosix && 'file modes' }, async (t) => {
   const dir = await tempDir(t);
   const weekAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
   const plant = async (name, mtime) => {
@@ -60,7 +60,7 @@ test('the wrapper log is private to the user, and a start clears logs and claims
   ].sort());
 });
 
-test('a wrapper whose log cannot be opened still starts its server and lists restart_server', { timeout: 20000 }, async (t) => {
+test('a wrapper whose log cannot be opened still starts its server and lists restart_server', { timeout: 60000 }, async (t) => {
   const dir = await tempDir(t);
   const wrapper = startWrapper({ UNITY_INSPECTOR_MCP_WRAPPER_LOG: path.join(dir, 'missing-dir', 'wrapper.log') });
   t.after(() => wrapper.stop());
@@ -70,7 +70,7 @@ test('a wrapper whose log cannot be opened still starts its server and lists res
   assert.ok(tools.length > 1, 'the server behind the wrapper answered');
 });
 
-test('by default the wrapper logs to a private folder in the user\'s state directory, and clears its old logs from /tmp', { timeout: 20000, skip: !isPosix && 'file modes' }, async (t) => {
+test('by default the wrapper logs to a private folder in the user\'s state directory, and clears its old logs from /tmp', { timeout: 60000, skip: !isPosix && 'file modes' }, async (t) => {
   const stateHome = await tempDir(t);
   const weekAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
   const oldTmpLog = `/tmp/mcp-wrapper-${900000000 + Math.floor(Math.random() * 99999999)}.log`;

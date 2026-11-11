@@ -226,6 +226,7 @@ You can use any game-side Unity Inspector MCP tool in your scripts:
   ```json
   { "command": "game_state", "until": { "timeout": 60, "interval": 1 }, "expect": { "contains": ["\"state\": \"alive\""] } }
   ```
+- At the main menu, wait for the menu, not only the `MainMenu` scene: the game ignores menu input for 3 s after the scene loads, then for 0.3 s each time the menu becomes active (0.15 s for accept). Poll an `execute_code` step that returns the `MainMenu` object's `MenuActive` with `until` for `True`, and give it `"wait": 500`, as `game-states.json` does
 - Add short waits after input to let animations complete
 - No wait needed if the next command doesn't depend on the previous one
 
@@ -305,7 +306,7 @@ The `scenario-*.json` scripts run a mod change end to end in the game. Pick by w
 | A bro's animations | `capture_animations` (a tool, not a scenario) | |
 | Menus or a mod's settings UI | `scenario-menus` | `mod`, the UnityModManager mod id |
 | Co-op | `scenario-player-join` | `driver`: `bot` or `idle`; `bot` hands the game's follower bot the hero's own path agent, working around a game defect that leaves a late-enabled bot without one, and places the bro a few blocks from player 1, since the follower stops at an idle leader |
-| A level mechanic | `scenario-level-run`, with `survey: true` first to see what the level has | `campaign`, `level`, `requireMechanics` |
+| A level mechanic | `scenario-level-run`, with `survey: true` first to see what the level has | `campaign`, `level`, `requireMechanics`; `bro`, the roster name of the bro to run as |
 
 Run one with `run_test_script`, e.g. `script: "scenario-bro-swap", args: { "customBro": "Bronobi" }`. `scenario-menus` returns to the main menu, so run it on its own.
 
@@ -313,6 +314,7 @@ Reading the reply:
 
 - **passed** is the verdict: every step held and no report says `"passed": false`
 - **report** is the scenario's own: `checks` (`name`, `passed`, `detail`) say what held, `outcome` how the run ended (`finished`, `duration`, `timeout`, `level-failed`, `error`, or `survey` for a `survey: true` run), and the level run adds `progress`, `mechanics` (`found`, `exercised`, `missed`, `unknown`), `characters` (each character a driven player had, with its presses and how often its special and melee ran), `events` and `stuck`
+- **stuck** lists each place a driven bro stopped getting anywhere and the recovery step that freed it, tried in turn: a longer path, a jump, a wall climb, a step back, a melee (which leaves a vehicle and, for a bro whose own melee grabs a unit, throws the unit it holds), shooting down and the special, and a teleport of the bro on foot beside a goal above or below it or else a few blocks ahead, which marks the run `assisted`
 - **logs** is what the game and the mods wrote during the run: errors, warnings and floods by mod
 - **resultsFile** holds every step's full result when a preview was cut
 
@@ -327,6 +329,8 @@ Mod settings in the profile the game runs shape the results:
 The level run refuses a level on an IronBro save, whose lives and dead bros a run would write, unless it only surveys; a level run that reaches the exit leaves the level finished, with its outcome held so the save is not written, until the next load; from arming until the run's level is left or the script unloaded, a won level's outcome and a campaign finish are skipped, whatever finished the level, and a freed bro or an unlock never reaches the progress, so a rescue still hands the player a bro but counts toward no unlock. Its timeout and its kit holds, like the player join's phases, do not count time under the pause menu.
 
 The level run and the bro swap default to campaign 0 level 0, Intro level 1, which a level run finishes in about 25 s with five enemies, a door, a ladder and a cage. The player join and the menu pass default to campaign 1 level 0.
+
+The level run and its wedged-bro check run as `bro`, Rambro unless set, made Swap Bros Mod's next spawn before the load so the run and its respawns get that bro whatever the player had selected; both need Swap Bros Mod, and put the player's own selection back when they end.
 
 ## See Also
 

@@ -205,8 +205,8 @@ export function fakeInspector({ answers = true, hello = 'accept' } = {}) {
     const server = net.createServer((socket) => {
       sockets.push(socket);
       socket.on('error', () => {});
-      serveConnection(socket, state, (request) => {
-        if (answers) socket.write(JSON.stringify({ id: request.id, success: true, result: {} }) + '\n');
+      serveConnection(socket, state, (request, served) => {
+        if (answers) served.write(JSON.stringify({ id: request.id, success: true, result: {} }) + '\n');
       });
     });
     server.once('error', reject);

@@ -18,7 +18,7 @@ Run each script below with `run_test_script` on a game of your own: this session
 
 - Start each script in campaign 0 level 2 (`go_to_level {campaignIndex: 0, levelIndex: 1}`).
 - Run `scripts-lifecycle.json` twice in one game.
-- A failing precondition step in `game-states.json` (the loading and world-map checks) is a timing miss: run it again.
+- A failing world-map probe in `game-states.json` (steps 79-82, run in the second or so the world map stays up) is a timing miss: run it again.
 - The `example-*.json` and `scenario-*.json` scripts are not part of the set.
 
 | script | needs |

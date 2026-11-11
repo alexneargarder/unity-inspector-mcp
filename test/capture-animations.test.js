@@ -14,7 +14,6 @@ import {
   DEFAULT_SETTLE_MS,
   DEFAULT_STATES_PATH,
   SCRIPT_PATH,
-  DEFAULT_SWAP_SETTLE_MS,
   DEFAULT_SWAP_TIMEOUT_MS,
   DEFAULT_TIMEOUT_MS,
   LIVE_SWEEP_SLOT,
@@ -860,25 +859,25 @@ test('an expired claim is taken over', { timeout: 20000 }, async (t) => {
   assert.notEqual(fake.claims[fake.claims.length - 1].token, 'stale');
 });
 
-test('the lease covers every wait and command of the setup it asks for', () => {
+test('the lease covers every wait and command of its setup', () => {
   const poll = commandTimeout('game_state');
   const press = commandTimeout('simulate_input', { action: 'start', duration: 200 });
   const script = commandTimeout('execute_script');
-  const swap = poll + 2 * commandTimeout('swap_bro') + commandTimeout('list_bros') + 15000 + 700;
+  const swap = poll + 2 * commandTimeout('swap_bro') + commandTimeout('list_bros') + 15000;
   const readinessPress = poll + 2 * press;
   const dismissal = 60000 + 2 * poll + press;
 
   assert.equal(claimLeaseMs({ timeoutMs: 60000 }) - CLAIM_SLACK_MS, 60000 + poll + script + readinessPress + DEFAULT_SETTLE_MS,
     'the readiness wait with a press and its settle, then the script');
   assert.equal(
-    claimLeaseMs({ timeoutMs: 60000, level: { campaignIndex: 0, levelIndex: 1 }, settleMs: 1700, bro: 'Rambro', swapTimeoutMs: 15000, swapSettleMs: 700 }) - CLAIM_SLACK_MS,
+    claimLeaseMs({ timeoutMs: 60000, level: { campaignIndex: 0, levelIndex: 1 }, settleMs: 1700, bro: 'Rambro', swapTimeoutMs: 15000 }) - CLAIM_SLACK_MS,
     60000 + poll + script + commandTimeout('go_to_level') + dismissal + 60000 + poll + 1700 + dismissal + 1700 + swap,
     'the level, a cutscene go_to_level named, its wait and settle, a later cutscene and the settle again, the swap, and a readiness wait that presses nothing',
   );
   assert.equal(
-    claimLeaseMs({ timeoutMs: 60000, bro: 'Rambro', swapTimeoutMs: 15000, swapSettleMs: 700 }) - CLAIM_SLACK_MS,
-    60000 + poll + script + readinessPress + DEFAULT_SETTLE_MS + 700 + dismissal + DEFAULT_SETTLE_MS + swap,
-    'a cutscene dismissed before the swap, and one at the readiness wait with both settles',
+    claimLeaseMs({ timeoutMs: 60000, bro: 'Rambro', swapTimeoutMs: 15000 }) - CLAIM_SLACK_MS,
+    60000 + poll + script + readinessPress + DEFAULT_SETTLE_MS + dismissal + DEFAULT_SETTLE_MS + swap,
+    'a cutscene dismissed before the swap, and one at the readiness wait with its settle',
   );
 });
 
@@ -993,7 +992,6 @@ test('runCapture settles between the level being ready and the bro swap', { time
       bro: 'Drunken Broster',
       level: { campaignIndex: 1, levelIndex: 0 },
       settleMs: 3000,
-      swapSettleMs: 0,
       swapTimeoutMs: 5000,
       statesPaths: [statesPath],
       out: outDir,
@@ -1013,7 +1011,7 @@ test('runCapture settles between the level being ready and the bro swap', { time
   ]);
 });
 
-test('runCapture waits for the slot to report a different character before it sweeps', { timeout: 20000 }, async (t) => {
+test('the readiness wait follows the landed swap at once', { timeout: 20000 }, async (t) => {
   const dir = await tempDir(t);
   const statesPath = path.join(dir, 'input-states.json');
   const outDir = path.join(dir, 'out');
@@ -1050,7 +1048,6 @@ test('runCapture waits for the slot to report a different character before it sw
   const result = await runCapture({
       bro: 'Drunken Broster',
       level: null,
-      swapSettleMs: 2000,
       swapTimeoutMs: 5000,
       statesPaths: [statesPath],
       out: outDir,
@@ -1065,10 +1062,11 @@ test('runCapture waits for the slot to report a different character before it sw
     'game_state', 'execute_script', 'unload_script',
   ], 'one look before the swap, then polls until the name changes');
 
-  const settles = sleeps.filter((call) => call.ms === 2000);
-  assert.equal(settles.length, 1, 'settled once, not once per poll');
-  assert.equal(settles[0].sent[settles[0].sent.length - 1], 'game_state', 'after the new character was seen');
-  assert.ok(!settles[0].sent.includes('execute_script'), 'and before the sweep');
+  assert.deepEqual(
+    sleeps.filter((call) => call.sent.includes('swap_bro')).map((call) => call.ms),
+    [5],
+    'one poll interval between the swap\'s two looks, and no wait between the swap landing and the readiness wait',
+  );
 });
 
 test('runCapture takes anything alive as the swap when the slot was empty first', { timeout: 20000 }, async (t) => {
@@ -1101,7 +1099,6 @@ test('runCapture takes anything alive as the swap when the slot was empty first'
   const result = await runCapture({
       bro: 'Drunken Broster',
       level: null,
-      swapSettleMs: 0,
       swapTimeoutMs: 5000,
       statesPaths: [statesPath],
       out: outDir,
@@ -1152,7 +1149,6 @@ test('runCapture takes the swap_bro reply as the change and only waits for liven
   const result = await runCapture({
       bro: 'Drunken Broster',
       level: null,
-      swapSettleMs: 0,
       swapTimeoutMs: 5000,
       statesPaths: [statesPath],
       out: outDir,
@@ -1168,7 +1164,7 @@ test('runCapture takes the swap_bro reply as the change and only waits for liven
   ], 'polled until alive, not until the name changed');
 });
 
-test('runCapture skips the poll when swap_bro reports the bro that was already there', { timeout: 20000 }, async (t) => {
+test('runCapture skips the poll when swap_bro names the bro already there', { timeout: 20000 }, async (t) => {
   const dir = await tempDir(t);
   const statesPath = path.join(dir, 'input-states.json');
   const outDir = path.join(dir, 'out');
@@ -1179,7 +1175,7 @@ test('runCapture skips the poll when swap_bro reports the bro that was already t
     seen.push(request.method);
 
     if (request.method === 'swap_bro') {
-      // The same name the snapshot saw: the slot already held this bro, so nothing changed
+      // The same name the snapshot saw: the slot already held this bro, which the swap respawned all the same
       reply(socket, request.id, { success: true, broName: 'Rambro', objectName: RAMBRO_OBJECT, heroType: 'Rambro' });
       return;
     }
@@ -1200,7 +1196,6 @@ test('runCapture skips the poll when swap_bro reports the bro that was already t
   const result = await runCapture({
       bro: 'Rambro',
       level: null,
-      swapSettleMs: 0,
       swapTimeoutMs: 5000,
       statesPaths: [statesPath],
       out: outDir,
@@ -1251,7 +1246,6 @@ test('runCapture sweeps a locked custom bro the slot already holds', { timeout: 
   const result = await runCapture({
       bro: 'Jason Brohees',
       level: null,
-      swapSettleMs: 0,
       swapTimeoutMs: 5000,
       statesPaths: [statesPath],
       out: outDir,
@@ -1297,8 +1291,7 @@ test('runCapture refuses to sweep when the slot never reports a different charac
     runCapture({
         bro: 'Drunken Broster',
         level: null,
-        swapSettleMs: 0,
-        // The sweep timeout is long; the swap poll is what has to give up
+          // The sweep timeout is long; the swap poll is what has to give up
         swapTimeoutMs: 60,
         statesPaths: [statesPath],
         out: outDir,
@@ -1349,8 +1342,7 @@ test('runCapture aborts when the swapped-in character never comes alive', { time
     runCapture({
         bro: 'Drunken Broster',
         level: null,
-        swapSettleMs: 0,
-        swapTimeoutMs: 60,
+          swapTimeoutMs: 60,
         statesPaths: [statesPath],
         out: outDir,
         gameOut: outDir,
@@ -2599,24 +2591,68 @@ test('capture_animations passes an empty-cell frame without failing the sweep', 
   assert.equal(payload.summary.contributionFailures, 0);
 });
 
-test('capture_animations passes on the refusal of a sweep with a stale hero in the crop', { timeout: 30000 }, async (t) => {
+test('capture_animations passes on the refusal of a sweep whose recalled bro outlived its frame bound', { timeout: 30000 }, async (t) => {
   const dir = await tempDir(t);
   const outDir = path.join(dir, 'out');
   const statesPath = path.join(dir, 'input-states.json');
   await fs.writeFile(statesPath, JSON.stringify({ states: contributionStates }));
-  const refusal = "another hero 'Rambo(Clone) [local]' that no player slot holds is drawn in the capture crop and the "
-    + 'sweep would strip it: raise swapSettle or wait for the old character to be destroyed';
+  const refusal = "the recalled bro 'Rambo(Clone) [local]' is still drawn in the capture crop 10 frames after the sweep set "
+    + 'its recall to end: its Update never ends the recall, so nothing was swept';
 
   await toolStub(t, (request) => {
-    if (request.method === 'execute_script') writeNow(path.join(outDir, 'error'), refusal);
+    if (request.method === 'execute_script') {
+      writeNow(path.join(outDir, 'capture.json'), JSON.stringify({ complete: false, bro: { type: 'Rambro' }, states: [], errors: [] }));
+      writeNow(path.join(outDir, 'error'), refusal);
+    }
     return false;
   });
 
-  const payload = JSON.parse(textOf(await callCapture({ out: outDir, states: [statesPath], timeout: 5 })));
+  const response = await callCapture({ out: outDir, states: [statesPath], timeout: 5 });
+  assert.equal(response.isError, true);
+  const payload = JSON.parse(textOf(response));
 
   assert.equal(payload.success, false);
   assert.equal(payload.status, 'error');
   assert.equal(payload.message, refusal);
+  assert.equal(payload.summary.captured, 0, 'no state was swept');
+  assert.equal(payload.summary.complete, false);
+  assert.match(payload.report, /^- Capture incomplete: the sweep stopped after 0 of 2 states$/m);
+  assert.match(payload.report, /## Never reached \(2\)\n\n- running\n- idle/);
+});
+
+test('the capture script ends recalls before its probe', async () => {
+  const script = await fs.readFile(SCRIPT_PATH, 'utf-8');
+  const at = (text, piece) => {
+    const index = text.indexOf(piece);
+    assert.ok(index >= 0, `the script has ${piece}`);
+    return index;
+  };
+  const between = (from, to) => {
+    const start = at(script, from);
+    return script.slice(start, start + at(script.slice(start), to));
+  };
+  const inOrder = (text, first, then, message) => assert.ok(at(text, first) < at(text, then), message);
+
+  const begin = between('private void Begin()', 'private void StartSweep()');
+  assert.match(begin, /if \(EndRecalls\(\) == null\) StartSweep\(\);/, 'Begin starts the sweep at once only with no recalled bro in the crop');
+  assert.doesNotMatch(begin, /throw new Exception/, 'and refuses nothing for one');
+  inOrder(begin, 'Time.timeScale = 0f;', 'EndRecalls()', 'the clock handling comes first, as before');
+
+  const endRecalls = between('private string EndRecalls()', 'private void HoldBubbles()');
+  assert.match(endRecalls, /ProbeOverlaps\(body, CropCenterOf\(body\)\)/, 'the recalled bros are the ones the overlap probe finds in the crop');
+  assert.match(endRecalls, /AccessTools\.Field\(typeof\(TestVanDammeAnim\), "recallCounter"\)/);
+  assert.match(endRecalls, /counter\.SetValue\(recalled\[i\], 2f\)/, 'each one\'s recall is pushed past its end for its own Update to destroy it');
+
+  const update = between('private void Update()', 'private void LateUpdate()');
+  const guard = /if \(!sweepStarted\)\s*\{\s*AwaitRecalls\(\);\s*return;\s*\}/.exec(update);
+  assert.ok(guard, 'Update waits out the recalls and does nothing else until the sweep starts');
+  assert.ok(guard.index < at(update, 'stateIndex++'), 'before the first state');
+  const awaitRecalls = between('private void AwaitRecalls()', 'private void FailStart(');
+  assert.match(awaitRecalls, /if \(\+\+recallFramesWaited < RecallFrames\) return;/, 'the wait is bounded in frames');
+  assert.match(awaitRecalls, /FailStart\("the recalled bro '"/, 'and fails naming the bro once the bound runs out');
+  assert.match(script, /private const int RecallFrames = 10;/);
+  assert.match(between('private void Finish()', 'private bool WriteCapture('), /WriteCapture\(sweepStarted\)/, 'a sweep that never started leaves capture.json incomplete');
+  assert.doesNotMatch(script, /swapSettle/, 'and advises nothing that cannot end it');
 });
 
 test('capture_animations fails a sweep with a frame the character contributed nothing to', { timeout: 30000 }, async (t) => {
@@ -2994,7 +3030,7 @@ test('the capture_animations schema carries every argument and the bounds the sw
   assert.deepEqual(
     Object.keys(properties).sort(),
     ['allowSideEffects', 'backdrop', 'bro', 'box', 'gameOut', 'includeLethal', 'level', 'only', 'out', 'player', 'settle',
-      'states', 'swapSettle', 'swapTimeout', 'timeout'].sort(),
+      'states', 'swapTimeout', 'timeout'].sort(),
   );
 
   assert.equal(properties.out.type, 'string');
@@ -3004,7 +3040,6 @@ test('the capture_animations schema carries every argument and the bounds the sw
   assert.deepEqual(properties.states.type, ['array', 'string'], 'one layer may be given as a bare string');
   assert.equal(properties.states.items.type, 'string');
   assert.equal(properties.settle.minimum, 0, 'zero opts a settle out');
-  assert.equal(properties.swapSettle.minimum, 0);
   assert.equal(properties.swapTimeout.minimum, 1);
   assert.equal(properties.timeout.minimum, 1);
   assert.equal(properties.box.minimum, 1);
@@ -3019,7 +3054,6 @@ test('the capture_animations schema carries every argument and the bounds the sw
 
   // The defaults each argument promises are the ones the library holds
   assert.match(properties.settle.description, new RegExp(`default: ${DEFAULT_SETTLE_MS / 1000}`));
-  assert.match(properties.swapSettle.description, new RegExp(`default: ${DEFAULT_SWAP_SETTLE_MS / 1000}`));
   assert.match(properties.swapTimeout.description, new RegExp(`default: ${DEFAULT_SWAP_TIMEOUT_MS / 1000}`));
   assert.match(properties.timeout.description, new RegExp(`default: ${DEFAULT_TIMEOUT_MS / 1000}`));
   assert.match(description, /report\.md/, 'the description says what the sweep writes');
@@ -3121,7 +3155,6 @@ test('capture_animations surfaces the level, player and seconds arguments it can
   assert.match(textOf(await callCapture({ out, level: '1:0', settle: -1 })), /settle must be a number >= 0/);
   // Checked even where the wait it follows was never asked for, rather than silently discarded
   assert.match(textOf(await callCapture({ out, settle: 'soon' })), /settle must be a number, got "soon"/);
-  assert.match(textOf(await callCapture({ out, swapSettle: -2 })), /swapSettle must be a number >= 0/);
   assert.match(textOf(await callCapture({ out, box: 0 })), /box must be a number >= 1/);
 });
 
@@ -3149,7 +3182,6 @@ test('capture_animations sweeps the stub game and answers with the report and it
     out: outDir,
     bro: 'Rambro',
     states: [statesPath],
-    swapSettle: 0,
     timeout: 5,
   });
   assert.ok(!response.isError, textOf(response));
@@ -3579,7 +3611,7 @@ test('capture_animations forwards players 1 to 3 to the script and the swap', { 
   }
 
   seen.length = 0;
-  await sweepPayload({ out: outDir, player: 2, bro: 'Drunken Broster', swapSettle: 0, timeout: 5 });
+  await sweepPayload({ out: outDir, player: 2, bro: 'Drunken Broster', timeout: 5 });
   assert.equal(seen.find((request) => request.method === 'swap_bro').params.playerNum, 2);
 });
 
@@ -3957,7 +3989,7 @@ test('a cancelled sweep stops waiting, tears the game down and releases the swee
   assert.doesNotMatch(textOf(next), /while a capture_animations sweep/, 'the cancelled sweep still holds the server');
 });
 
-test('a cancelled run wakes from its wait, sends no further setup command and releases its claim', { timeout: 20000 }, async (t) => {
+test('a cancelled setup wakes, sends nothing more and releases its claim', { timeout: 20000 }, async (t) => {
   const fake = fakeSlot();
   let holdSnapshot = false;
   let held = null;
@@ -3983,7 +4015,7 @@ test('a cancelled run wakes from its wait, sends no further setup command and re
   const snapshot = new AbortController();
   holdSnapshot = true;
   const start = methods().length;
-  const swapRun = runCapture(await captureOptionsFor(t, { bro: 'Rambro', swapSettleMs: 0 }), client, { pollMs: 5, signal: snapshot.signal });
+  const swapRun = runCapture(await captureOptionsFor(t, { bro: 'Rambro' }), client, { pollMs: 5, signal: snapshot.signal });
   await until(() => held !== null);
   snapshot.abort();
   held();
@@ -3992,7 +4024,7 @@ test('a cancelled run wakes from its wait, sends no further setup command and re
   assert.equal(fake.slot, null);
 });
 
-test('a sweep in progress counts the level load and both swap calls in the budget its refusal reports', { timeout: 30000 }, async (t) => {
+test("a sweep's refusal counts the level load and both swap calls in its budget", { timeout: 30000 }, async (t) => {
   const dir = await tempDir(t);
   let levelUp = false;
   const { methods } = await toolStub(t, (request, socket) => {
@@ -4003,7 +4035,7 @@ test('a sweep in progress counts the level load and both swap calls in the budge
     return false;
   });
 
-  const sweep = callCapture({ out: path.join(dir, 'out'), level: '1:0', bro: 'Rambro', timeout: 30, settle: 0, swapTimeout: 1, swapSettle: 0 });
+  const sweep = callCapture({ out: path.join(dir, 'out'), level: '1:0', bro: 'Rambro', timeout: 30, settle: 0, swapTimeout: 1 });
   await until(() => methods().includes('go_to_level'));
 
   const refused = textOf(await callCapture({ out: path.join(dir, 'other'), timeout: 5 }));
@@ -4308,7 +4340,7 @@ async function cutsceneStub(t, outDir) {
   return game;
 }
 
-test('on a level sweep a cutscene is pressed past before the swap, the settle runs again on the live game, one go_to_level names is pressed past before the level wait, and none is pressed at the readiness wait', { timeout: 20000 }, async (t) => {
+test('a level sweep presses cutscenes past before the level wait and the swap, settles again, and none at the readiness wait', { timeout: 20000 }, async (t) => {
   const dir = await tempDir(t);
   const statesPath = path.join(dir, 'input-states.json');
   const outDir = path.join(dir, 'out');
@@ -4316,7 +4348,7 @@ test('on a level sweep a cutscene is pressed past before the swap, the settle ru
   const game = await cutsceneStub(t, outDir);
 
   const options = {
-    level: { campaignIndex: 1, levelIndex: 0 }, bro: 'Rambro', settleMs: 1700, swapSettleMs: 700, swapTimeoutMs: 5000,
+    level: { campaignIndex: 1, levelIndex: 0 }, bro: 'Rambro', settleMs: 1700, swapTimeoutMs: 5000,
     statesPaths: [statesPath], out: outDir, gameOut: outDir, timeoutMs: 5000, player: 0,
   };
   game.reset('go_to_level');
@@ -4324,7 +4356,7 @@ test('on a level sweep a cutscene is pressed past before the swap, the settle ru
   assert.equal(run.outcome.status, 'done');
   assert.deepEqual(game.seen, [
     'ping', 'execute_code', 'go_to_level', 'game_state', 'sleep 1700', 'game_state', 'simulate_input', 'game_state', 'sleep 1700',
-    'game_state', 'swap_bro', 'game_state', 'sleep 700', 'game_state', 'execute_script', 'unload_script',
+    'game_state', 'swap_bro', 'game_state', 'game_state', 'execute_script', 'unload_script',
   ], 'the press, then the settle on the live game, then the swap');
   assert.equal(game.swappedWhilePaused, false);
   assert.equal(run.summary.cutscenePresses, 1);
@@ -4335,7 +4367,7 @@ test('on a level sweep a cutscene is pressed past before the swap, the settle ru
   assert.equal(named.outcome.status, 'done');
   assert.deepEqual(game.seen, [
     'ping', 'execute_code', 'go_to_level', 'game_state', 'simulate_input', 'game_state', 'game_state', 'game_state', 'sleep 1700',
-    'game_state', 'swap_bro', 'game_state', 'sleep 700', 'game_state', 'execute_script', 'unload_script',
+    'game_state', 'swap_bro', 'game_state', 'game_state', 'execute_script', 'unload_script',
   ], 'a cutscene go_to_level names, its bro held off the level, is pressed past before the level wait and the settle');
   assert.equal(named.summary.cutscenePresses, 1);
 
@@ -4347,7 +4379,7 @@ test('on a level sweep a cutscene is pressed past before the swap, the settle ru
   assert.ok(!game.seen.includes('simulate_input'), 'a cutscene the level path missed is not pressed after the swap');
 });
 
-test('without a level a cutscene up before the swap is pressed past first, and one starting after it at the readiness wait', { timeout: 20000 }, async (t) => {
+test('without a level a cutscene is pressed past before the swap or at the readiness wait', { timeout: 20000 }, async (t) => {
   const dir = await tempDir(t);
   const statesPath = path.join(dir, 'input-states.json');
   const outDir = path.join(dir, 'out');
@@ -4355,23 +4387,23 @@ test('without a level a cutscene up before the swap is pressed past first, and o
   const game = await cutsceneStub(t, outDir);
 
   const options = {
-    level: null, bro: 'Rambro', settleMs: 1234, swapSettleMs: 700, swapTimeoutMs: 5000,
+    level: null, bro: 'Rambro', settleMs: 1234, swapTimeoutMs: 5000,
     statesPaths: [statesPath], out: outDir, gameOut: outDir, timeoutMs: 5000, player: 0,
   };
   game.reset('ping');
   assert.equal((await runCapture(options, game.client, { pollMs: 5, sleep: game.sleep, isRunning: game.isRunning })).outcome.status, 'done');
   assert.deepEqual(game.seen, [
     'ping', 'execute_code', 'game_state', 'simulate_input', 'game_state', `sleep ${DEFAULT_SETTLE_MS}`,
-    'game_state', 'swap_bro', 'game_state', 'sleep 700', 'game_state', 'execute_script', 'unload_script',
+    'game_state', 'swap_bro', 'game_state', 'game_state', 'execute_script', 'unload_script',
   ], 'pressed and settled before the swap; settle is a level\'s and does not apply');
   assert.equal(game.swappedWhilePaused, false);
 
   game.reset('swap_bro');
   assert.equal((await runCapture(options, game.client, { pollMs: 5, sleep: game.sleep, isRunning: game.isRunning })).outcome.status, 'done');
   assert.deepEqual(game.seen, [
-    'ping', 'execute_code', 'game_state', 'swap_bro', 'game_state', 'sleep 700', 'game_state', 'simulate_input', 'game_state',
-    `sleep ${DEFAULT_SETTLE_MS + 700}`, 'game_state', 'execute_script', 'unload_script',
-  ], 'pressed at the readiness wait, then the settle and the swap settle again');
+    'ping', 'execute_code', 'game_state', 'swap_bro', 'game_state', 'game_state', 'simulate_input', 'game_state',
+    `sleep ${DEFAULT_SETTLE_MS}`, 'game_state', 'execute_script', 'unload_script',
+  ], 'pressed at the readiness wait, then the settle');
 });
 
 test('the readiness wait presses again only once a cutscene has outlasted a press by a few seconds, settles once it clears, and names the presses when it never clears', async () => {
@@ -4443,7 +4475,7 @@ test('a swap that leaves another bro in the slot is refused before it is swept',
   t.after(async () => { client.disconnect(); await stub.close(); });
 
   await assert.rejects(
-    runCapture({ bro: 'Jason Brohees', swapSettleMs: 0, statesPaths: [statesPath], out: outDir, gameOut: outDir, timeoutMs: 5000, player: 0 }, client, { pollMs: 5 }),
+    runCapture({ bro: 'Jason Brohees', statesPaths: [statesPath], out: outDir, gameOut: outDir, timeoutMs: 5000, player: 0 }, client, { pollMs: 5 }),
     /Slot 0 holds "Rambro" after the swap to "Jason Brohees", so nothing was swept/,
   );
   assert.deepEqual(seen.find((request) => request.method === 'list_bros').params, { playerNum: 0 });

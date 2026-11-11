@@ -1,6 +1,6 @@
 {
   "name": "Player tools across player states",
-  "description": "Probes teleport_player, set_player_health, inspect_player, swap_bro, list_bros, game_state, simulate_input and restart_level with the player alive, at game speed 0, dead with a corpse, between death and respawn, piloting a mech, beside a second co-op player, paused, in the bro intro cutscene CutsceneController.LoadCutScene starts, and in an IronBro campaign; with a revive halo the kill is refused; a bro the start-of-level transport holds, caught and frozen there, and a bro the game holds (hidden) are refused by the slot tools and read as arriving and held; coordinates of 1e30, and fractional integers sent to the mod's message handler directly, are refused; a running slow-motion overriding set_game_speed is reported; a jump and Bro Lee's special at game speed 0 leave the bro, the camera shake and the level's time finite. The kill path is refused for a piloting player, alone and with playerNum -1. Dead and respawning are held with game speed 0. The mech is spawned with ignoreSuppression and piloted through the game's own PilotUnit; the second player joins through HeroController.RequestJoinGame and has no input device; IronBro is the current save slot's worldMapIsHardcoreCampaign flag with three lives and a two-bro roster, restored before anything saves it; with no lives a level load would end the run and wipe the slot. Needs campaign 0 level 1, which its fifth step loads (its ground at x 760-790, y 408, which the bro is put on before the first teleport: the game deactivates blocks off screen, and a bro teleported onto them falls for a frame), Swap Bros Mod, BroMakerLib and an empty second player slot. With HeroController.BrosReleased false in memory, as Utility Mod's custom spawn leaves it for a whole level, a live bro still teleports and swaps and a hidden one reads as held. Custom spawn skips the start-of-level transport, so it is switched off in memory for the arriving steps, utility-mod-save-guard keeping that off the settings file, and restored. Its first steps undo whatever an earlier run left changed; its last steps drop the second player, end IronBro, restore the speed, the pause, any cutscene left running and the Swap Bros selection, and reload the level it started in. Its cleanup runs the restore again whatever ended the steps: a running cutscene, the second player, IronBro and its lives, the lock, the Swap Bros selection, pause and speed, custom spawn and the released flag.",
+  "description": "Probes teleport_player, set_player_health, inspect_player, swap_bro, list_bros, game_state, simulate_input and restart_level with the player alive, at game speed 0, dead with a corpse, between death and respawn, piloting a mech, beside a second co-op player, paused, in the bro intro cutscene CutsceneController.LoadCutScene starts, and in an IronBro campaign; with a revive halo the kill is refused; a bro the start-of-level transport holds, caught and frozen there, and a bro the game holds (hidden) are refused by the slot tools and read as arriving and held; coordinates of 1e30, and fractional integers sent to the mod's message handler directly, are refused; a running slow-motion overriding set_game_speed is reported; a jump and Bro Lee's special at game speed 0 leave the bro, the camera shake and the level's time finite. The kill path is refused for a piloting player, alone and with playerNum -1. Dead and respawning are held with game speed 0. The mech is spawned with ignoreSuppression and piloted through the game's own PilotUnit; the second player joins through HeroController.RequestJoinGame and has no input device; IronBro is the current save slot's worldMapIsHardcoreCampaign flag with three lives and a two-bro roster, restored before anything saves it; with no lives a level load would end the run and wipe the slot. Needs campaign 0 level 1, which its fifth step loads (its ground at x 760-790, y 408, which the bro is put on before the first teleport: the game deactivates blocks off screen, and a bro teleported onto them falls for a frame), Swap Bros Mod, BroMakerLib and an empty second player slot. With HeroController.BrosReleased false in memory, as Utility Mod's custom spawn leaves it for a whole level, a live bro still teleports and swaps and a hidden one reads as held. Custom spawn skips the start-of-level transport, so it is switched off in memory for the arriving steps, utility-mod-save-guard keeping that off the settings file, and restored. Its first steps undo whatever an earlier run left changed; its last steps drop the second player, end IronBro, restore the speed, the pause, any cutscene left running and the Swap Bros selection, and reload the level it started in. Its cleanup runs the restore again whatever ended the steps: a running cutscene, the second player, IronBro and its lives, the lock, the Swap Bros selection, pause and speed, custom spawn and the released flag. It then reloads the level it started in and unloads utility-mod-save-guard.",
   "steps": [
     {
       "command": "simulate_input",
@@ -2063,7 +2063,7 @@
     {
       "command": "execute_code",
       "params": {
-        "code": "var d = System.AppDomain.CurrentDomain;\nif (d.GetData(\"uimtest.states.ums\") == null) d.SetData(\"uimtest.states.ums\", (d.GetData(\"uimtest.u3.ums\") ?? \"absent\") + \"/\" + (d.GetData(\"uimtest.u3.ums.found\") ?? \"absent\"));\nvar rec = d.GetData(\"uimtest.released\") as string;\nd.SetData(\"uimtest.released\", null);\nHeroController.BrosReleased = rec == \"1\";\nreturn \"released restored to \" + rec;"
+        "code": "var d = System.AppDomain.CurrentDomain;\nd.SetData(\"uimtest.states.ums\", (d.GetData(\"uimtest.u3.ums\") ?? \"absent\") + \"/\" + (d.GetData(\"uimtest.u3.ums.found\") ?? \"absent\"));\nvar rec = d.GetData(\"uimtest.released\") as string;\nd.SetData(\"uimtest.released\", null);\nHeroController.BrosReleased = rec == \"1\";\nreturn \"released restored to \" + rec;"
       },
       "expect": {
         "success": true,
@@ -2385,10 +2385,22 @@
       "expect": {
         "success": true,
         "notContains": [
-          "failed"
+          "failed",
+          "success=False"
         ]
+      }
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
       },
-      "wait": 6000
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
     },
     {
       "command": "unload_script",

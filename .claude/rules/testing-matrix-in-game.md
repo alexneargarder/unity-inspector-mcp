@@ -271,7 +271,7 @@ paths:
 | C | `player` 7 | input 40 |
 | C | bro actions: highFive, gesture, sprint | input 42-44 |
 | C | `start` and `escape` in a level | input 45-49 |
-| S | a press the pause menu takes as accept | input 98-101 |
+| S | a press the pause menu takes as accept | input 99-102 |
 | S | paused | input 47 |
 | S | speed 0: the press taken, with a `note` and no `warning` | input 52-53; player-states 33, 187-188 |
 | C | fire in a level, for player 0, and for player 1 not playing, which no frame reads | input 65-69 |
@@ -285,12 +285,12 @@ paths:
 | S | menu keys at the main menu; fire through to the join screen | game-states 54-69 |
 | S | a level loading | game-states 27-29 |
 | S | `player` 1 with two players | player-states 106-107 |
-| C | `binding` for a bro's binding read every frame whatever its key: Furibrosa's Switch Weapon switching his weapon | input 103-106 |
-| C | `binding` for a mod's own binding: Utility Mod's Pause/Unpause Game pausing the game, then resuming it | input 114-117 |
-| C | a `binding` step in a sequence | input 111-113 |
-| C | a binding the mod never calls `IsDown` for (another player's Utility Mod binding): no frame read | input 118 |
-| C | an unknown binding, in a known mod and in an unknown one | input 107-108 |
-| C | `binding` beside `action`; a sequence step with both | input 109-110 |
+| C | `binding` for a bro's binding read every frame whatever its key: Furibrosa's Switch Weapon switching his weapon | input 104-107 |
+| C | `binding` for a mod's own binding: Utility Mod's Pause/Unpause Game pausing the game, then resuming it | input 115-118 |
+| C | a `binding` step in a sequence | input 112-114 |
+| C | a binding the mod never calls `IsDown` for (another player's Utility Mod binding): no frame read | input 119 |
+| C | an unknown binding, in a known mod and in an unknown one | input 108-109 |
+| C | `binding` beside `action`; a sequence step with both | input 110-111 |
 | S | RocketLib absent, or the `KeyBinding.IsDown` patch not installed | not produced by any step: the mod requires RocketLib, and a step cannot unpatch the mod's own postfix |
 
 ## spawn_entity
@@ -426,5 +426,5 @@ Classes of no single tool.
 | `Main.Log` from a TCP thread during UMM's batch write | none: the queue drained by `MainThreadDispatcher.Update` is checked by trace only |
 | a native crash's lines in `logs` and `crashLog` | RTS `the run carries the log delta after the game died, and when the baseline could not be taken`; LD `a native crash report is an error`; the crash text itself is unconfirmed |
 | an inspection read racing the main thread's object creation | none: every inspection handler now reads on the main thread, so no step can race it |
-| library scripts: `menu-tweaker` and `rogueforce-runner`, a traced argument whose `ToString` throws, a name only a prefab asset carries; the level-run driver piloting a mech, on an IronBro save, at a refusing teleport door, on a super-checkpoint reload or under the pause menu | none: the set has no FlexMenu, Rogueforce, level or save that produces them |
+| library scripts: `menu-tweaker` and `rogueforce-runner`, a traced argument whose `ToString` throws, a name only a prefab asset carries; the level-run driver piloting a mech or Furibrosa's War Rig and leaving it by melee, throwing a unit its bro's own melee grabbed, resuming its recovery ladder where it stopped for a bro bouncing between two ledges no nearer the same goal, teleporting beside a flag on a pedestal, waiting until its bro is on foot to teleport it out of a death loop, on an IronBro save, at a refusing teleport door, on a super-checkpoint reload or under the pause menu | none: the set has no FlexMenu, Rogueforce, bro, level or save that produces them |
 | every tool on a remote target, through a tunnel and at a LAN address: the transfer code compiled and run in the game (the log candidates, UMM's `Logger.filepath`, the cache listing, chunked writes), a stale token then a recopy, an unused port | not produced by any step: a step cannot declare a remote target, since `run_test_script` refuses `launch_game`; RT, RF and RC cover the server's side against a stub mod |

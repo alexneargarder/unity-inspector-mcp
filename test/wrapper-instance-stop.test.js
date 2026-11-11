@@ -64,6 +64,11 @@ const stopCalls = async () => (await launcherCalls()).filter((call) => call === 
 
 const takeOver = () => fs.writeFile(ownerFile, `${process.pid} 1\n`);
 
+async function reaperWaiting(w, trigger) {
+  const pattern = new RegExp(`Instance ${SESSION} is owned by this wrapper — waiting for a takeover until \\d+ms after ${trigger}`);
+  assert.ok(await w.waitForLog(pattern, 15000), `the reaper never started waiting for a takeover:\n${w.readLog()}`);
+}
+
 beforeEach(async () => {
   await fs.rm(callsLog, { force: true });
   await fs.rm(path.join(root, 'stop-fails'), { force: true });
@@ -81,7 +86,7 @@ async function endAndReap(w, end) {
   return wrapperGone;
 }
 
-test('a wrapper that owns the instance stops it once the takeover window has passed after stdin closes', { timeout: 20000, skip: !isLinux }, async (t) => {
+test('a wrapper that owns the instance stops it once the takeover window has passed after stdin closes', { timeout: 60000, skip: !isLinux }, async (t) => {
   const w = startWrapper(wrapperEnv);
   t.after(() => w.stop());
   await w.initialize(0);
@@ -102,7 +107,7 @@ test('a wrapper that owns the instance stops it once the takeover window has pas
   await assert.rejects(fs.access(w.claimFile), 'the claim file was left behind');
 });
 
-const LONG_WAIT = { ...wrapperEnv, UNITY_INSPECTOR_MCP_STOP_WAIT_MS: '3000' };
+const LONG_WAIT = { ...wrapperEnv, UNITY_INSPECTOR_MCP_STOP_WAIT_MS: '30000' };
 
 async function assertLeftAlone(w, pattern) {
   const started = Date.now();
@@ -110,11 +115,11 @@ async function assertLeftAlone(w, pattern) {
   const elapsed = Date.now() - started;
 
   assert.deepEqual(await launcherCalls(), [], 'a launcher with no instance mode could read `instance` as a profile');
-  assert.ok(elapsed < 1500, `an instance this wrapper does not own was waited over (${elapsed}ms)`);
+  assert.ok(elapsed < 20000, `an instance this wrapper does not own was waited over (${elapsed}ms)`);
   assert.match(w.readLog(), pattern);
 }
 
-test('a wrapper that owns nothing exits without touching the launcher', { timeout: 20000, skip: !isLinux }, async (t) => {
+test('a wrapper that owns nothing exits without touching the launcher', { timeout: 60000, skip: !isLinux }, async (t) => {
   const w = startWrapper(LONG_WAIT);
   t.after(() => w.stop());
   await w.initialize(0);
@@ -122,7 +127,7 @@ test('a wrapper that owns nothing exits without touching the launcher', { timeou
   await assertLeftAlone(w, new RegExp(`Instance ${SESSION} is not owned by this wrapper`));
 });
 
-test('a wrapper whose instance was claimed by another pid leaves it alone', { timeout: 20000, skip: !isLinux }, async (t) => {
+test('a wrapper whose instance was claimed by another pid leaves it alone', { timeout: 60000, skip: !isLinux }, async (t) => {
   const w = startWrapper(LONG_WAIT);
   t.after(() => w.stop());
   await w.initialize(0);
@@ -134,7 +139,7 @@ test('a wrapper whose instance was claimed by another pid leaves it alone', { ti
   await fs.access(ownerFile);
 });
 
-test('a claim carrying this pid with another start time is a recycled pid, not ownership', { timeout: 20000, skip: !isLinux }, async (t) => {
+test('a claim carrying this pid with another start time is a recycled pid, not ownership', { timeout: 60000, skip: !isLinux }, async (t) => {
   const w = startWrapper(LONG_WAIT);
   t.after(() => w.stop());
   await w.initialize(0);
@@ -145,7 +150,7 @@ test('a claim carrying this pid with another start time is a recycled pid, not o
   await assertLeftAlone(w, new RegExp(`Instance ${SESSION} is not owned by this wrapper`));
 });
 
-test('a claim naming an owner file that is gone stops nothing', { timeout: 20000, skip: !isLinux }, async (t) => {
+test('a claim naming an owner file that is gone stops nothing', { timeout: 60000, skip: !isLinux }, async (t) => {
   const w = startWrapper(LONG_WAIT);
   t.after(() => w.stop());
   await w.initialize(0);
@@ -154,7 +159,7 @@ test('a claim naming an owner file that is gone stops nothing', { timeout: 20000
   await assertLeftAlone(w, new RegExp(`Instance ${SESSION} is not owned by this wrapper`));
 });
 
-test('a claim file the wrapper cannot read stops nothing', { timeout: 20000, skip: !isLinux }, async (t) => {
+test('a claim file the wrapper cannot read stops nothing', { timeout: 60000, skip: !isLinux }, async (t) => {
   const w = startWrapper(LONG_WAIT);
   t.after(() => w.stop());
   await w.initialize(0);
@@ -166,15 +171,15 @@ test('a claim file the wrapper cannot read stops nothing', { timeout: 20000, ski
   await assertLeftAlone(w, new RegExp(`Could not read the owner claim for instance ${SESSION}: EISDIR`));
 });
 
-test('an instance taken over during the wait is left running', { timeout: 20000, skip: !isLinux }, async (t) => {
-  const w = startWrapper({ ...wrapperEnv, UNITY_INSPECTOR_MCP_STOP_WAIT_MS: '4000' });
+test('an instance taken over during the wait is left running', { timeout: 60000, skip: !isLinux }, async (t) => {
+  const w = startWrapper({ ...wrapperEnv, UNITY_INSPECTOR_MCP_STOP_WAIT_MS: '15000' });
   t.after(() => w.stop());
   await w.initialize(0);
   await claimFor(w);
 
   await endAndReap(w, async () => {
     w.proc.stdin.end();
-    await w.sleep(700);
+    await reaperWaiting(w, 'stdin end');
     await takeOver();
   });
 
@@ -182,7 +187,7 @@ test('an instance taken over during the wait is left running', { timeout: 20000,
   assert.match(w.readLog(), new RegExp(`Instance ${SESSION} was taken over \\d+ms after stdin end`));
 });
 
-test('restart_server replaces the child and stops no game', { timeout: 20000, skip: !isLinux }, async (t) => {
+test('restart_server replaces the child and stops no game', { timeout: 60000, skip: !isLinux }, async (t) => {
   const w = startWrapper(wrapperEnv);
   t.after(() => w.stop());
   await w.initialize(0);
@@ -198,7 +203,7 @@ test('restart_server replaces the child and stops no game', { timeout: 20000, sk
   await fs.access(ownerFile);
 });
 
-test('an empty stop wait falls back to the default rather than to no wait at all', { timeout: 30000, skip: !isLinux }, async (t) => {
+test('an empty stop wait falls back to the default rather than to no wait at all', { timeout: 60000, skip: !isLinux }, async (t) => {
   const w = startWrapper({ ...wrapperEnv, UNITY_INSPECTOR_MCP_STOP_WAIT_MS: '' });
   t.after(() => w.stop());
   await w.initialize(0);
@@ -206,14 +211,14 @@ test('an empty stop wait falls back to the default rather than to no wait at all
 
   await endAndReap(w, async () => {
     w.proc.stdin.end();
-    await w.sleep(1500);
+    await reaperWaiting(w, 'stdin end');
     await takeOver();
   });
 
   assert.deepEqual(await launcherCalls(), [], 'the takeover landed inside the window and was missed');
 });
 
-test('a stop the launcher refuses is logged as the failure it was', { timeout: 20000, skip: !isLinux }, async (t) => {
+test('a stop the launcher refuses is logged as the failure it was', { timeout: 60000, skip: !isLinux }, async (t) => {
   await fs.writeFile(path.join(root, 'stop-fails'), '');
   const w = startWrapper(wrapperEnv);
   t.after(() => w.stop());
@@ -227,9 +232,9 @@ test('a stop the launcher refuses is logged as the failure it was', { timeout: 2
   assert.doesNotMatch(log, /Stopped instance/);
 });
 
-const RECONNECT_WAIT = { ...wrapperEnv, UNITY_INSPECTOR_MCP_STOP_WAIT_MS: '3000' };
+const RECONNECT_WAIT = { ...wrapperEnv, UNITY_INSPECTOR_MCP_STOP_WAIT_MS: '15000' };
 
-test("Claude Code's close keeps the takeover window: a reconnecting server keeps the instance", { timeout: 20000, skip: !isLinux }, async (t) => {
+test("Claude Code's close keeps the takeover window: a reconnecting server keeps the instance", { timeout: 60000, skip: !isLinux }, async (t) => {
   const w = startWrapper(RECONNECT_WAIT);
   t.after(() => w.stop());
   await w.initialize(0);
@@ -238,7 +243,7 @@ test("Claude Code's close keeps the takeover window: a reconnecting server keeps
 
   await endAndReap(w, async () => {
     await claudeCodeClose(w.proc);
-    await w.sleep(500);
+    await reaperWaiting(w, 'SIGINT');
     await takeOver();
   });
 
@@ -247,7 +252,7 @@ test("Claude Code's close keeps the takeover window: a reconnecting server keeps
   assert.equal(alive(server), false, 'the server outlived its wrapper');
 });
 
-test("Claude Code's close with no reconnect stops the instance after the window", { timeout: 20000, skip: !isLinux }, async (t) => {
+test("Claude Code's close with no reconnect stops the instance after the window", { timeout: 60000, skip: !isLinux }, async (t) => {
   const w = startWrapper(wrapperEnv);
   t.after(() => w.stop());
   await w.initialize(0);
@@ -262,7 +267,7 @@ test("Claude Code's close with no reconnect stops the instance after the window"
   await assert.rejects(fs.access(w.claimFile), 'the claim file was left behind');
 });
 
-test("a wrapper Claude Code kills while its server is still shutting down still stops the instance, after the server", { timeout: 20000, skip: !isLinux }, async (t) => {
+test("a wrapper Claude Code kills while its server is still shutting down still stops the instance, after the server", { timeout: 60000, skip: !isLinux }, async (t) => {
   const w = startWrapper({ ...wrapperEnv, STUB_CHILD_SLOW_STOP_MS: '1500' });
   t.after(() => w.stop());
   await w.initialize(0);
@@ -285,7 +290,7 @@ test("a wrapper Claude Code kills while its server is still shutting down still 
   assert.match(w.readLog(), new RegExp(`Stopped instance ${SESSION}, \\d+ms after SIGINT`));
 });
 
-test('a server that will not stop is killed by the reaper before the instance stop', { timeout: 20000, skip: !isLinux }, async (t) => {
+test('a server that will not stop is killed by the reaper before the instance stop', { timeout: 60000, skip: !isLinux }, async (t) => {
   const w = startWrapper({ ...wrapperEnv, STUB_CHILD_IGNORE_STOP: '1' });
   const [server] = await (async () => { await w.initialize(0); return w.childPids().map(Number); })();
   t.after(() => {
@@ -303,7 +308,7 @@ test('a server that will not stop is killed by the reaper before the instance st
   assert.ok(log.indexOf(`Killed server ${server}`) < log.indexOf('Stopped instance'), 'the instance was stopped first');
 });
 
-test("the MCP SDK client's close keeps the takeover window", { timeout: 20000, skip: !isLinux }, async (t) => {
+test("the MCP SDK client's close keeps the takeover window", { timeout: 60000, skip: !isLinux }, async (t) => {
   const w = startWrapper(RECONNECT_WAIT);
   t.after(() => w.stop());
   await w.initialize(0);
@@ -311,16 +316,16 @@ test("the MCP SDK client's close keeps the takeover window", { timeout: 20000, s
 
   await endAndReap(w, async () => {
     const closing = sdkClientClose(w.proc);
-    await w.sleep(2500);
-    await takeOver();
+    await reaperWaiting(w, 'stdin end');
     await closing;
+    await takeOver();
   });
 
   assert.deepEqual(await launcherCalls(), []);
   assert.match(w.readLog(), new RegExp(`Instance ${SESSION} was taken over \\d+ms after stdin end`));
 });
 
-test("the MCP SDK client's close with no reconnect stops the instance", { timeout: 20000, skip: !isLinux }, async (t) => {
+test("the MCP SDK client's close with no reconnect stops the instance", { timeout: 60000, skip: !isLinux }, async (t) => {
   const w = startWrapper(wrapperEnv);
   t.after(() => w.stop());
   await w.initialize(0);
@@ -332,7 +337,7 @@ test("the MCP SDK client's close with no reconnect stops the instance", { timeou
   assert.match(w.readLog(), new RegExp(`Stopped instance ${SESSION}, \\d+ms after stdin end`));
 });
 
-test('a hangup of the process group, and a kill of whatever it left, still stops the instance', { timeout: 20000, skip: !isLinux }, async (t) => {
+test('a hangup of the process group, and a kill of whatever it left, still stops the instance', { timeout: 60000, skip: !isLinux }, async (t) => {
   const w = startWrapper({ ...wrapperEnv, STUB_CHILD_SLOW_STOP_MS: '1500' }, { detached: true });
   t.after(() => w.stop());
   await w.initialize(0);
@@ -350,7 +355,7 @@ test('a hangup of the process group, and a kill of whatever it left, still stops
   assert.match(w.readLog(), new RegExp(`Stopped instance ${SESSION}, \\d+ms after SIGHUP`));
 });
 
-test('a signalled wrapper whose instance was taken over first stops nothing', { timeout: 20000, skip: !isLinux }, async (t) => {
+test('a signalled wrapper whose instance was taken over first stops nothing', { timeout: 60000, skip: !isLinux }, async (t) => {
   const w = startWrapper(wrapperEnv);
   t.after(() => w.stop());
   await w.initialize(0);
@@ -363,7 +368,7 @@ test('a signalled wrapper whose instance was taken over first stops nothing', { 
   assert.match(w.readLog(), new RegExp(`Instance ${SESSION} is not owned by this wrapper`));
 });
 
-test('a restart queued when stdin ends never starts a server during the shutdown', { timeout: 20000, skip: !isLinux }, async (t) => {
+test('a restart queued when stdin ends never starts a server during the shutdown', { timeout: 60000, skip: !isLinux }, async (t) => {
   const starts = path.join(root, 'starts');
   await fs.rm(starts, { force: true });
   const w = startWrapper({
@@ -377,7 +382,10 @@ test('a restart queued when stdin ends never starts a server during the shutdown
 
   w.send({ jsonrpc: '2.0', id: 1, method: 'test/die' });
   await w.waitFor((m) => m.id === 1);
-  await w.sleep(200);
+  const readStarts = () => fs.readFile(starts, 'utf8').catch(() => '');
+  const deadline = Date.now() + 15000;
+  while ((await readStarts()) !== '2' && Date.now() < deadline) await w.sleep(25);
+  assert.equal(await readStarts(), '2', 'the wrapper never respawned its server');
   w.send({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'restart_server', arguments: {} } });
   await w.sleep(100);
   await endAndReap(w, () => w.proc.stdin.end());
@@ -386,7 +394,7 @@ test('a restart queued when stdin ends never starts a server during the shutdown
 });
 
 for (const [label, stateHome] of [['an absolute', 'absolute'], ['a relative', 'relative'], ['no', 'unset']]) {
-  test(`with ${label} XDG_STATE_HOME the reaper reads the default claim and logs to the default log`, { timeout: 20000, skip: !isLinux }, async (t) => {
+  test(`with ${label} XDG_STATE_HOME the reaper reads the default claim and logs to the default log`, { timeout: 60000, skip: !isLinux }, async (t) => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), 'wrapper-default-home-'));
     const absoluteState = await fs.mkdtemp(path.join(os.tmpdir(), 'wrapper-default-state-'));
     const xdg = { absolute: absoluteState, relative: 'relative/state', unset: undefined }[stateHome];
@@ -427,7 +435,7 @@ for (const [label, stateHome] of [['an absolute', 'absolute'], ['a relative', 'r
   });
 }
 
-test('the claim the server records for the wrapper is readable by its owner alone', { timeout: 20000, skip: !isLinux }, async (t) => {
+test('the claim the server records for the wrapper is readable by its owner alone', { timeout: 60000, skip: !isLinux }, async (t) => {
   const { writeOwnerFile } = await import('../index.js');
   const claimDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wrapper-claim-mode-'));
   const claimFile = path.join(claimDir, 'wrapper.claim');

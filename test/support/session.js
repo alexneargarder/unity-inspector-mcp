@@ -35,7 +35,6 @@ export const REMOTE_FILES_SCRATCH = path.join(TEST_RESULTS_SCRATCH, 'remote');
 process.env.UNITY_INSPECTOR_REMOTE_DIR = REMOTE_FILES_SCRATCH;
 export const LAUNCH_RECORDS_SCRATCH = path.join(TEST_RESULTS_SCRATCH, 'launches');
 process.env.UNITY_INSPECTOR_LAUNCHES_DIR = LAUNCH_RECORDS_SCRATCH;
-// A launch a test made would otherwise refuse the next test's launch that leaves its arguments out
 const { forgetLaunchRecords } = await import('../../lib/launch-record.js');
 beforeEach(() => {
   rmSync(LAUNCH_RECORDS_SCRATCH, { recursive: true, force: true });

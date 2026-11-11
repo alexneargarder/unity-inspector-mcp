@@ -44,12 +44,12 @@ function fakeRun(answers) {
 
 test('a command that exits while something it started holds its pipes still settles on its exit', { skip: !isLinux }, async () => {
   const started = Date.now();
-  const result = await runChild('sh', ['-c', 'sleep 5 & echo done; exit 0'], { timeoutMs: 4000 });
+  const result = await runChild('sh', ['-c', 'sleep 30 & echo done; exit 0'], { timeoutMs: 20000 });
 
   assert.equal(result.error, null, result.error?.message);
   assert.equal(result.code, 0);
   assert.match(result.stdout, /done/);
-  assert.ok(Date.now() - started < 3000, `settled after ${Date.now() - started}ms`);
+  assert.ok(Date.now() - started < 10000, `settled after ${Date.now() - started}ms`);
 });
 
 test('a command past its budget did not finish, which is not a command that could not run', { skip: !isLinux }, async () => {

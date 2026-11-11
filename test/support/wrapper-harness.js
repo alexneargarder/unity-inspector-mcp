@@ -13,9 +13,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const alive = (pid) => {
   try {
     process.kill(pid, 0);
-    return true;
   } catch {
     return false;
+  }
+  if (process.platform !== 'linux') return true;
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    return stat.slice(stat.lastIndexOf(')') + 2).split(' ')[0] !== 'Z';
+  } catch (err) {
+    return err.code !== 'ENOENT';
   }
 };
 
@@ -119,7 +125,7 @@ export function startWrapper(env = {}, { detached = false, script = WRAPPER_PATH
         method: 'initialize',
         params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1' } },
       });
-      const reply = await waitFor((m) => m.id === id);
+      const reply = await waitFor((m) => m.id === id, 30000);
       send({ jsonrpc: '2.0', method: 'notifications/initialized' });
       return reply;
     },

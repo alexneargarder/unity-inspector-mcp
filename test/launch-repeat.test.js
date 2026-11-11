@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
+import { setTimeout as delay } from 'timers/promises';
 
 import { fakeProcReader, recordingKill } from './support/fake-proc.js';
 import { fakeInspector, useStubLauncher } from './support/stub-launcher.js';
@@ -14,9 +15,14 @@ const scratch = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'launc
 const steamUp = path.join(scratch, 'steam-up');
 const steamCalls = path.join(scratch, 'steam-calls.log');
 const steamLauncher = path.join(scratch, 'steam-launcher.sh');
-// Listing the tools asks the launch command for its --help, which is no launch
 await fs.writeFile(steamLauncher, `case "$1" in --help|--args-help) exit 0;; esac\nprintf '%s\\n' "$*" >> '${steamCalls}'\n: > '${steamUp}'\n`);
 const STEAM_LAUNCH_CMD = `sh ${steamLauncher}`;
+const failingLauncher = path.join(scratch, 'failing-launcher.sh');
+await fs.writeFile(failingLauncher, `case "$1" in --help|--args-help) exit 0;; esac\nprintf '%s\\n' "$*" >> '${steamCalls}'\nexit 3\n`);
+const idleLauncher = path.join(scratch, 'idle-launcher.sh');
+await fs.writeFile(idleLauncher, `case "$1" in --help|--args-help) exit 0;; esac\nprintf '%s\\n' "$*" >> '${steamCalls}'\n`);
+const steamStop = path.join(scratch, 'steam-stop.sh');
+await fs.writeFile(steamStop, `rm -f '${steamUp}'\n`);
 
 const SESSION = 'repeat-session-7c2d';
 const instancesRoot = path.join(scratch, 'instances');
@@ -26,19 +32,27 @@ const instanceCalls = path.join(instancesRoot, 'calls.log');
 
 const { activeTarget, configureLaunchTiming, handleToolCall, resetTargetResolution, setLaunchResolver, unityClient } = await import('../index.js');
 const { LINUX_GAME_COMM, invalidateGameProcessScan, resetInstanceModeProbe, resolveLaunchCommand, setKillSignaller, setProcReader } = await import('../lib/game-process.js');
-const { forgetLaunchRecords, lastLaunch, launchRecordFile, pruneLaunchRecords } = await import('../lib/launch-record.js');
+const { forgetLaunchRecords, lastLaunch, launchRecordFile, pruneLaunchRecords, setLaunchRecordWriter } = await import('../lib/launch-record.js');
 
 const exists = (file) => fs.access(file).then(() => true, () => false);
 const STEAM_PID = '801';
 const INSTANCE_PID = '4242';
 
-async function instanceLaunches() {
+async function instanceActions() {
   const calls = (await fs.readFile(instanceCalls, 'utf8').catch(() => '')).split('\n');
-  return calls.filter((line) => line.startsWith(`instance ${SESSION} launch`)).length;
+  return calls.filter((line) => line.startsWith(`instance ${SESSION} launch`) || line.startsWith(`instance ${SESSION} stop`));
 }
 
-// The user's game is up once its launcher has run; the instance's once a launch since it last died has
+async function instanceLaunches() {
+  return (await instanceActions()).filter((line) => line.startsWith(`instance ${SESSION} launch`)).length;
+}
+
 let instanceDiedAt = 0;
+async function instanceUp() {
+  const actions = await instanceActions();
+  return (await instanceLaunches()) > instanceDiedAt && actions.at(-1).startsWith(`instance ${SESSION} launch`);
+}
+
 function procTable() {
   const base = fakeProcReader({
     [STEAM_PID]: { comm: LINUX_GAME_COMM, cwd: '/home/player/Broforce', startTicks: 200 },
@@ -49,13 +63,12 @@ function procTable() {
     async pids() {
       return [
         ...((await exists(steamUp)) ? [STEAM_PID] : []),
-        ...((await instanceLaunches()) > instanceDiedAt ? [INSTANCE_PID] : []),
+        ...((await instanceUp()) ? [INSTANCE_PID] : []),
       ];
     },
   };
 }
 
-// A ping racing the launcher's start waits for it
 const steamGame = await startStubServer(async (request, socket) => {
   for (let waited = 0; !(await exists(steamUp)) && waited < 300; waited += 25) await new Promise((r) => setTimeout(r, 25));
   if (await exists(steamUp)) reply(socket, request.id, {});
@@ -75,6 +88,7 @@ test.after(async () => {
   setLaunchResolver();
   process.env.BROFORCE_LAUNCH_CMD = NO_OP_LAUNCH_CMD;
   process.env.UNITY_INSPECTOR_PORT = NO_LISTENER_PORT;
+  delete process.env.BROFORCE_STOP_CMD;
   await steamGame.close();
   await remoteGame.close();
   await inspector.close();
@@ -106,7 +120,10 @@ beforeEach(async () => {
   process.env.BROFORCE_LAUNCH_CMD = STEAM_LAUNCH_CMD;
   process.env.UNITY_INSPECTOR_PORT = String(steamGame.port);
   process.env.UNITY_INSPECTOR_TOKEN_FILE = NO_TOKEN_FILE;
+  process.env.BROFORCE_STOP_CMD = `sh ${steamStop}`;
   delete process.env.UNITY_INSPECTOR_HOST;
+  steamGame.hello = 'accept';
+  inspector.hello = 'accept';
 });
 
 async function withInstance() {
@@ -133,6 +150,13 @@ function payload(response) {
 async function launched(args) {
   const body = payload(await launch(args));
   assert.equal(body.success, true, body.message);
+  return body;
+}
+
+async function restarted(args) {
+  invalidateGameProcessScan();
+  const body = await launched(args);
+  assert.match(body.message, /restarted and ready/);
   return body;
 }
 
@@ -206,7 +230,6 @@ test('launchArgs and vanilla left out together are named together', { timeout: 3
 
   const text = refused(await launch({}));
   assert.match(text, /carried launchArgs: "-x" and vanilla: true, and this call gives no launchArgs or vanilla\. Pass launchArgs: "-x", vanilla: true to launch it the same way, or launchArgs: "" and vanilla: false to launch with neither\./);
-  // --vanilla in launchArgs states vanilla as fully as vanilla: true does
   await launched({ launchArgs: '--vanilla -x' });
   assert.deepEqual(await steamLaunches(), ['--vanilla -x', '--vanilla -x']);
 });
@@ -369,4 +392,200 @@ test('a remote target is untouched by the records: declared, or the user\'s game
 
   assert.deepEqual(await steamLaunches(), ['--some-flag']);
   assert.deepEqual(await lastLaunch('steam'), { launchArgs: '--some-flag', vanilla: false });
+});
+
+test('a launch whose launcher exits non-zero after the spawn still leaves its record, and the next bare launch is refused', { timeout: 30000, skip: !isLinux }, async () => {
+  process.env.BROFORCE_LAUNCH_CMD = `sh ${failingLauncher}`;
+  const failed = payload(await launch({ launchArgs: '--some-flag' }));
+  assert.equal(failed.state, 'launcher-failed', failed.message);
+  assert.deepEqual(await lastLaunch('steam'), { launchArgs: '--some-flag', vanilla: false });
+
+  refused(await launch({}));
+  assert.deepEqual(await steamLaunches(), ['--some-flag']);
+});
+
+test('a call cancelled after its spawn still leaves its record, and the next bare launch is refused', { timeout: 30000, skip: !isLinux }, async () => {
+  process.env.BROFORCE_LAUNCH_CMD = `sh ${idleLauncher}`;
+  const controller = new AbortController();
+  const launching = handleToolCall({ params: { name: 'launch_game', arguments: { launchArgs: '--some-flag' } } }, { signal: controller.signal });
+  for (let waited = 0; (await steamLaunches()).length === 0 && waited < 15000; waited += 25) await delay(25);
+  controller.abort();
+  const cancelled = await launching;
+  assert.equal(cancelled.isError, true);
+  assert.match(textOf(cancelled), /cancelled/);
+
+  refused(await launch({}));
+  assert.deepEqual(await steamLaunches(), ['--some-flag']);
+});
+
+test('the record file is on disk when the launch_game call returns', { timeout: 30000, skip: !isLinux }, async (t) => {
+  t.after(() => setLaunchRecordWriter());
+  setLaunchRecordWriter(async (file, text) => {
+    await delay(2000);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, text);
+  });
+
+  await launched({ launchArgs: '--some-flag' });
+  assert.deepEqual(JSON.parse(await fs.readFile(launchRecordFile(), 'utf8')).steam, { launchArgs: '--some-flag', vanilla: false });
+});
+
+test('launchArgs: null is absent, and is refused after a launch with launchArgs', { timeout: 30000, skip: !isLinux }, async () => {
+  await launched({ launchArgs: '--some-flag' });
+  await steamGameDies();
+
+  assert.match(refused(await launch({ launchArgs: null })), /this call gives no launchArgs\./);
+  assert.deepEqual(await steamLaunches(), ['--some-flag']);
+});
+
+test('a whitespace-only launchArgs launches plain and records none', { timeout: 30000, skip: !isLinux }, async () => {
+  await launched({ launchArgs: ' \t ' });
+  assert.deepEqual(await lastLaunch('steam'), { launchArgs: null, vanilla: false });
+  await steamGameDies();
+
+  await launched({});
+  assert.deepEqual(await steamLaunches(), ['', '']);
+});
+
+test('a records folder that cannot be written leaves the launch going, and the rule still holds in this process', { timeout: 30000, skip: !isLinux }, async (t) => {
+  const blocker = path.join(scratch, 'not-a-folder');
+  await fs.writeFile(blocker, '');
+  process.env.UNITY_INSPECTOR_LAUNCHES_DIR = path.join(blocker, 'launches');
+  t.after(() => {
+    process.env.UNITY_INSPECTOR_LAUNCHES_DIR = LAUNCH_RECORDS_SCRATCH;
+    forgetLaunchRecords();
+  });
+
+  await launched({ launchArgs: '--some-flag' });
+  assert.equal(await exists(launchRecordFile()), false);
+  await steamGameDies();
+
+  refused(await launch({}));
+  assert.deepEqual(await steamLaunches(), ['--some-flag']);
+});
+
+async function followsVanillaAdvice(first, advice, follow) {
+  const started = await launched(first);
+  assert.equal(started.vanilla, true);
+  assert.ok(started.message.includes(`Relaunch it with ${advice} to drive it.`), started.message);
+  const ping = await call('ping');
+  assert.equal(ping.isError, true);
+  assert.ok(textOf(ping).includes(`Relaunch it with ${advice} to drive it.`), textOf(ping));
+  const again = payload(await launch(first.steam ? { steam: true } : {}));
+  assert.equal(again.alreadyRunning, true);
+  assert.ok(again.message.includes(`Relaunch it with ${advice} to drive it.`), again.message);
+
+  assert.equal((await restarted(follow)).vanilla, undefined);
+}
+
+test('the vanilla advice names a relaunch with mods the rule accepts', { timeout: 30000, skip: !isLinux }, async () => {
+  await followsVanillaAdvice({ vanilla: true }, 'launch_game { restart: true, vanilla: false }', { restart: true, vanilla: false });
+  assert.deepEqual(await steamLaunches(), ['--vanilla', '']);
+  assert.deepEqual(await lastLaunch('steam'), { launchArgs: null, vanilla: false });
+});
+
+test('the vanilla advice after a launch with launchArgs repeats them', { timeout: 30000, skip: !isLinux }, async () => {
+  await followsVanillaAdvice(
+    { vanilla: true, launchArgs: '--some-flag' },
+    'launch_game { restart: true, launchArgs: "--some-flag", vanilla: false }',
+    { restart: true, launchArgs: '--some-flag', vanilla: false },
+  );
+  assert.deepEqual(await steamLaunches(), ['--vanilla --some-flag', '--some-flag']);
+});
+
+test('the vanilla advice for --vanilla in launchArgs says to take it out', { timeout: 30000, skip: !isLinux }, async () => {
+  await followsVanillaAdvice(
+    { launchArgs: '--vanilla --some-flag' },
+    'launch_game { restart: true, launchArgs: "--vanilla --some-flag", vanilla: false } (with --vanilla taken out of launchArgs)',
+    { restart: true, launchArgs: '--some-flag', vanilla: false },
+  );
+  assert.deepEqual(await steamLaunches(), ['--vanilla --some-flag', '--some-flag']);
+});
+
+test('in a session with an instance the vanilla advice for the user\'s game leads with steam: true, and the instance\'s does not', { timeout: 60000, skip: !isLinux }, async () => {
+  await withInstance();
+
+  await followsVanillaAdvice({ steam: true, vanilla: true }, 'launch_game { steam: true, restart: true, vanilla: false }', { steam: true, restart: true, vanilla: false });
+  assert.equal(activeTarget(), 'steam');
+  assert.deepEqual(await steamLaunches(), ['--vanilla', '']);
+  assert.equal(await instanceLaunches(), 0);
+
+  await followsVanillaAdvice({ vanilla: true }, 'launch_game { restart: true, vanilla: false }', { restart: true, vanilla: false });
+  assert.equal(activeTarget(), 'instance');
+  assert.deepEqual(await instanceActions(), [`instance ${SESSION} launch --vanilla`, `instance ${SESSION} stop`, `instance ${SESSION} launch`]);
+  assert.deepEqual(await steamLaunches(), ['--vanilla', '']);
+});
+
+test('the already-running reply names a relaunch with mods the rule accepts, and reads as before after a plain launch', { timeout: 30000, skip: !isLinux }, async () => {
+  await launched({ launchArgs: '--some-flag' });
+  const running = await launched({});
+  assert.equal(running.alreadyRunning, true);
+  assert.equal(running.message, 'the user\'s game is already running. Use restart: true, launchArgs: "--some-flag" to stop and relaunch.');
+  await restarted({ restart: true, launchArgs: '--some-flag' });
+
+  await restarted({ restart: true, launchArgs: '' });
+  const plain = await launched({});
+  assert.equal(plain.message, 'the user\'s game is already running. Use restart: true to stop and relaunch.');
+  await restarted({ restart: true });
+  assert.deepEqual(await steamLaunches(), ['--some-flag', '--some-flag', '', '']);
+});
+
+test('the already-running reply after a vanilla launch, its game since replaced by a modded one, names a relaunch with mods', { timeout: 30000, skip: !isLinux }, async () => {
+  await launched({ launchArgs: '--vanilla --some-flag' });
+  resetTargetResolution();
+  invalidateGameProcessScan();
+  const running = await launched({});
+  assert.equal(running.alreadyRunning, true);
+  assert.equal(running.message, 'the user\'s game is already running. Use restart: true, launchArgs: "--vanilla --some-flag", vanilla: false (with --vanilla taken out of launchArgs) to stop and relaunch.');
+
+  const relaunched = await restarted({ restart: true, launchArgs: '--some-flag', vanilla: false });
+  assert.equal(relaunched.vanilla, undefined);
+  assert.deepEqual(await steamLaunches(), ['--vanilla --some-flag', '--some-flag']);
+  assert.deepEqual(await lastLaunch('steam'), { launchArgs: '--some-flag', vanilla: false });
+});
+
+async function silentGameAdvice(game, args = {}) {
+  game.hello = 'close';
+  unityClient.disconnect();
+  invalidateGameProcessScan();
+  const silent = payload(await launch(args));
+  game.hello = 'accept';
+  assert.equal(silent.alreadyRunning, true, silent.message);
+  return silent.message;
+}
+
+test('the not-answering reply names a relaunch the rule accepts, and reads as before after a plain launch', { timeout: 30000, skip: !isLinux }, async () => {
+  await launched({ launchArgs: '--some-flag' });
+  const advice = await silentGameAdvice(steamGame);
+  assert.match(advice, /not responding on TCP/);
+  assert.ok(advice.endsWith('Use restart: true, launchArgs: "--some-flag" to stop and relaunch.'), advice);
+  await restarted({ restart: true, launchArgs: '--some-flag' });
+
+  await restarted({ restart: true, launchArgs: '' });
+  const plain = await silentGameAdvice(steamGame);
+  assert.ok(plain.endsWith('The mod may have failed to load. Use restart: true to stop and relaunch.'), plain);
+  await restarted({ restart: true });
+  assert.deepEqual(await steamLaunches(), ['--some-flag', '--some-flag', '', '']);
+});
+
+test('the instance\'s live-pidfile reply names a relaunch the rule accepts, and reads as before after a plain launch', { timeout: 60000, skip: !isLinux }, async () => {
+  await withInstance();
+  await launched({ launchArgs: '--window 800x450' });
+  const advice = await silentGameAdvice(inspector);
+  assert.match(advice, new RegExp(`^Instance ${SESSION} has a game running \\(pid ${INSTANCE_PID}\\)`));
+  assert.ok(advice.endsWith('Use restart: true, launchArgs: "--window 800x450" to stop and relaunch it.'), advice);
+  await restarted({ restart: true, launchArgs: '--window 800x450' });
+
+  await restarted({ restart: true, launchArgs: '' });
+  const plain = await silentGameAdvice(inspector);
+  assert.ok(plain.endsWith('Its mod may have failed to load. Use restart: true to stop and relaunch it.'), plain);
+  await restarted({ restart: true });
+
+  const launches = (await instanceActions()).filter((line) => line.includes(' launch'));
+  assert.deepEqual(launches, [
+    `instance ${SESSION} launch --window 800x450`,
+    `instance ${SESSION} launch --window 800x450`,
+    `instance ${SESSION} launch`,
+    `instance ${SESSION} launch`,
+  ]);
 });

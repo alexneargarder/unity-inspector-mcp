@@ -20,7 +20,7 @@ import { NO_INSTANCE_REASONS, instanceConfig, launcherConfig, steamConfig, withR
 import { LAUNCH_REFUSED, preflightSteamLaunch, prepareSteamLaunch, r2modmanProfileRoots, withdrawWrapperArgs } from './lib/steam-launch.js';
 import { tokenizeCommand } from './lib/command-line.js';
 import { backdropColour, screenshotReply } from './lib/backdrop.js';
-import { CAPTURE_FILE, CAPTURE_STATES_DIR, DEFAULT_SETTLE_MS, DEFAULT_STATES_PATH, DEFAULT_SWAP_SETTLE_MS, DEFAULT_SWAP_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, REPORT_FILE, STATES_COPY_NAME, claimLeaseMs, fetchLeaseMs, formatLogTail, isAbsoluteGamePath, outDirProblem, parseLevel, releaseClaim, runCapture, teardownGame } from './lib/animation-capture.js';
+import { CAPTURE_FILE, CAPTURE_STATES_DIR, DEFAULT_SETTLE_MS, DEFAULT_STATES_PATH, DEFAULT_SWAP_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, REPORT_FILE, STATES_COPY_NAME, claimLeaseMs, fetchLeaseMs, formatLogTail, isAbsoluteGamePath, outDirProblem, parseLevel, releaseClaim, runCapture, teardownGame } from './lib/animation-capture.js';
 import {
   argumentTypeProblems,
   buildScriptCatalog,
@@ -220,9 +220,25 @@ async function launchedWithoutMods(config) {
 
 const capitalized = (text) => text.charAt(0).toUpperCase() + text.slice(1);
 
+function relaunchAdvice(last, { call = false, steamLead = false } = {}) {
+  const fields = [...(call && steamLead ? ['steam: true'] : []), 'restart: true'];
+  let flagInArgs = false;
+  if (last?.launchArgs != null) {
+    fields.push(`launchArgs: ${JSON.stringify(last.launchArgs)}`);
+    try {
+      flagInArgs = composeExtraLaunchArgs({ launchArgs: last.launchArgs }).vanilla;
+    } catch {}
+  }
+  if (last?.vanilla) fields.push('vanilla: false');
+  return (call ? `launch_game { ${fields.join(', ')} }` : fields.join(', ')) +
+    (flagInArgs ? ' (with --vanilla taken out of launchArgs)' : '');
+}
+
 function vanillaMessage(config) {
+  const game = vanillaGames.get(targetOf(config));
+  const relaunch = relaunchAdvice(game?.launch ?? null, { call: true, steamLead: game?.steamLead });
   return `${capitalized(targetDescription(targetOf(config)))} was launched without mods (vanilla), so no ` +
-    `inspector runs in it. Relaunch it with launch_game { restart: true } to drive it.`;
+    `inspector runs in it. Relaunch it with ${relaunch} to drive it.`;
 }
 
 // The waits a unit test cannot afford to sit through in real seconds
@@ -242,6 +258,7 @@ const launchTiming = {
   portWaitMs: 10000,
   portReservationMs: 180000,
   instanceBudgetMs: INSTANCE_LAUNCH_POLL_TIMEOUT_MS,
+  argsHelpGraceMs: 1500,
 };
 
 export function configureLaunchTiming(overrides = {}) {
@@ -888,7 +905,6 @@ export function launchCommandTokens(env = process.env) {
   }
 }
 
-const ARGS_HELP_GRACE_MS = 1500;
 const UNSETTLED = Symbol('still being asked');
 
 const argsHelpCaptures = new Map();
@@ -1085,7 +1101,7 @@ function scheduleTailFollowUp(pending) {
 export async function launchArgumentHelp() {
   const firstListing = renderedTail === null;
   const { tail, pending } = await composeTail({
-    deadline: Date.now() + (firstListing ? ARGS_HELP_GRACE_MS : 0),
+    deadline: Date.now() + (firstListing ? launchTiming.argsHelpGraceMs : 0),
     refresh: true,
     startRetry: true,
   });
@@ -2054,7 +2070,6 @@ function toolDefinitions({ launchHelp = "" } = {}) {
               description: "Layered state lists, relative to lib/animation-capture/states/ (default: base-states.json)",
             },
             settle: { type: "number", minimum: 0, description: "Seconds after the level's player spawns (default: 3)" },
-            swapSettle: { type: "number", minimum: 0, description: "Seconds after the swap lands (default: 2)" },
             swapTimeout: { type: "number", minimum: 1, description: "Seconds to wait for the swap (default: 15)" },
             timeout: { type: "number", minimum: 1, description: "Seconds per wait, and per state swept (default: 60)" },
             player: { type: "integer", minimum: 0, maximum: 3 },
@@ -2133,8 +2148,9 @@ export function resolvePollBudget(timeoutMs, intervalMs) {
 export async function instanceLaunchRefusal(config = activeConfig(), { reader, fileSystem } = {}) {
   const pid = await readValidatedPidfile(config, { reader, fileSystem, prune: true });
   if (pid === null) return null;
+  const relaunch = relaunchAdvice(await lastLaunch(targetOf(config)));
   return `Instance ${config.id} has a game running (pid ${pid}) that is not answering the inspector. ` +
-    `Its mod may have failed to load. Use restart: true to stop and relaunch it.`;
+    `Its mod may have failed to load. Use ${relaunch} to stop and relaunch it.`;
 }
 
 // The launch command runs to completion and only its exit status carries a refusal the poll cannot see
@@ -2735,7 +2751,7 @@ async function launchGame(args, signal = null) {
   try {
     await setTarget(nextTarget);
     if (config.isAgentInstance) release = await acquireInstanceOp();
-    return await launchOnTarget({ args, signal, config, nextTarget, launch, requested, vanilla, withTargetNotes, beforeSwitch, releaseInstance });
+    return await launchOnTarget({ args, signal, config, nextTarget, hasInstance, launch, requested, vanilla, withTargetNotes, beforeSwitch, releaseInstance });
   } finally {
     await withdrawWrapperArgs(launch.prepare);
     releaseInstance();
@@ -2756,7 +2772,7 @@ function likelyCauses(launch, state) {
   return named.length > 0 ? ` Likely causes: ${named.join('; ')}.` : '';
 }
 
-async function launchOnTarget({ args, signal, config, nextTarget, launch, requested, vanilla, withTargetNotes, beforeSwitch, releaseInstance }) {
+async function launchOnTarget({ args, signal, config, nextTarget, hasInstance, launch, requested, vanilla, withTargetNotes, beforeSwitch, releaseInstance }) {
   // On an instance the cwd rule decides whether a game of ours is running: a ping answered by
   // somebody else's game on a port we no longer own must never refuse this launch
   const ownsGame = config.isAgentInstance ? (await isGameRunning(config)) === true : true;
@@ -2780,7 +2796,7 @@ async function launchOnTarget({ args, signal, config, nextTarget, launch, reques
       success: refusal === null,
       alreadyRunning: true,
       ...(refusal === null
-        ? { message: `${targetDescription(nextTarget)} is already running. Use restart: true to stop and relaunch.` }
+        ? { message: `${targetDescription(nextTarget)} is already running. Use ${relaunchAdvice(await lastLaunch(nextTarget))} to stop and relaunch.` }
         : {
             state: "handshake-refused",
             message: `${targetDescription(nextTarget)} is already running, but its inspector refused this server's connection: ${refusal}`,
@@ -2812,7 +2828,7 @@ async function launchOnTarget({ args, signal, config, nextTarget, launch, reques
       alreadyRunning: true,
       message:
         "A Broforce process is running but the Unity Inspector Mod is not responding on TCP. " +
-        "The mod may have failed to load. Use restart: true to stop and relaunch.",
+        `The mod may have failed to load. Use ${relaunchAdvice(await lastLaunch(nextTarget))} to stop and relaunch.`,
     });
   }
 
@@ -2920,8 +2936,8 @@ async function launchOnTarget({ args, signal, config, nextTarget, launch, reques
   const ignoredArgsNote = noteParts.length > 0 ? noteParts.join(' ') : null;
 
   let watcher = launcherExitWatcher(await spawnLauncher());
-  // Not awaited: the launcher's exit and a brand-new id's creation claim are watched from here on
-  recordLaunch(nextTarget, carriedByLaunch(launch, requested, args.launchArgs));
+  const carried = carriedByLaunch(launch, requested, args.launchArgs);
+  recordLaunch(nextTarget, carried);
   // The port this launch's launcher allocated, which the wait may use before its game is up
   let launchedPort = null;
   let launchedPortUntil = -Infinity;
@@ -3024,7 +3040,10 @@ async function launchOnTarget({ args, signal, config, nextTarget, launch, reques
     }
   }
 
-  if (vanilla) return vanillaOutcome({ signal, config, nextTarget, launch, watcher, launcherExited, launcherStderr, spawnedAt, ignoredArgsNote, withTargetNotes });
+  if (vanilla) {
+    const steamLead = nextTarget === 'steam' && hasInstance;
+    return vanillaOutcome({ signal, config, nextTarget, launch, carried, steamLead, watcher, launcherExited, launcherStderr, spawnedAt, ignoredArgsNote, withTargetNotes });
+  }
 
   const poll = await pollUntilResponsive(
     config.isAgentInstance
@@ -3073,10 +3092,11 @@ async function launchOnTarget({ args, signal, config, nextTarget, launch, reques
   });
 }
 
-async function vanillaOutcome({ signal, config, nextTarget, launch, watcher, launcherExited, launcherStderr, spawnedAt, ignoredArgsNote, withTargetNotes }) {
+async function vanillaOutcome({ signal, config, nextTarget, launch, carried, steamLead, watcher, launcherExited, launcherStderr, spawnedAt, ignoredArgsNote, withTargetNotes }) {
   const label = config.isAgentInstance ? `instance ${config.id}` : 'Broforce';
   const noInspector = `Started ${label} without mods, so the Unity Inspector Mod is not loaded and nothing will ` +
-    `answer on the inspector port. Relaunch without vanilla to drive it.`;
+    `answer on the inspector port. Relaunch it with ` +
+    `${relaunchAdvice(carried, { call: true, steamLead })} to drive it.`;
   const note = ignoredArgsNote ? { note: ignoredArgsNote } : {};
 
   // An instance has already been waited out under its own budget; waiting again would only
@@ -3126,7 +3146,7 @@ async function vanillaOutcome({ signal, config, nextTarget, launch, watcher, lau
 
   if (started === 'running') {
     invalidateGameProcessScan();
-    vanillaGames.set(nextTarget, { startMs: await gameStartTime(config) });
+    vanillaGames.set(nextTarget, { startMs: await gameStartTime(config), launch: carried, steamLead });
   }
   return withTargetNotes({
     success: true,
@@ -3352,10 +3372,9 @@ async function captureOptions(args) {
     : captureNumber('player', args.player, { min: 0, integer: true });
   if (player > 3) throw new Error(`player must be an integer >= 0 and <= 3, got ${JSON.stringify(args.player)}`);
 
-  // Both are checked whether or not the wait they follow was asked for: an argument silently thrown
-  // away is worse than one reported back
+  // Checked whether or not the wait it follows was asked for: an argument silently thrown away is worse
+  // than one reported back
   const settleMs = captureMs('settle', args.settle, DEFAULT_SETTLE_MS);
-  const swapSettleMs = captureMs('swapSettle', args.swapSettle, DEFAULT_SWAP_SETTLE_MS);
 
   const box = args.box === undefined || args.box === null ? null : captureNumber('box', args.box, { min: 1 });
   if (box !== null && box > CAPTURE_MAX_BOX) throw new Error(`box must be a number >= 1 and <= ${CAPTURE_MAX_BOX}, got ${JSON.stringify(args.box)}`);
@@ -3367,9 +3386,8 @@ async function captureOptions(args) {
     level,
     bro,
     statesPaths,
-    // Only meaningful after the wait each one follows, so an unasked-for one costs nothing
+    // Only meaningful after the wait it follows, so an unasked-for one costs nothing
     settleMs: level ? settleMs : 0,
-    swapSettleMs: bro ? swapSettleMs : 0,
     swapTimeoutMs: captureMs('swapTimeout', args.swapTimeout, DEFAULT_SWAP_TIMEOUT_MS, { min: 1 }),
     timeoutMs: captureMs('timeout', args.timeout, DEFAULT_TIMEOUT_MS, { min: 1 }),
     player,

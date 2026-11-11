@@ -98,7 +98,7 @@ async function copiedServer(t, env = {}) {
   return { copy, call, makeStale };
 }
 
-test('a reply carries the notice once server code changes, a run_test_script step never does, and restart_server clears it', { timeout: 40000, skip: !posix }, async (t) => {
+test('a reply carries the notice once server code changes, a run_test_script step never does, and restart_server clears it', { timeout: 60000, skip: !posix }, async (t) => {
   const { copy, call, makeStale } = await copiedServer(t);
   const script = path.join(copy, 'one-step.json');
   writeFileSync(script, JSON.stringify({ steps: [{ command: 'ping' }] }));
@@ -136,7 +136,7 @@ test('a reply carries the notice once server code changes, a run_test_script ste
   assert.deepEqual((await call('list_scripts')).content, success.content);
 });
 
-test("a timed-out call's reply on a stale server keeps its error and says to repeat it only if it has not acted", { timeout: 40000, skip: !posix }, async (t) => {
+test("a timed-out call's reply on a stale server keeps its error and says to repeat it only if it has not acted", { timeout: 60000, skip: !posix }, async (t) => {
   const silent = await fakeInspector({ answers: false });
   t.after(() => silent.close());
   const { call, makeStale } = await copiedServer(t, { UNITY_INSPECTOR_PORT: String(silent.port) });

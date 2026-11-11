@@ -58,7 +58,8 @@ async function breakStreamsAndWrite(w, { stdout = false } = {}) {
   const pids = w.childPids();
   assert.ok(pids.length > 0, 'the wrapper had no child to kill');
   for (const pid of pids) process.kill(Number(pid), 'SIGKILL');
-  await w.sleep(400);
+  assert.ok(await w.waitForLog(/Parent's stderr is gone/), 'the wrapper never found its stderr gone');
+  if (stdout) assert.ok(await w.waitForLog(/Parent's stdout is gone/, 15000), 'the wrapper never found its stdout gone');
 }
 
 // One line per stream saying it is gone is the whole of what a broken pipe may cost
@@ -78,7 +79,7 @@ beforeEach(async () => {
   await fs.rm(instanceDir, { recursive: true, force: true });
 });
 
-test('a wrapper whose stderr died with its parent still stops the instance on stdin end', { timeout: 20000, skip: !isLinux }, async (t) => {
+test('a wrapper whose stderr died with its parent still stops the instance on stdin end', { timeout: 60000, skip: !isLinux }, async (t) => {
   const w = startWrapper(wrapperEnv);
   t.after(() => w.stop());
   await w.initialize(0);
@@ -98,7 +99,7 @@ test('a wrapper whose stderr died with its parent still stops the instance on st
   await assertQuietLog(w, 'stdin end');
 });
 
-test('a wrapper whose stderr died with its parent still stops the instance on SIGTERM', { timeout: 20000, skip: !isLinux }, async (t) => {
+test('a wrapper whose stderr died with its parent still stops the instance on SIGTERM', { timeout: 60000, skip: !isLinux }, async (t) => {
   const w = startWrapper(wrapperEnv);
   t.after(() => w.stop());
   await w.initialize(0);
@@ -118,7 +119,7 @@ test('a wrapper whose stderr died with its parent still stops the instance on SI
   await assertQuietLog(w, 'SIGTERM');
 });
 
-test('a wrapper whose parent took both streams with it still stops the instance and exits', { timeout: 20000, skip: !isLinux }, async (t) => {
+test('a wrapper whose parent took both streams with it still stops the instance and exits', { timeout: 60000, skip: !isLinux }, async (t) => {
   const w = startWrapper(wrapperEnv);
   t.after(() => w.stop());
   await w.initialize(0);

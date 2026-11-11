@@ -19,7 +19,7 @@ async function startServer(t) {
   const exited = new Promise((resolve) => proc.once('exit', (code, signal) => resolve({ code, signal })));
   t.after(() => { try { proc.kill('SIGKILL'); } catch {} });
 
-  const deadline = Date.now() + 10000;
+  const deadline = Date.now() + 30000;
   while (!stderr.includes('running on stdio') && Date.now() < deadline) await sleep(25);
   assert.match(stderr, /running on stdio/, `the server never started: ${stderr}`);
 

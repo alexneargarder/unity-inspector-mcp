@@ -584,7 +584,7 @@ public class ScenarioLevelRunner : MonoBehaviour
     private const float PatrolSpanPx = 48f;
     private const int MaxEvents = 200;
 
-    private static readonly string[] StuckSteps = { "repath-further", "jump", "wall-climb", "reverse", "dig", "teleport" };
+    private static readonly string[] StuckSteps = { "repath-further", "jump", "wall-climb", "reverse", "melee", "dig", "teleport" };
     private static readonly string[] ActionNames = { "fire", "jump", "special", "melee" };
     private const int FireSlot = 0, SpecialSlot = 2, MeleeSlot = 3;
     private static readonly FieldInfo UsingSpecialField = AccessTools.Field(typeof(TestVanDammeAnim), "usingSpecial");
@@ -770,6 +770,8 @@ public class ScenarioLevelRunner : MonoBehaviour
         public float StepStart;
         public int StuckIndex = -1;
         public Vector2 StuckPos;
+        public Vector2 StuckGoal;
+        public float StuckGoalDist;
         public int ResumeLevel;
         public int ResumeIndex = -1;
         public float ResumeAt = -100f;
@@ -1145,18 +1147,18 @@ public class ScenarioLevelRunner : MonoBehaviour
         Vector2 goal = Goal(body, d == driven[0]);
         int dir = Mathf.Abs(goal.x - body.X) < 6f ? 0 : (goal.x > body.X ? 1 : -1);
 
-        if (!float.IsNaN(d.LoopX) && Mathf.Abs(body.X - d.LoopX) < 48f)
+        if (mech == null && !float.IsNaN(d.LoopX) && Mathf.Abs(bro.X - d.LoopX) < 48f)
         {
             float loopX = d.LoopX;
             d.LoopX = float.NaN;
             d.LastDeathX = float.NaN;
             d.DeathRepeats = 0;
-            Teleport(d, body, Map.GetCollumn(loopX), goal.x >= loopX ? 1 : -1, 16, d.LoopStuckIndex);
+            Teleport(d, bro, goal, Map.GetCollumn(loopX), goal.x >= loopX ? 1 : -1, 16, d.LoopStuckIndex);
             ApplyPulses(d, want);
             return;
         }
 
-        if (!StuckStep(d, body, goal, dir, want))
+        if (!StuckStep(d, body, mech != null, goal, dir, want))
         {
             Move(d, body, goal, dir, want);
             UseMechanicOnArrival(d, body, want);
@@ -1425,6 +1427,11 @@ public class ScenarioLevelRunner : MonoBehaviour
         return r >= 0 && Map.IsBlockSolid(c, r);
     }
 
+    private static bool Standable(int c, int r)
+    {
+        return r >= 1 && r < Map.Height - 1 && !Map.IsBlockSolid(c, r) && !Map.IsBlockSolid(c, r + 1) && Floor(c, r - 1);
+    }
+
     private static int StandableRow(int c, int row)
     {
         for (int i = 0; i <= 16; i++)
@@ -1447,7 +1454,7 @@ public class ScenarioLevelRunner : MonoBehaviour
         if (bro.IsOnGround() && (wall || gap)) Press(d, Jump, 12);
     }
 
-    private bool StuckStep(Driven d, TestVanDammeAnim bro, Vector2 goal, int dir, bool[] want)
+    private bool StuckStep(Driven d, TestVanDammeAnim bro, bool piloting, Vector2 goal, int dir, bool[] want)
     {
         Vector2 pos = new Vector2(bro.X, bro.Y);
         bool busy = bro.actionState == ActionState.ClimbingLadder || bro.attachedToZipline != null
@@ -1466,7 +1473,9 @@ public class ScenarioLevelRunner : MonoBehaviour
             return false;
         }
         if (d.StuckLevel == 0 && gameNow - d.AnchorAt < StuckWindowSec) return false;
-        if (d.StuckLevel == 0 && gameNow - d.ResumeAt < 20f && Vector2.Distance(pos, d.StuckPos) < 48f)
+        // A step that only moved the bro between spots no nearer its goal, such as two ledges under a flag, carries the ladder on
+        bool noNearer = Vector2.Distance(goal, d.StuckGoal) < 32f && Vector2.Distance(pos, goal) > d.StuckGoalDist - 16f;
+        if (d.StuckLevel == 0 && gameNow - d.ResumeAt < 20f && (Vector2.Distance(pos, d.StuckPos) < 48f || noNearer))
         {
             d.StuckLevel = d.ResumeLevel;
             d.StuckIndex = d.ResumeIndex;
@@ -1488,6 +1497,8 @@ public class ScenarioLevelRunner : MonoBehaviour
             if (opening)
             {
                 d.StuckPos = pos;
+                d.StuckGoal = goal;
+                d.StuckGoalDist = Vector2.Distance(pos, goal);
                 var ev = new Dictionary<string, object>
                 {
                     { "t", T() }, { "player", d.N }, { "x", Mathf.Round(bro.X) }, { "y", Mathf.Round(bro.Y) }, { "recoveredBy", null }, { "repeats", 0 }
@@ -1495,7 +1506,14 @@ public class ScenarioLevelRunner : MonoBehaviour
                 if (stuckEvents.Count < MaxEvents) { stuckEvents.Add(ev); d.StuckIndex = stuckEvents.Count - 1; }
             }
             if (StuckSteps[d.StuckLevel - 1] == "repath-further") { d.WaypointBoost += 6; d.PathCol = int.MinValue; d.NextPathAt = 0f; }
-            if (StuckSteps[d.StuckLevel - 1] == "teleport") { Teleport(d, bro, bro.collumn, dir == 0 ? 1 : dir, 10, d.StuckIndex); return true; }
+            // Melee leaves a vehicle, and throws the unit a bro's own melee grab holds, which can keep a flag blocked
+            if (StuckSteps[d.StuckLevel - 1] == "melee") Press(d, Melee, 3);
+            if (StuckSteps[d.StuckLevel - 1] == "teleport")
+            {
+                // A vehicle may not fit where a bro can stand, so it is left rather than moved
+                if (piloting) Press(d, Melee, 3);
+                else { Teleport(d, bro, goal, bro.collumn, dir == 0 ? 1 : dir, 10, d.StuckIndex); return true; }
+            }
         }
         string step = StuckSteps[d.StuckLevel - 1];
         int toward = dir == 0 ? 1 : dir;
@@ -1540,32 +1558,48 @@ public class ScenarioLevelRunner : MonoBehaviour
         if (stuckEvents.Count < MaxEvents) { stuckEvents.Add(ev); d.LoopStuckIndex = stuckEvents.Count - 1; }
     }
 
-    private void Teleport(Driven d, TestVanDammeAnim bro, int fromCol, int toward, int span, int stuckIndex)
+    private void Teleport(Driven d, TestVanDammeAnim bro, Vector2 goal, int fromCol, int toward, int span, int stuckIndex)
     {
+        int goalCol = Map.GetCollumn(goal.x), goalRow = Map.GetRow(goal.y + 4f);
+        // The search ahead keeps near the bro's own row, so a goal above or below it, such as a flag on a pedestal, is landed beside at its own height
+        if (Mathf.Abs(goalCol - fromCol) <= span && Mathf.Abs(goalRow - bro.row) >= 2)
+        {
+            int side = fromCol < goalCol ? -1 : 1;
+            for (int i = 0; i <= 4; i++)
+            {
+                int c = goalCol + (i % 2 == 1 ? side : -side) * ((i + 1) / 2);
+                if (c < 1 || c > RightCol()) continue;
+                int r = StandableRow(c, goalRow);
+                if (Mathf.Abs(r - goalRow) <= 2 && Standable(c, r)) { PlaceAt(d, bro, c, r, stuckIndex); return; }
+            }
+        }
         for (int i = 2; i <= span; i++)
         {
             int c = fromCol + toward * i;
             if (c < 1 || c > RightCol()) break;
             int r = StandableRow(c, bro.row);
-            if (Map.IsBlockSolid(c, r) || !Floor(c, r - 1)) continue;
-            float x = c * 16f, y = r * 16f - 8f;
-            bro.transform.position = new Vector3(x, y, bro.transform.position.z);
-            bro.X = x;
-            bro.Y = y;
-            bro.xI = 0f;
-            bro.yI = 0f;
-            assisted = true;
-            if (stuckIndex >= 0) ((Dictionary<string, object>)stuckEvents[stuckIndex])["recoveredBy"] = "teleport";
-            AddEvent("teleport", "player " + d.N + " to " + Mathf.Round(x) + "," + Mathf.Round(y));
-            d.Anchor = new Vector2(x, y);
-            d.AnchorAt = gameNow;
-            d.StuckLevel = 0;
-            d.StuckIndex = -1;
-            d.ResumeAt = -100f;
-            d.PathCol = int.MinValue;
-            return;
+            if (Standable(c, r)) { PlaceAt(d, bro, c, r, stuckIndex); return; }
         }
-        AddEvent("teleport-failed", "player " + d.N + ": no standable column ahead");
+        AddEvent("teleport-failed", "player " + d.N + ": no standable cell ahead or beside the goal");
+    }
+
+    private void PlaceAt(Driven d, TestVanDammeAnim bro, int c, int r, int stuckIndex)
+    {
+        float x = c * 16f, y = r * 16f - 8f;
+        bro.transform.position = new Vector3(x, y, bro.transform.position.z);
+        bro.X = x;
+        bro.Y = y;
+        bro.xI = 0f;
+        bro.yI = 0f;
+        assisted = true;
+        if (stuckIndex >= 0) ((Dictionary<string, object>)stuckEvents[stuckIndex])["recoveredBy"] = "teleport";
+        AddEvent("teleport", "player " + d.N + " to " + Mathf.Round(x) + "," + Mathf.Round(y));
+        d.Anchor = new Vector2(x, y);
+        d.AnchorAt = gameNow;
+        d.StuckLevel = 0;
+        d.StuckIndex = -1;
+        d.ResumeAt = -100f;
+        d.PathCol = int.MinValue;
     }
 
     private static void Hold(bool[] want, int dir)
@@ -1952,8 +1986,8 @@ public class ScenarioLevelRunner : MonoBehaviour
         var bro = player == null ? null : player.character;
         if (bro != null && bro.pilottedUnit != null)
         {
-            // The mech's special ejects its pilot
-            Press(d, Special, 3);
+            // Melee leaves every vehicle; special only ejects from a mech, switching Tank Bro's tank's gun and firing the War Rig's harpoon
+            Press(d, Melee, 3);
             return;
         }
         // Damage on a bro that has just respawned does not kill it.

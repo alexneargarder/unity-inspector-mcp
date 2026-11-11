@@ -646,6 +646,7 @@ async function reap({ owner, child: server, trigger, startedAt }) {
     return;
   }
 
+  log(`Instance ${config.id} is owned by this wrapper — waiting for a takeover until ${STOP_WAIT_MS}ms after ${trigger}, ${since()}`);
   const deadline = startedAt + STOP_WAIT_MS;
   while (Date.now() < deadline) {
     await delay(Math.min(STOP_POLL_MS, Math.max(0, deadline - Date.now())));

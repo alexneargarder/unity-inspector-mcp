@@ -1,10 +1,17 @@
 {
   "name": "Scenario: level run, wedged bro",
-  "description": "Checks the level-run driver's stuck recovery: once driving starts on Intro level 1, player 1 is shut in a pocket three blocks wide and two high, carved into the hill at columns 26-28 and walled with blocks too tough to shoot through. Walking back out of a wall is no way out, so the recovery ladder must carry on past it to teleport within 40 s, in one stuck entry that ends recovered by teleport (or dig). The cleanup reloads the level.",
+  "description": "Checks the level-run driver's stuck recovery: once driving starts on Intro level 1, player 1 is shut in a pocket three blocks wide and two high, carved into the hill at columns 26-28 and walled with blocks too tough to shoot through. Walking back out of a wall is no way out, so the recovery ladder must carry on past it to teleport within 40 s, in one stuck entry that ends recovered by teleport (or dig). Player 1 runs as bro, set through Swap Bros Mod as the next spawn before the load; the step after the load fails when the level brought another. Needs Swap Bros Mod. Its last steps, and its cleanup whatever ended them, unload the driver, restore the Swap Bros selection it found and reload the level the run started in.",
   "args": {
+    "bro": { "default": "Rambro", "description": "The bro player 1 runs as, by its list_bros roster name" },
     "script": { "default": "scenario-level-run", "description": "The level-run script to run, by library name or absolute path" }
   },
   "steps": [
+    {
+      "command": "execute_code",
+      "params": { "code": "var d = System.AppDomain.CurrentDomain;\nstring log = \"\";\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    if (set.enableBromaker) Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    string missing = \"\";\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); if (ix < 0) missing += \"swap settings restore failed: \" + p[2 + i] + \" not in the list \"; else set.selGridInt[i] = ix; }\n    log += missing.Length == 0 ? \"swap-settings-restored \" : missing;\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;" },
+      "expect": { "success": true, "notContains": ["failed"] }
+    },
+    { "command": "unload_script", "params": { "path": "{{script}}" }, "expect": { "notContains": ["Unload() failed", "Unload() was stopped"] } },
     {
       "command": "execute_code",
       "params": {
@@ -35,6 +42,16 @@
     },
     { "command": "execute_code", "params": { "code": "var d = System.AppDomain.CurrentDomain;\nvar sf = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\nvar inst = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance;\nvar specs = new string[][] { new string[] { \"Utility Mod\", \"Utility_Mod.Main\", \"disableEnemySpawn\" }, new string[] { \"Control Enemies Mod\", \"Control_Enemies_Mod.Main\", \"spawnAsEnemyEnabled\" } };\nstring rec = \"\";\nfor (int i = 0; i < 2; i++) {\n  string name = specs[i][2];\n  System.Type t = null;\n  foreach (var a in System.AppDomain.CurrentDomain.GetAssemblies()) if (a.GetName().Name == specs[i][0]) t = a.GetType(specs[i][1]);\n  object settings = t == null ? null : t.GetField(\"settings\", sf).GetValue(null);\n  object live = settings == null ? null : settings.GetType().GetField(name, inst).GetValue(settings);\n  rec += name + \"=\" + (live == null ? \"absent\" : live.ToString()) + \";\";\n}\nd.SetData(\"uimtest.lr.settings\", rec);\nreturn \"recorded settings=\" + rec;" }, "expect": {"success": true, "contains": ["recorded settings="]} },
     {
+      "command": "execute_code",
+      "params": { "code": "var d = System.AppDomain.CurrentDomain;\nvar set = Swap_Bros_Mod.Main.settings;\nSwap_Bros_Mod.API.EnsureBroListUpdated();\nvar l = Swap_Bros_Mod.Main.currentBroList;\nstring sw = set.alwaysChosen + \"|\" + set.ignoreCurrentUnlocked;\nfor (int i = 0; i < 4; i++) sw += \"|\" + l[set.selGridInt[i]];\nd.SetData(\"uimtest.swap\", sw);\nreturn \"recorded swap=\" + sw;" },
+      "expect": { "success": true, "contains": ["recorded swap="] }
+    },
+    {
+      "command": "swap_bro",
+      "params": { "broName": "{{bro}}", "playerNum": 0, "nextSpawn": true },
+      "expect": { "success": true, "contains": ["\"nextBro\""] }
+    },
+    {
       "command": "execute_script",
       "params": {
         "path": "{{script}}",
@@ -45,6 +62,11 @@
     {
       "command": "go_to_level",
       "params": { "campaignIndex": 0, "levelIndex": 0 }
+    },
+    {
+      "command": "execute_code",
+      "params": { "code": "var p = HeroController.players[0];\nvar b = p == null ? null : p.character;\nstring live = b == null ? null : Unity_Inspector_Mod.SwapBrosIntegration.GetLiveBroName(b);\nreturn string.Equals(live, \"{{bro}}\", System.StringComparison.OrdinalIgnoreCase) ? \"bro matches: \" + live : \"bro differs: player 1 spawned as \" + (live ?? \"no bro\") + \", not {{bro}}\";" },
+      "expect": { "success": true, "contains": ["bro matches"] }
     },
     {
       "command": "execute_code",
@@ -71,6 +93,11 @@
     {"command": "execute_code", "params": {"code": "var d = System.AppDomain.CurrentDomain;\nvar sf = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\nvar inst = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance;\nvar specs = new string[][] { new string[] { \"Utility Mod\", \"Utility_Mod.Main\", \"disableEnemySpawn\" }, new string[] { \"Control Enemies Mod\", \"Control_Enemies_Mod.Main\", \"spawnAsEnemyEnabled\" } };\nstring rec = \"\";\nfor (int i = 0; i < 2; i++) {\n  string name = specs[i][2];\n  System.Type t = null;\n  foreach (var a in System.AppDomain.CurrentDomain.GetAssemblies()) if (a.GetName().Name == specs[i][0]) t = a.GetType(specs[i][1]);\n  object settings = t == null ? null : t.GetField(\"settings\", sf).GetValue(null);\n  object live = settings == null ? null : settings.GetType().GetField(name, inst).GetValue(settings);\n  rec += name + \"=\" + (live == null ? \"absent\" : live.ToString()) + \";\";\n}\nvar before = d.GetData(\"uimtest.lr.settings\") as string;\nd.SetData(\"uimtest.lr.settings\", null);\nif (before == null) return \"settings-unrecorded\";\nreturn before == rec ? \"settings-restored: \" + rec : \"settings-not-restored: was \" + before + \", now \" + rec;"}, "expect": {"contains": ["settings-restored"], "notContains": ["not-restored", "unrecorded"]}},
     {
       "command": "execute_code",
+      "params": { "code": "var d = System.AppDomain.CurrentDomain;\nstring log = \"\";\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    if (set.enableBromaker) Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    string missing = \"\";\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); if (ix < 0) missing += \"swap settings restore failed: \" + p[2 + i] + \" not in the list \"; else set.selGridInt[i] = ix; }\n    log += missing.Length == 0 ? \"swap-settings-restored \" : missing;\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;" },
+      "expect": { "success": true, "contains": ["swap-settings-restored"], "notContains": ["failed"] }
+    },
+    {
+      "command": "execute_code",
       "params": {
         "code": "var d = System.AppDomain.CurrentDomain;\nvar rec = (d.GetData(\"uimtest.level\") as string) ?? \"0|1\";\nd.SetData(\"uimtest.level\", null);\nvar p = rec.Split('|');\nvar r = Unity_Inspector_Mod.StateModifier.GoToLevel(int.Parse(p[0]), int.Parse(p[1]));\nvar j = Newtonsoft.Json.Linq.JToken.FromObject(r);\nreturn \"loading recorded level \" + rec + \": success=\" + j[\"success\"] + \" \" + j.ToString(Newtonsoft.Json.Formatting.None);"
       },
@@ -79,8 +106,7 @@
         "contains": [
           "success=True"
         ]
-      },
-      "wait": 6000
+      }
     },
     {
       "command": "game_state",
@@ -96,7 +122,12 @@
     }
   ],
   "cleanup": [
-    { "command": "unload_script", "params": { "path": "scenario-level-run" }, "expect": { "notContains": ["Unload() failed", "Unload() was stopped"] } },
+    {
+      "command": "execute_code",
+      "params": { "code": "var d = System.AppDomain.CurrentDomain;\nstring log = \"\";\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    if (set.enableBromaker) Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    string missing = \"\";\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); if (ix < 0) missing += \"swap settings restore failed: \" + p[2 + i] + \" not in the list \"; else set.selGridInt[i] = ix; }\n    log += missing.Length == 0 ? \"swap-settings-restored \" : missing;\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;" },
+      "expect": { "success": true, "notContains": ["failed"] }
+    },
+    { "command": "unload_script", "params": { "path": "{{script}}" }, "expect": { "notContains": ["Unload() failed", "Unload() was stopped"] } },
     {"command": "execute_code", "params": {"code": "var d = System.AppDomain.CurrentDomain;\nvar sf = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\nvar inst = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance;\nvar specs = new string[][] { new string[] { \"Utility Mod\", \"Utility_Mod.Main\", \"disableEnemySpawn\" }, new string[] { \"Control Enemies Mod\", \"Control_Enemies_Mod.Main\", \"spawnAsEnemyEnabled\" } };\nstring rec = \"\";\nfor (int i = 0; i < 2; i++) {\n  string name = specs[i][2];\n  System.Type t = null;\n  foreach (var a in System.AppDomain.CurrentDomain.GetAssemblies()) if (a.GetName().Name == specs[i][0]) t = a.GetType(specs[i][1]);\n  object settings = t == null ? null : t.GetField(\"settings\", sf).GetValue(null);\n  object live = settings == null ? null : settings.GetType().GetField(name, inst).GetValue(settings);\n  rec += name + \"=\" + (live == null ? \"absent\" : live.ToString()) + \";\";\n}\nvar before = d.GetData(\"uimtest.lr.settings\") as string;\nd.SetData(\"uimtest.lr.settings\", null);\nif (before == null) return \"settings-unrecorded\";\nreturn before == rec ? \"settings-restored: \" + rec : \"settings-not-restored: was \" + before + \", now \" + rec;"}, "expect": {"notContains": ["not-restored"]}},
     {
       "command": "execute_code",
@@ -104,11 +135,24 @@
         "code": "var d = System.AppDomain.CurrentDomain;\nvar rec = d.GetData(\"uimtest.level\") as string;\nd.SetData(\"uimtest.level\", null);\nif (rec == null) return \"no level recorded\";\nvar p = rec.Split('|');\nvar r = Unity_Inspector_Mod.StateModifier.GoToLevel(int.Parse(p[0]), int.Parse(p[1]));\nvar j = Newtonsoft.Json.Linq.JToken.FromObject(r);\nreturn \"loading recorded level \" + rec + \": success=\" + j[\"success\"] + \" \" + j.ToString(Newtonsoft.Json.Formatting.None);"
       },
       "expect": {
+        "success": true,
         "notContains": [
-          "failed"
+          "failed",
+          "success=False"
         ]
+      }
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
       },
-      "wait": 6000
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
     }
   ]
 }

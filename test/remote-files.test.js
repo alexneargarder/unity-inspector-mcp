@@ -113,6 +113,7 @@ test('the transfer code writes System.IO names in full, declares no generic type
     stat: statCode([file]),
     write: writeCode({ path: file, append: false, data: 'AAAA' }),
     removeDir: removeDirCode(file),
+    removeDirPruning: removeDirCode(file, { pruneParent: true }),
     list: listCode({ path: file }),
     listCache: listCode({ path: file, underCache: true }),
     sentinel: sentinelCode({ path: file, done: 'done', error: 'error', progress: 'capture.json' }),
@@ -129,6 +130,7 @@ test('the transfer code writes System.IO names in full, declares no generic type
   assert.ok(codes.logSync.includes(csString(file)));
   for (const op of ['read', 'logSync', 'logChunk', 'sentinel']) assert.match(codes[op], /System\.IO\.FileShare\.ReadWrite/, op);
   assert.match(codes.listCache, /System\.IO\.Path\.Combine\(UnityEngine\.Application\.temporaryCachePath, /);
+  assert.match(codes.list, /System\.Diagnostics\.Process\.GetCurrentProcess\(\)/, 'the listing names the game process it was read in');
 });
 
 test('a set past 2 MiB takes more calls, a file past 2 MiB is read in chunks, and a missing file is named', async () => {
@@ -174,6 +176,17 @@ test('a file is written in chunks of about 96 KiB, and a folder is removed whole
   assert.equal(await removeRemoteDir(client, '/game/cache/capture'), 'removed');
   assert.equal(remote.bytesOf('/game/cache/capture/states.json'), null);
   assert.equal(await removeRemoteDir(client, '/game/cache/capture'), 'absent');
+});
+
+test('a removal prunes its parent only when asked and empty', () => {
+  const folder = '/game/cache/capture-animations/7310/run';
+  const deletes = (code) => code.match(/System\.IO\.Directory\.Delete\([^)]*\)/g);
+  assert.deepEqual(deletes(removeDirCode(folder)), ['System.IO.Directory.Delete(path, true)']);
+
+  const pruning = removeDirCode(folder, { pruneParent: true });
+  assert.deepEqual(deletes(pruning), ['System.IO.Directory.Delete(path, true)', 'System.IO.Directory.Delete(parent, false)']);
+  assert.match(pruning, /string parent = System\.IO\.Path\.GetDirectoryName\(path\);/);
+  assert.match(pruning, /if \([^\n]*System\.IO\.Directory\.GetFileSystemEntries\(parent\)\.Length == 0\) System\.IO\.Directory\.Delete\(parent, false\);/);
 });
 
 test('remote copies live under the override root, else the state directory, and a session idle for a week is pruned', async () => {

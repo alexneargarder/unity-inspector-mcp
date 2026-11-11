@@ -2150,7 +2150,7 @@ test('a launch uses its allocated port only while the contract keeps it reserved
   assert.equal(expired.state, 'no-port');
   assert.equal(inspector.hellos.length, hellosBefore, 'the poll connected to a port past its reservation');
 
-  configureLaunchTiming({ portReservationMs: 180000 });
+  configureLaunchTiming({ instanceBudgetMs: 6000, portReservationMs: 180000 });
   await fs.rm(path.join(instanceDir, 'game.pid'), { force: true });
   const reserved = payload(await launch());
   assert.equal(reserved.success, true, reserved.message);

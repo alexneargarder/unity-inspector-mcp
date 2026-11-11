@@ -24,6 +24,7 @@ public class AnimationCapture : MonoBehaviour
     // Every compile is its own assembly with its own statics
     private const string LiveSlot = "UnityInspector.AnimationCapture.Live";
     private const int MaxChangeFrameDepth = 16;
+    private const int RecallFrames = 10;
 
     // ScriptContext.Logger only carries the [Script:name] prefix while Main()/Unload() is running
     private static Action<string> cachedLogger;
@@ -129,6 +130,8 @@ public class AnimationCapture : MonoBehaviour
     private Map sweepMap;
     private string sceneError;
 
+    private bool sweepStarted;
+    private int recallFramesWaited;
     private int stateIndex = -1;
     private int frameIndex;
     private bool inState;
@@ -698,8 +701,6 @@ public class AnimationCapture : MonoBehaviour
 
     #region Sweep
 
-    // The script compiler cannot emit iterator methods, so the sweep is an Update-driven state
-    // machine: Update pins one step and LateUpdate reads it back on that same frame.
     private void Begin()
     {
         // The sweep freezes the clock itself. A caller that already froze the game would otherwise
@@ -714,20 +715,59 @@ public class AnimationCapture : MonoBehaviour
         HoldFacing();
         SnapshotBro();
 
-        SpriteSM body = GetSprite();
-        Vector3 center = CropCenterOf(body);
-        cropCenter = Vec(center);
-        string intruder = ProbeOverlaps(body, center);
-        if (intruder != null)
-        {
-            throw new Exception("the previous bro '" + intruder + "', recalled by the swap, is still drawn in the capture "
-                + "crop and the sweep would strip it: raise swapSettle or wait for it to be destroyed");
-        }
+        cropCenter = Vec(CropCenterOf(GetSprite()));
+        if (EndRecalls() == null) StartSweep();
+    }
 
+    private void StartSweep()
+    {
+        sweepStarted = true;
         RecordObjects(sweepStartObjects);
         SnapshotLevel(out foreBlocks, out backBlocks, out unitStates, out doodadStates);
         broDescription = DescribeBro();
         WriteCapture(false);
+    }
+
+    private void AwaitRecalls()
+    {
+        if (character == null)
+        {
+            FailStart(sceneError ?? "player " + playerIndex + "'s bro was destroyed before the sweep started, so nothing was swept");
+            return;
+        }
+
+        string recalled = EndRecalls();
+        if (recalled == null)
+        {
+            StartSweep();
+            return;
+        }
+        if (++recallFramesWaited < RecallFrames) return;
+
+        FailStart("the recalled bro '" + recalled + "' is still drawn in the capture crop " + RecallFrames
+            + " frames after the sweep set its recall to end: its Update never ends the recall, so nothing was swept");
+    }
+
+    private void FailStart(string message)
+    {
+        fatal = message;
+        broDescription = DescribeBro();
+        finished = true;
+        Finish();
+    }
+
+    private string EndRecalls()
+    {
+        SpriteSM body = GetSprite();
+        List<TestVanDammeAnim> recalled = ProbeOverlaps(body, CropCenterOf(body));
+        FieldInfo counter = AccessTools.Field(typeof(TestVanDammeAnim), "recallCounter");
+
+        for (int i = 0; i < recalled.Count; i++)
+        {
+            // TestVanDammeAnim.Update destroys a recalled character once recallCounter passes 1, adding the held clock's 0 to it until then
+            if (counter != null) counter.SetValue(recalled[i], 2f);
+        }
+        return recalled.Count == 0 ? null : recalled[0].gameObject.name;
     }
 
     private void HoldBubbles()
@@ -797,10 +837,10 @@ public class AnimationCapture : MonoBehaviour
         hiddenOverlays.Clear();
     }
 
-    private string ProbeOverlaps(SpriteSM body, Vector3 center)
+    private List<TestVanDammeAnim> ProbeOverlaps(SpriteSM body, Vector3 center)
     {
         overlapProbe = new JArray();
-        string intruder = null;
+        List<TestVanDammeAnim> recalled = new List<TestVanDammeAnim>();
 
         try
         {
@@ -817,7 +857,8 @@ public class AnimationCapture : MonoBehaviour
                 if (Mathf.Abs(bounds.center.x - center.x) > box + bounds.extents.x) continue;
                 if (Mathf.Abs(bounds.center.y - center.y) > box + bounds.extents.y) continue;
 
-                if (intruder == null) intruder = RecalledRigOf(r);
+                TestVanDammeAnim rig = RecalledRigOf(r);
+                if (rig != null && !recalled.Contains(rig)) recalled.Add(rig);
                 if (overlapProbe.Count >= 24) continue;
 
                 JObject entry = new JObject();
@@ -832,10 +873,10 @@ public class AnimationCapture : MonoBehaviour
         {
             Log("Overlap probe failed: " + ex.Message);
         }
-        return intruder;
+        return recalled;
     }
 
-    private string RecalledRigOf(Renderer r)
+    private TestVanDammeAnim RecalledRigOf(Renderer r)
     {
         Vector3 scale = r.transform.lossyScale;
         if (scale.x == 0f || scale.y == 0f) return null;
@@ -850,7 +891,7 @@ public class AnimationCapture : MonoBehaviour
             // The rig a swap leaves behind is the recalled one (TestVanDammeAnim.RecallBro)
             bool recalled = rig.actionState == ActionState.Recalling
                 || (recalling != null && (bool)recalling.GetValue(rig));
-            return recalled ? rig.gameObject.name : null;
+            return recalled ? rig : null;
         }
         return null;
     }
@@ -910,6 +951,11 @@ public class AnimationCapture : MonoBehaviour
         RepairNonFinite();
         changeFrameDepth = 0;
         if (awaitingCapture) return;
+        if (!sweepStarted)
+        {
+            AwaitRecalls();
+            return;
+        }
 
         if (!inState)
         {
@@ -1586,7 +1632,7 @@ public class AnimationCapture : MonoBehaviour
         ReleaseCaptureTexture();
         HoldLiveSlot();
 
-        if (!WriteCapture(true)) fatal = fatal ?? "writing " + CaptureFile + " failed";
+        if (!WriteCapture(sweepStarted)) fatal = fatal ?? "writing " + CaptureFile + " failed";
 
         if (fatal != null)
         {

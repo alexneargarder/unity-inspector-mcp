@@ -1,7 +1,8 @@
 {
   "name": "Scenario: level run",
-  "description": "Loads a level and drives player 1 through it with the scenario-level-run driver: movement, jump, fire, special, melee, one forced death and a respawn, the level's own mechanics, and the exit, or a timeout with a progress figure. Utility Mod's disableEnemySpawn and Control Enemies Mod's spawnAsEnemyEnabled are off for the run. The run's GameObject must be tagged Unpausable, and 3 s after a run that reaches the exit the level must still be finished with its outcome held, never run (not switching level, its outcome timer held), the save's start level for the territory must be the one it had at the load, and the bro rescues the run makes (Intro level 1's cage on the default route among them) must leave the progress's freed-bro count and unlocked bros as they were. Needs a save slot holding a campaign. survey=true scans the level instead of driving it. The default level, Intro level 1, finishes in about 25 s with five enemies, a door, a ladder and a cage.",
+  "description": "Loads a level and drives player 1 through it with the scenario-level-run driver: movement, jump, fire, special, melee, one forced death and a respawn, the level's own mechanics, and the exit, or a timeout with a progress figure. Player 1 runs as bro, set through Swap Bros Mod as the next spawn before the load, so the load and every respawn bring that bro whatever the player's own selection; the step after the load fails when the level brought another. Utility Mod's disableEnemySpawn and Control Enemies Mod's spawnAsEnemyEnabled are off for the run. The run's GameObject must be tagged Unpausable, and 3 s after a run that reaches the exit the level must still be finished with its outcome held, never run (not switching level, its outcome timer held), the save's start level for the territory must be the one it had at the load, and the bro rescues the run makes (Intro level 1's cage on the default route among them) must leave the progress's freed-bro count and unlocked bros as they were. Needs Swap Bros Mod and a save slot holding a campaign. survey=true scans the level instead of driving it. The default level, Intro level 1, finishes in about 25 s with five enemies, a door, a ladder and a cage. Its last steps restore the Swap Bros selection it found and reload the level it started in; its cleanup does the same whatever ended the steps.",
   "args": {
+    "bro": { "default": "Rambro", "description": "The bro player 1 runs as, by its list_bros roster name" },
     "campaign": { "default": 0, "description": "Campaign index, as go_to_level takes it" },
     "level": { "default": 0, "description": "Level index within the campaign" },
     "timeoutSec": { "default": 240, "description": "Driving budget in seconds; the poll waits 600 s in all, so keep it under about 480" },
@@ -9,6 +10,11 @@
     "survey": { "default": false, "description": "true to scan and report the level's layout and mechanics without driving" }
   },
   "steps": [
+    {
+      "command": "execute_code",
+      "params": { "code": "var d = System.AppDomain.CurrentDomain;\nstring log = \"\";\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    if (set.enableBromaker) Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    string missing = \"\";\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); if (ix < 0) missing += \"swap settings restore failed: \" + p[2 + i] + \" not in the list \"; else set.selGridInt[i] = ix; }\n    log += missing.Length == 0 ? \"swap-settings-restored \" : missing;\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;" },
+      "expect": { "success": true, "notContains": ["failed"] }
+    },
     {
       "command": "execute_code",
       "params": {
@@ -38,6 +44,16 @@
       }
     },
     {
+      "command": "execute_code",
+      "params": { "code": "var d = System.AppDomain.CurrentDomain;\nvar set = Swap_Bros_Mod.Main.settings;\nSwap_Bros_Mod.API.EnsureBroListUpdated();\nvar l = Swap_Bros_Mod.Main.currentBroList;\nstring sw = set.alwaysChosen + \"|\" + set.ignoreCurrentUnlocked;\nfor (int i = 0; i < 4; i++) sw += \"|\" + l[set.selGridInt[i]];\nd.SetData(\"uimtest.swap\", sw);\nreturn \"recorded swap=\" + sw;" },
+      "expect": { "success": true, "contains": ["recorded swap="] }
+    },
+    {
+      "command": "swap_bro",
+      "params": { "broName": "{{bro}}", "playerNum": 0, "nextSpawn": true },
+      "expect": { "success": true, "contains": ["\"nextBro\""] }
+    },
+    {
       "command": "execute_script",
       "params": {
         "path": "scenario-level-run",
@@ -53,6 +69,11 @@
     {
       "command": "go_to_level",
       "params": { "campaignIndex": "{{campaign}}", "levelIndex": "{{level}}" }
+    },
+    {
+      "command": "execute_code",
+      "params": { "code": "var p = HeroController.players[0];\nvar b = p == null ? null : p.character;\nstring live = b == null ? null : Unity_Inspector_Mod.SwapBrosIntegration.GetLiveBroName(b);\nreturn string.Equals(live, \"{{bro}}\", System.StringComparison.OrdinalIgnoreCase) ? \"bro matches: \" + live : \"bro differs: player 1 spawned as \" + (live ?? \"no bro\") + \", not {{bro}}\";" },
+      "expect": { "success": true, "contains": ["bro matches"] }
     },
     {
       "command": "execute_code",
@@ -79,6 +100,11 @@
     { "command": "execute_code", "params": { "code": "var sf = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;\nvar inst = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance;\nvar specs = new string[][] { new string[] { \"Utility Mod\", \"Utility_Mod.Main\", \"disableEnemySpawn\" }, new string[] { \"Control Enemies Mod\", \"Control_Enemies_Mod.Main\", \"spawnAsEnemyEnabled\" } };\nvar recs = new object[] { ScenarioLevelRun.Suppression, ScenarioLevelRun.SpawnAsEnemy };\nstring log = \"\";\nfor (int i = 0; i < 2; i++) {\n  var r = (System.Collections.IDictionary)recs[i];\n  string name = specs[i][2];\n  if (!(r[\"turnedOff\"] is bool) || !(bool)r[\"turnedOff\"]) { log += name + \" untouched; \"; continue; }\n  System.Type t = null;\n  foreach (var a in System.AppDomain.CurrentDomain.GetAssemblies()) if (a.GetName().Name == specs[i][0]) t = a.GetType(specs[i][1]);\n  object settings = t == null ? null : t.GetField(\"settings\", sf).GetValue(null);\n  object live = settings == null ? null : settings.GetType().GetField(name, inst).GetValue(settings);\n  bool ok = r[\"restored\"] is bool && (bool)r[\"restored\"] && live != null && live.Equals(r[\"was\"]);\n  log += name + (ok ? \" restored\" : \" not-restored\") + \" (record restored=\" + r[\"restored\"] + \", live=\" + live + \", was=\" + r[\"was\"] + \"); \";\n}\nreturn \"settings-checked: \" + log;" }, "expect": {"contains": ["settings-checked"], "notContains": ["not-restored"]} },
     {
       "command": "execute_code",
+      "params": { "code": "var d = System.AppDomain.CurrentDomain;\nstring log = \"\";\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    if (set.enableBromaker) Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    string missing = \"\";\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); if (ix < 0) missing += \"swap settings restore failed: \" + p[2 + i] + \" not in the list \"; else set.selGridInt[i] = ix; }\n    log += missing.Length == 0 ? \"swap-settings-restored \" : missing;\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;" },
+      "expect": { "success": true, "contains": ["swap-settings-restored"], "notContains": ["failed"] }
+    },
+    {
+      "command": "execute_code",
       "params": {
         "code": "var d = System.AppDomain.CurrentDomain;\nvar rec = (d.GetData(\"uimtest.level\") as string) ?? \"0|1\";\nd.SetData(\"uimtest.level\", null);\nvar p = rec.Split('|');\nvar r = Unity_Inspector_Mod.StateModifier.GoToLevel(int.Parse(p[0]), int.Parse(p[1]));\nvar j = Newtonsoft.Json.Linq.JToken.FromObject(r);\nreturn \"loading recorded level \" + rec + \": success=\" + j[\"success\"] + \" \" + j.ToString(Newtonsoft.Json.Formatting.None);"
       },
@@ -87,8 +113,7 @@
         "contains": [
           "success=True"
         ]
-      },
-      "wait": 6000
+      }
     },
     {
       "command": "game_state",
@@ -104,6 +129,11 @@
     }
   ],
   "cleanup": [
+    {
+      "command": "execute_code",
+      "params": { "code": "var d = System.AppDomain.CurrentDomain;\nstring log = \"\";\nvar sw = d.GetData(\"uimtest.swap\") as string;\nd.SetData(\"uimtest.swap\", null);\ntry {\n  if (sw != null) {\n    var p = sw.Split('|');\n    var set = Swap_Bros_Mod.Main.settings;\n    set.alwaysChosen = p[0] == \"True\";\n    set.ignoreCurrentUnlocked = p[1] == \"True\";\n    if (set.enableBromaker) Swap_Bros_Mod.Main.LoadCustomBros();\n    Swap_Bros_Mod.Main.CreateBroList();\n    var l = Swap_Bros_Mod.Main.currentBroList;\n    string missing = \"\";\n    for (int i = 0; i < 4; i++) { int ix = l.IndexOf(p[2 + i]); if (ix < 0) missing += \"swap settings restore failed: \" + p[2 + i] + \" not in the list \"; else set.selGridInt[i] = ix; }\n    log += missing.Length == 0 ? \"swap-settings-restored \" : missing;\n  }\n} catch (System.Exception ex) { log += \"swap settings restore failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;" },
+      "expect": { "success": true, "notContains": ["failed"] }
+    },
     { "command": "unload_script", "params": { "path": "scenario-level-run" } },
     {
       "command": "execute_code",
@@ -111,11 +141,24 @@
         "code": "var d = System.AppDomain.CurrentDomain;\nvar rec = d.GetData(\"uimtest.level\") as string;\nd.SetData(\"uimtest.level\", null);\nif (rec == null) return \"no level recorded\";\nvar p = rec.Split('|');\nvar r = Unity_Inspector_Mod.StateModifier.GoToLevel(int.Parse(p[0]), int.Parse(p[1]));\nvar j = Newtonsoft.Json.Linq.JToken.FromObject(r);\nreturn \"loading recorded level \" + rec + \": success=\" + j[\"success\"] + \" \" + j.ToString(Newtonsoft.Json.Formatting.None);"
       },
       "expect": {
+        "success": true,
         "notContains": [
-          "failed"
+          "failed",
+          "success=False"
         ]
+      }
+    },
+    {
+      "command": "game_state",
+      "until": {
+        "timeout": 60,
+        "interval": 1
       },
-      "wait": 6000
+      "expect": {
+        "contains": [
+          "\"state\": \"alive\""
+        ]
+      }
     }
   ]
 }

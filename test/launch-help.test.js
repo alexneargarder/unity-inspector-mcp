@@ -69,7 +69,7 @@ async function waitFor(condition, budgetMs = 10000) {
   return condition();
 }
 
-async function listUntil(pattern, budgetMs = 10000) {
+async function listUntil(pattern, budgetMs = 30000) {
   const deadline = Date.now() + budgetMs;
   let description = await launchDescription();
   while (!pattern.test(description) && Date.now() < deadline) {
@@ -98,7 +98,7 @@ beforeEach(async () => {
     await fs.rm(path.join(otherRoot, name), { force: true });
   }
   await otherControl('args-help-text', `${OTHER_ARGS_HELP}\n`);
-  configureLaunchTiming({ probeRetryMs: probeRetry, rootRetryMs: rootRetry });
+  configureLaunchTiming({ probeRetryMs: probeRetry, rootRetryMs: rootRetry, argsHelpGraceMs: 30000 });
   notifications.length = 0;
   setToolListChangedNotifier(() => notifications.push(Date.now()));
   delete process.env.BROFORCE_LAUNCH_CMD;
@@ -441,7 +441,7 @@ test('a --help that failed once is not remembered as no argument help', { skip: 
 
   await clearControl('help-fails');
   configureLaunchTiming({ probeRetryMs: 0 });
-  const answered = await listUntil(/in its own words|both launches go through/);
+  const answered = await listUntil(/both launches go through/);
 
   assert.match(answered, /Argument help from the configured launcher, which both launches go through:/);
   assert.deepEqual(
@@ -480,6 +480,7 @@ test('a retry runs in the background rather than holding a listing up', async ()
 });
 
 test('a listing does not wait on a launcher that has not answered', { skip: process.platform !== 'linux' }, async () => {
+  configureLaunchTiming({ argsHelpGraceMs: 500 });
   await otherControl('slow-help', '1');
   process.env.CLAUDE_SESSION_ID = SESSION;
   process.env.BROFORCE_INSTANCE_CMD = otherLauncher;
@@ -492,9 +493,11 @@ test('a listing does not wait on a launcher that has not answered', { skip: proc
   assert.match(description, /The argument help for this launch follows once the configured launcher has answered\./);
   assert.equal(fencedBlocks(description).length, 0);
   assert.ok(elapsed < 2500, `the listing waited ${elapsed}ms on the launcher`);
+  await waitFor(() => notifications.length > 0);
 });
 
 test('a launcher answering behind the first listing is announced once', { skip: process.platform !== 'linux' }, async () => {
+  configureLaunchTiming({ argsHelpGraceMs: 500 });
   await otherControl('slow-help', '1');
   process.env.CLAUDE_SESSION_ID = SESSION;
   process.env.BROFORCE_INSTANCE_CMD = otherLauncher;

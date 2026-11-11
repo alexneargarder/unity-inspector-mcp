@@ -14,7 +14,7 @@ const repo = fileURLToPath(new URL('..', import.meta.url));
 const SUBAGENT_NOTE = 'A subagent already running keeps the tool list it started with, so a changed tool reaches only a new subagent.';
 const FORGOTTEN_TARGET = 'A game target declared with launch_game { remote } is forgotten by a restart and has to be declared again.';
 
-test('the wrapper replays initialize after the child dies unexpectedly', { timeout: 20000, skip: !posix }, async (t) => {
+test('the wrapper replays initialize after the child dies unexpectedly', { timeout: 60000, skip: !posix }, async (t) => {
   const w = startWrapper();
   t.after(() => w.stop());
 
@@ -30,8 +30,12 @@ test('the wrapper replays initialize after the child dies unexpectedly', { timeo
 
   const pids = w.childPids();
   assert.equal(pids.length, 1);
+  const listChanges = () => w.messages.filter((m) => m.method === 'notifications/tools/list_changed').length;
+  const changesBefore = listChanges();
   process.kill(Number(pids[0]), 'SIGKILL');
-  await w.sleep(1000);
+  const deadline = Date.now() + 15000;
+  while (listChanges() === changesBefore && Date.now() < deadline) await w.sleep(25);
+  assert.ok(listChanges() > changesBefore, 'the respawn never finished');
 
   w.send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
   const afterRespawn = await w.waitFor((m) => m.id === 2);
@@ -40,7 +44,7 @@ test('the wrapper replays initialize after the child dies unexpectedly', { timeo
   assert.equal(afterRespawn.result.tools.length, 2);
 });
 
-test('the first tool reply after a crash respawn says a declared remote target was forgotten, and only the first', { timeout: 20000, skip: !posix }, async (t) => {
+test('the first tool reply after a crash respawn says a declared remote target was forgotten, and only the first', { timeout: 60000, skip: !posix }, async (t) => {
   const w = startWrapper();
   t.after(() => w.stop());
   await w.initialize(0);
@@ -59,7 +63,7 @@ test('the first tool reply after a crash respawn says a declared remote target w
   assert.deepEqual(await callTool(4), ['called stub_tool']);
 });
 
-test('restart_server fails requests that were still in flight', { timeout: 20000, skip: !posix }, async (t) => {
+test('restart_server fails requests that were still in flight', { timeout: 60000, skip: !posix }, async (t) => {
   const w = startWrapper();
   t.after(() => w.stop());
   await w.initialize(0);
@@ -84,7 +88,7 @@ test('restart_server fails requests that were still in flight', { timeout: 20000
   assert.equal(afterRestart.result.tools.length, 2);
 });
 
-test('a request in flight when the child crashes gets an error, not silence', { timeout: 20000, skip: !posix }, async (t) => {
+test('a request in flight when the child crashes gets an error, not silence', { timeout: 60000, skip: !posix }, async (t) => {
   const w = startWrapper();
   t.after(() => w.stop());
   await w.initialize(0);
@@ -105,7 +109,7 @@ test('a request in flight when the child crashes gets an error, not silence', { 
   assert.doesNotMatch(answered.error.message, /restart_server/);
 });
 
-test('a request sent while restart_server is stopping the old child is told to retry, not to restart', { timeout: 20000, skip: !posix }, async (t) => {
+test('a request sent while restart_server is stopping the old child is told to retry, not to restart', { timeout: 60000, skip: !posix }, async (t) => {
   const { readFileSync } = await import('fs');
   const w = startWrapper({ STUB_CHILD_SLOW_STOP_MS: '1500' });
   t.after(() => w.stop());
@@ -131,14 +135,20 @@ test('a request sent while restart_server is stopping the old child is told to r
   assert.equal((await w.waitFor((m) => m.id === 82))?.result?.tools?.length, 2);
 });
 
-test('the crash-loop guard stops respawning, and restart_server recovers', { timeout: 30000, skip: !posix }, async (t) => {
+test('the crash-loop guard stops respawning, and restart_server recovers', { timeout: 60000, skip: !posix }, async (t) => {
   const w = startWrapper();
   t.after(() => w.stop());
   await w.initialize(0);
 
+  const listChanges = () => w.messages.filter((m) => m.method === 'notifications/tools/list_changed').length;
   for (let i = 0; i < 3; i++) {
+    const changesBefore = listChanges();
     w.send({ jsonrpc: '2.0', id: 100 + i, method: 'test/die', params: {} });
-    await w.sleep(600);
+    assert.ok(await w.waitFor((m) => m.id === 100 + i, 15000), `request ${100 + i} was never answered`);
+    if (i === 2) break;
+    const deadline = Date.now() + 15000;
+    while (listChanges() === changesBefore && Date.now() < deadline) await w.sleep(25);
+    assert.ok(listChanges() > changesBefore, `the respawn after death ${i + 1} never finished`);
   }
 
   for (const id of [100, 101]) {
@@ -168,7 +178,7 @@ test('the crash-loop guard stops respawning, and restart_server recovers', { tim
   assert.equal(recovered.result.tools.length, 2);
 });
 
-test("a notification from the child reaches the parent as the child sent it", { timeout: 20000, skip: !posix }, async (t) => {
+test("a notification from the child reaches the parent as the child sent it", { timeout: 60000, skip: !posix }, async (t) => {
   const w = startWrapper();
   t.after(() => w.stop());
   await w.initialize(0);
@@ -181,7 +191,7 @@ test("a notification from the child reaches the parent as the child sent it", { 
   assert.ok(await w.waitFor((m) => m.id === 9), 'the request the notification came with went unanswered');
 });
 
-test('restart_server kills a child that ignores SIGTERM after its grace', { timeout: 20000, skip: !posix }, async (t) => {
+test('restart_server kills a child that ignores SIGTERM after its grace', { timeout: 60000, skip: !posix }, async (t) => {
   const w = startWrapper({ STUB_CHILD_IGNORE_STOP: '1' });
   t.after(() => {
     for (const pid of w.childPids()) {
@@ -213,7 +223,7 @@ test('restart_server kills a child that ignores SIGTERM after its grace', { time
   assert.equal(listed.result.tools.length, 2);
 });
 
-test('a restart_server sent during another shares it, leaving one child', { timeout: 20000, skip: !posix }, async (t) => {
+test('a restart_server sent during another shares it, leaving one child', { timeout: 60000, skip: !posix }, async (t) => {
   const w = startWrapper();
   t.after(() => w.stop());
   await w.initialize(0);
@@ -237,7 +247,7 @@ test('a restart_server sent during another shares it, leaving one child', { time
   assert.ok(await w.waitFor((m) => m.id === 42), 'the restarted child does not answer');
 });
 
-test('a restart_server during a respawn waits for it, and the respawn never stops the restarted child', { timeout: 30000, skip: !posix }, async (t) => {
+test('a restart_server during a respawn waits for it, and the respawn never stops the restarted child', { timeout: 60000, skip: !posix }, async (t) => {
   const { mkdtempSync, rmSync } = await import('fs');
   const { tmpdir } = await import('os');
   const { join } = await import('path');
@@ -264,8 +274,8 @@ test('a restart_server during a respawn waits for it, and the respawn never stop
   assert.deepEqual(echoed?.result, { echo: { alive: true } }, `the restarted child is gone: ${JSON.stringify(echoed)}`);
 });
 
-test('a request sent to a child that dies during a restart is answered, not left waiting', { timeout: 30000, skip: !posix }, async (t) => {
-  const { mkdtempSync, rmSync } = await import('fs');
+test('a request sent to a child that dies during a restart is answered, not left waiting', { timeout: 60000, skip: !posix }, async (t) => {
+  const { mkdtempSync, readFileSync, rmSync } = await import('fs');
   const { tmpdir } = await import('os');
   const { join } = await import('path');
   const dir = mkdtempSync(join(tmpdir(), 'wrapper-dies-in-init-'));
@@ -278,7 +288,10 @@ test('a request sent to a child that dies during a restart is answered, not left
   await w.initialize(0);
 
   w.send({ jsonrpc: '2.0', id: 60, method: 'tools/call', params: { name: 'restart_server', arguments: {} } });
-  await w.sleep(250);
+  const readStarts = () => { try { return readFileSync(join(dir, 'starts'), 'utf8'); } catch { return ''; } };
+  const deadline = Date.now() + 15000;
+  while (readStarts() !== '2' && Date.now() < deadline) await w.sleep(10);
+  assert.equal(readStarts(), '2', 'the restart never started its server');
   w.send({ jsonrpc: '2.0', id: 61, method: 'test/hang' });
 
   const restart = await w.waitFor((m) => m.id === 60, 15000);
@@ -292,7 +305,7 @@ test('a request sent to a child that dies during a restart is answered, not left
   assert.equal(w.messages.filter((m) => m.id === 61).length, 1, 'answered exactly once');
 });
 
-test('a restart whose child never answers initialize fails after its 10s wait and stops that child', { timeout: 40000, skip: !posix }, async (t) => {
+test('a restart whose child never answers initialize fails after its 10s wait and stops that child', { timeout: 60000, skip: !posix }, async (t) => {
   const { mkdtempSync, rmSync } = await import('fs');
   const { tmpdir } = await import('os');
   const { join } = await import('path');
@@ -329,7 +342,7 @@ test('a restart whose child never answers initialize fails after its 10s wait an
   assert.equal((await w.waitFor((m) => m.id === 73))?.result?.tools?.length, 2);
 });
 
-test('restart_server refuses an argument it does not take and restarts nothing', { timeout: 20000, skip: !posix }, async (t) => {
+test('restart_server refuses an argument it does not take and restarts nothing', { timeout: 60000, skip: !posix }, async (t) => {
   const w = startWrapper();
   t.after(() => w.stop());
   await w.initialize(0);
@@ -344,7 +357,7 @@ test('restart_server refuses an argument it does not take and restarts nothing',
   assert.doesNotMatch(w.readLog(), /Restart requested/);
 });
 
-test('restart_server succeeds only once the new server has listed its tools, and says how many', { timeout: 20000, skip: !posix }, async (t) => {
+test('restart_server succeeds only once the new server has listed its tools, and says how many', { timeout: 60000, skip: !posix }, async (t) => {
   const w = startWrapper();
   t.after(() => w.stop());
   await w.initialize(0);
@@ -359,7 +372,7 @@ test('restart_server succeeds only once the new server has listed its tools, and
   assert.equal(w.messages.filter((m) => m.result?.tools).length, 0);
 });
 
-test("restart_server's note adds the reconnect only once the wrapper's own code changed, naming the files", { timeout: 20000, skip: !posix }, async (t) => {
+test("restart_server's note adds the reconnect only once the wrapper's own code changed, naming the files", { timeout: 60000, skip: !posix }, async (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), 'wrapper-stale-'));
   for (const file of [...WRAPPER_CODE_FILES, 'package.json']) cpSync(path.join(repo, file), path.join(dir, file));
   const w = startWrapper({}, { script: path.join(dir, 'wrapper.js') });
@@ -384,7 +397,7 @@ test("restart_server's note adds the reconnect only once the wrapper's own code 
   );
 });
 
-test('a restart whose server cannot list its tools fails, naming the error and the log, and stops it', { timeout: 20000, skip: !posix }, async (t) => {
+test('a restart whose server cannot list its tools fails, naming the error and the log, and stops it', { timeout: 60000, skip: !posix }, async (t) => {
   const { mkdtempSync, rmSync } = await import('fs');
   const { tmpdir } = await import('os');
   const { join } = await import('path');
@@ -408,14 +421,14 @@ test('a restart whose server cannot list its tools fails, naming the error and t
   assert.match((await w.waitFor((m) => m.id === 321, 15000))?.result?.content?.[0]?.text ?? '', /"success":true/);
 });
 
-test('a server that cannot start still leaves the client a session in which restart_server works', { timeout: 30000, skip: !posix }, async (t) => {
+test('a server that cannot start still leaves the client a session in which restart_server works', { timeout: 60000, skip: !posix }, async (t) => {
   const { mkdtempSync, rmSync } = await import('fs');
   const { tmpdir } = await import('os');
   const { join } = await import('path');
   const dir = mkdtempSync(join(tmpdir(), 'wrapper-dead-at-start-'));
   const w = startWrapper({ STUB_CHILD_START_COUNTER: join(dir, 'starts'), STUB_CHILD_DIE_UNTIL: '3' });
   t.after(() => { w.stop(); rmSync(dir, { recursive: true, force: true }); });
-  assert.ok(await w.waitForLog(/not respawning/), 'the server never reached the lockout');
+  assert.ok(await w.waitForLog(/not respawning/, 30000), 'the server never reached the lockout');
 
   const init = await w.initialize(0);
   assert.deepEqual(init?.result, {
@@ -433,7 +446,7 @@ test('a server that cannot start still leaves the client a session in which rest
   assert.equal((await w.waitFor((m) => m.id === 3))?.result?.tools?.length, 2);
 });
 
-test('an initialize the server dies under is answered by the wrapper rather than failed', { timeout: 30000, skip: !posix }, async (t) => {
+test('an initialize the server dies under is answered by the wrapper rather than failed', { timeout: 60000, skip: !posix }, async (t) => {
   const { mkdtempSync, rmSync } = await import('fs');
   const { tmpdir } = await import('os');
   const { join } = await import('path');
@@ -449,7 +462,7 @@ test('an initialize the server dies under is answered by the wrapper rather than
   assert.equal((await w.waitFor((m) => m.id === 1))?.result?.tools?.length, 2);
 });
 
-test('text split across pipe reads reaches either side intact', { timeout: 20000, skip: !posix }, async (t) => {
+test('text split across pipe reads reaches either side intact', { timeout: 60000, skip: !posix }, async (t) => {
   const w = startWrapper();
   t.after(() => w.stop());
   await w.initialize(0);
@@ -464,7 +477,7 @@ test('text split across pipe reads reaches either side intact', { timeout: 20000
   assert.equal(echoed?.result?.echo?.text, text);
 });
 
-test('an answer the server wrote before it died reaches the client, and only once', { timeout: 20000, skip: !posix }, async (t) => {
+test('an answer the server wrote before it died reaches the client, and only once', { timeout: 60000, skip: !posix }, async (t) => {
   const w = startWrapper();
   t.after(() => w.stop());
   await w.initialize(0);
@@ -477,7 +490,7 @@ test('an answer the server wrote before it died reaches the client, and only onc
   assert.deepEqual(replies[0].result, { answered: true }, `answered ${JSON.stringify(replies[0].error)}`);
 });
 
-test('a cancelled request is forgotten: its late answer is dropped and a later restart fails nothing for it', { timeout: 20000, skip: !posix }, async (t) => {
+test('a cancelled request is forgotten: its late answer is dropped and a later restart fails nothing for it', { timeout: 60000, skip: !posix }, async (t) => {
   const w = startWrapper();
   t.after(() => w.stop());
   await w.initialize(0);

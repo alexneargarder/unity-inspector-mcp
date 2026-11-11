@@ -18,6 +18,16 @@ function connectedClient(port) {
   return new UnityInspectorClient({ host: '127.0.0.1', port, connectTimeoutMs: 2000 });
 }
 
+async function until(condition, what) {
+  const deadline = Date.now() + 5000;
+  while (!condition()) {
+    if (Date.now() > deadline) assert.fail(`timed out waiting until ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+const betweenPolls = (client, seen, requests) => () => seen.length === requests && client.pending.size === 0;
+
 test('simulate_input budgets the planned time, a frame allowance per press and the transport margin', () => {
   assert.equal(
     commandTimeout('simulate_input', { action: 'fire', count: 40, interval: 200, duration: 120 }),
@@ -203,7 +213,7 @@ test('a cancelled call stops its plan in the game and returns at once', { timeou
 
   const controller = new AbortController();
   const plan = client.runCall(controller.signal, () => client.sendCommand('simulate_input', { action: 'right', duration: 5000 }));
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  await until(betweenPolls(client, seen, 1), 'the plan is accepted and between polls');
   const abortedAt = Date.now();
   controller.abort();
   await assert.rejects(plan, /simulate_input was cancelled/);
@@ -223,7 +233,7 @@ test('a cancel the game never answers holds nothing up, and its budget drops the
 
   const controller = new AbortController();
   const plan = client.runCall(controller.signal, () => client.sendCommand('simulate_input', { action: 'right', duration: 5000 }));
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  await until(betweenPolls(client, seen, 1), 'the plan is accepted and between polls');
   const abortedAt = Date.now();
   controller.abort();
   await assert.rejects(plan, /simulate_input was cancelled/);
@@ -247,10 +257,10 @@ test('a plan already finished, or a cancel the game refuses, is no error', { tim
   for (let run = 0; run < 2; run++) {
     const controller = new AbortController();
     const plan = client.runCall(controller.signal, () => client.sendCommand('simulate_input', { action: 'right', duration: 5000 }));
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await until(betweenPolls(client, seen, 2 * run + 1), `plan ${run + 1} is accepted and between polls`);
     controller.abort();
     await assert.rejects(plan, /simulate_input was cancelled/);
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await until(() => seen.length === 2 * run + 2 && client.pending.size === 0, `the cancel of plan ${run + 1} is answered`);
   }
   assert.equal(seen.filter((r) => r.method === 'cancel_input_plan').length, 2);
   assert.equal(client.isConnected(), true);
@@ -267,7 +277,7 @@ test('a call cancelled with its poll running sends no cancel: the socket it drop
 
   const controller = new AbortController();
   const plan = client.runCall(controller.signal, () => client.sendCommand('simulate_input', { action: 'right', duration: 5000 }));
-  await new Promise((resolve) => setTimeout(resolve, 150));
+  await until(() => seen.length === 2, 'the poll is in flight');
   assert.deepEqual(seen, ['simulate_input', 'input_plan']);
   controller.abort();
   await assert.rejects(plan, /simulate_input was cancelled/);
@@ -293,12 +303,12 @@ test('a call cancelled with its poll queued behind another command still cancels
   const plan = client.runCall(controller.signal, () => client.sendCommand('simulate_input', { action: 'right', duration: 5000 }));
   await new Promise((resolve) => setTimeout(resolve, 5));
   const slow = client.sendCommand('execute_code', { code: 'return;' });
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  await until(() => seen.includes('execute_code'), 'the slower command is running');
   assert.equal(seen.at(-1), 'execute_code', 'the poll is queued behind the slower command');
   controller.abort();
   await assert.rejects(plan, /simulate_input was cancelled/);
   await slow;
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  await until(() => seen.includes('cancel_input_plan'), 'the cancel arrives');
   assert.equal(seen.at(-1), 'cancel_input_plan');
   assert.ok(!seen.includes('input_plan'), 'the queued poll was never written');
 });
@@ -310,7 +320,7 @@ test('a plan past its budget is cancelled too, so the game stops pressing when t
   t.after(async () => { client.disconnect(); await stub.close(); });
 
   await assert.rejects(client.sendCommand('simulate_input', { action: 'fire' }, 300), /had not finished input plan 12/);
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  await until(() => seen.some((request) => request.method === 'cancel_input_plan'), 'the cancel arrives');
   assert.equal(seen.at(-1).method, 'cancel_input_plan');
 });
 

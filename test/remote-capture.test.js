@@ -14,8 +14,8 @@ const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'remote-capture-'));
 
 const { handleToolCall, resetTargetResolution, setLaunchResolver, shutdownServer, unityClient } = await import('../index.js');
 const {
-  CLAIM_SLACK_MS, FETCH_BUDGET_MS, buildReport, runCapture, LEFTOVER_REMOVALS_PER_RUN, REMOTE_CAPTURE_DIR, SCRIPT_PATH, claimLeaseMs, fetchLeaseMs,
-  remoteSetupMs,
+  CLAIM_SLACK_MS, FETCH_BUDGET_MS, buildReport, runCapture, LEFTOVER_AGE_MS, LEFTOVER_REMOVALS_PER_RUN, REMOTE_CAPTURE_DIR, SCRIPT_PATH, claimLeaseMs,
+  fetchLeaseMs, remoteSetupMs,
 } = await import('../lib/animation-capture.js');
 const { LINUX_GAME_COMM, setKillSignaller, setProcReader } = await import('../lib/game-process.js');
 const { WRITE_CHUNK_BYTES } = await import('../lib/remote-files.js');
@@ -242,7 +242,7 @@ test('capture_animations takes no gameOut on a remote target, declared or from U
   assertFenced();
 });
 
-test('a remote sweep sets up its own folder in the game\'s cache, polls it, fetches the strips and capture.json, and removes it', { timeout: 30000 }, async (t) => {
+test('a remote sweep sets up its own folder under the game process\'s folder in the game\'s cache, polls it, fetches the strips and capture.json, and removes it', { timeout: 30000 }, async (t) => {
   const note = 'x'.repeat(WRITE_CHUNK_BYTES + 1000);
   const { out, statesPath } = await sweepSetup(t, { states: STATES.map((state) => ({ ...state, note })) });
   const cache = path.join(scratch, 'game-cache');
@@ -262,8 +262,9 @@ test('a remote sweep sets up its own folder in the game\'s cache, polls it, fetc
       };
     },
   });
-  game.remote.write(path.posix.join(root, 'crashed-server/running.png'), 'left by a server that died');
-  game.remote.write(path.posix.join(root, 'stale-run/states.json'), '{}');
+  const processDir = path.posix.join(root, String(game.remote.processId));
+  game.remote.write(path.posix.join(processDir, 'crashed-server/running.png'), 'left by a server that died');
+  game.remote.write(path.posix.join(processDir, 'stale-run/states.json'), '{}');
 
   const swept = payload(await call('capture_animations', { out, states: statesPath, timeout: 1 }));
   assert.equal(swept.status, 'done', swept.message);
@@ -271,8 +272,8 @@ test('a remote sweep sets up its own folder in the game\'s cache, polls it, fetc
   assertFenced();
 
   const claim = game.slot.history.find((step) => step.why === 'claim').entry;
-  const gameOut = path.posix.join(root, claim.token);
-  assert.equal(claim.out, gameOut, 'the claim names the folder the sweep writes into');
+  const gameOut = path.posix.join(processDir, claim.token);
+  assert.equal(claim.out, gameOut, 'the claim names the folder the sweep writes into, under the game process\'s own folder');
   assert.deepEqual(game.script.outDir, gameOut);
   assert.deepEqual(game.script.statesFile, path.posix.join(gameOut, 'states.json'));
   assert.equal(game.script.claim, claim.token);
@@ -281,8 +282,9 @@ test('a remote sweep sets up its own folder in the game\'s cache, polls it, fetc
   const ops = game.ops();
   assert.equal(ops[0], 'list', 'the cache folder is listed before anything changes');
   const removed = game.remote.callsOf('removeDir').map((entry) => entry.params.path);
-  assert.deepEqual(removed.slice(0, 2).sort(), [path.posix.join(root, 'crashed-server'), path.posix.join(root, 'stale-run')], 'the leftover folders are removed');
-  assert.deepEqual(remoteFilesUnder(game.remote, path.posix.join(root, 'crashed-server')), []);
+  assert.deepEqual(removed.slice(0, 2).sort(), [path.posix.join(processDir, 'crashed-server'), path.posix.join(processDir, 'stale-run')], 'this game\'s earlier runs are removed');
+  assert.deepEqual(remoteFilesUnder(game.remote, path.posix.join(processDir, 'crashed-server')), []);
+  assert.ok(game.remote.callsOf('removeDir').every((entry) => entry.params.pruneParent === true), 'every removal asks for pruneParent');
   const writes = game.remote.callsOf('write');
   const local = await fs.readFile(path.join(out, 'states.json'));
   assert.equal(writes.length, Math.ceil(local.length / WRITE_CHUNK_BYTES), 'states.json is written in chunks');
@@ -299,7 +301,7 @@ test('a remote sweep sets up its own folder in the game\'s cache, polls it, fetc
   assert.doesNotMatch(swept.report, /Not fetched/);
   assert.equal(swept.paths.capture, path.join(out, 'capture.json'));
 
-  assert.deepEqual(remoteFilesUnder(game.remote, gameOut), [], 'the sweep\'s folder is removed once fetched');
+  assert.deepEqual(remoteFilesUnder(game.remote, root), [], 'the sweep\'s folder is removed once fetched');
   const order = game.slot.history.map((step) => step.why);
   assert.deepEqual(order, ['claim', 'script', 'finish', 'lease', 'unload', 'release'], 'the lease replaces the finished sweep before the unload, and is released last');
   const lease = game.slot.history.find((step) => step.why === 'lease').entry;
@@ -325,14 +327,20 @@ test('the claim lease covers the setup calls a remote sweep adds, and the fetch 
   const { out, statesPath } = await sweepSetup(t);
   const root = path.posix.join(scratch, 'game-cache', REMOTE_CAPTURE_DIR);
   const game = await remoteCaptureGame(t, { onScript: finishSweep });
-  for (let i = 0; i < LEFTOVER_REMOVALS_PER_RUN + 2; i++) game.remote.write(path.posix.join(root, `left-${i}`, 'x.png'), 'x');
+  const own = path.posix.join(root, String(game.remote.processId));
+  const idleSince = game.remote.now() - LEFTOVER_AGE_MS - 1000;
+  for (let i = 0; i < 6; i++) game.remote.write(path.posix.join(root, String(9100 + i), 'idle-run', 'x.png'), 'x', idleSince);
+  for (let i = 0; i < 6; i++) game.remote.write(path.posix.join(own, `earlier-${i}`, 'x.png'), 'x');
   payload(await call('capture_animations', { out, states: statesPath, timeout: 5 }));
 
   const claim = game.slot.history.find((step) => step.why === 'claim').entry;
   const statesBytes = (await fs.stat(path.join(out, 'states.json'))).size;
-  const removals = game.remote.callsOf('removeDir').length - 1;
+  const removed = game.remote.callsOf('removeDir').map((entry) => entry.params.path).slice(0, -1);
+  const removals = removed.length;
   assert.equal(removals, LEFTOVER_REMOVALS_PER_RUN, 'one run removes at most its share of leftovers');
-  const expected = claimLeaseMs({ timeoutMs: 5000, settleMs: 0, swapSettleMs: 0 }, { removals, statesBytes });
+  assert.deepEqual(removed.slice(0, 6).sort(), Array.from({ length: 6 }, (_, i) => path.posix.join(own, `earlier-${i}`)).sort(), 'this game\'s own earlier runs count first');
+  assert.ok(removed.slice(6).every((folder) => /\/91\d\d\/idle-run$/.test(folder)), `the rest of the share goes to other games' idle runs: ${removed.slice(6)}`);
+  const expected = claimLeaseMs({ timeoutMs: 5000, settleMs: 0 }, { removals, statesBytes });
   assert.equal(claim.lease, Number((expected / 1000).toFixed(1)), 'the lease the claim asks for covers the removals and writes it went on to make');
 });
 
@@ -444,14 +452,104 @@ test('a refused claim leaves every folder in the game\'s cache alone', { timeout
   const { out, statesPath } = await sweepSetup(t);
   const root = path.posix.join(scratch, 'game-cache', REMOTE_CAPTURE_DIR);
   const game = await remoteCaptureGame(t);
-  game.remote.write(path.posix.join(root, 'another-server/running.png'), 'still being fetched');
-  game.slot.entry = { kind: 'claim', token: 'another-server', out: path.posix.join(root, 'another-server'), leaseEnd: 100 };
+  const held = path.posix.join(root, String(game.remote.processId), 'another-server');
+  game.remote.write(path.posix.join(held, 'running.png'), 'still being fetched');
+  game.slot.entry = { kind: 'claim', token: 'another-server', out: held, leaseEnd: 100 };
 
   const refused = await call('capture_animations', { out, states: statesPath, timeout: 5 });
   assert.equal(refused.isError, true);
-  assert.match(textOf(refused), new RegExp(`Another animation-capture sweep, into ${root}/another-server, is running in this game`));
+  assert.match(textOf(refused), new RegExp(`Another animation-capture sweep, into ${held}, is running in this game`));
   assert.deepEqual(game.ops(), ['list'], 'nothing was removed or written');
-  assert.deepEqual(remoteFilesUnder(game.remote, path.posix.join(root, 'another-server')), [path.posix.join(root, 'another-server/running.png')]);
+  assert.deepEqual(remoteFilesUnder(game.remote, held), [path.posix.join(held, 'running.png')]);
+});
+
+test('a remote sweep removes this game\'s earlier runs and other games\' runs idle for a day, and leaves every other folder in the cache alone', { timeout: 30000 }, async (t) => {
+  const { out, statesPath } = await sweepSetup(t);
+  const root = path.posix.join(scratch, 'game-cache', REMOTE_CAPTURE_DIR);
+  const game = await remoteCaptureGame(t, { onScript: finishSweep });
+  const own = String(game.remote.processId);
+  const folders = {
+    earlier: path.posix.join(root, own, 'earlier-run'),
+    live: path.posix.join(root, '9001', 'live-run'),
+    idle: path.posix.join(root, '9002', 'idle-run'),
+    almostIdle: path.posix.join(root, '9003', 'almost-idle'),
+    idleBeside: path.posix.join(root, '9003', 'idle-beside'),
+    oldLayoutRecent: path.posix.join(root, '5f3a9c0d1e2b4a68'),
+    oldLayoutIdle: path.posix.join(root, '0c1d2e3f4a5b6c7d'),
+  };
+  game.remote.write(path.posix.join(folders.earlier, 'running.png'), 'an earlier run in this game');
+  game.remote.write(path.posix.join(folders.live, 'states.json'), '{}');
+  game.remote.write(path.posix.join(folders.live, 'running.png'), 'another game\'s sweep, still running');
+  game.remote.write(path.posix.join(folders.oldLayoutRecent, 'running.png'), 'an old-layout run from today');
+  const now = game.remote.now();
+  const idleSince = now - LEFTOVER_AGE_MS - 60000;
+  game.remote.write(path.posix.join(folders.idle, 'capture.json'), '{}', idleSince);
+  game.remote.write(path.posix.join(folders.almostIdle, 'capture.json'), '{}', now - LEFTOVER_AGE_MS + 60000);
+  game.remote.write(path.posix.join(folders.idleBeside, 'nested', 'capture.json'), '{}', idleSince);
+  game.remote.write(path.posix.join(folders.oldLayoutIdle, 'running.png'), 'an old-layout run from last week', now - 7 * LEFTOVER_AGE_MS);
+  const kept = ['live', 'almostIdle', 'oldLayoutRecent'];
+  const before = Object.fromEntries(kept.map((name) => [name, remoteFilesUnder(game.remote, folders[name])]));
+
+  const swept = payload(await call('capture_animations', { out, states: statesPath, timeout: 5 }));
+  assert.equal(swept.status, 'done', swept.message);
+  const gameOut = game.script.outDir;
+  assert.equal(path.posix.dirname(gameOut), path.posix.join(root, own), 'the sweep\'s folder is under the game process\'s own folder');
+  const removed = game.remote.callsOf('removeDir').map((entry) => entry.params.path).filter((folder) => folder !== gameOut);
+  assert.equal(removed[0], folders.earlier, 'this game\'s earlier run goes first');
+  assert.deepEqual(removed.slice(1).sort(), [folders.idle, folders.idleBeside, folders.oldLayoutIdle].sort(), 'only runs no write has touched for a day are removed from other games');
+  for (const name of kept) {
+    assert.deepEqual(remoteFilesUnder(game.remote, folders[name]), before[name], `${name} was left with every file in it`);
+  }
+  for (const name of ['earlier', 'idle', 'idleBeside', 'oldLayoutIdle']) assert.deepEqual(remoteFilesUnder(game.remote, folders[name]), [], name);
+  assertFenced();
+});
+
+test('two games on one machine sweep side by side, and neither prep removes the other game\'s live folder', { timeout: 40000 }, async (t) => {
+  const first = await sweepSetup(t);
+  const second = await sweepSetup(t);
+  const cache = path.join(scratch, 'game-cache');
+  const root = path.posix.join(cache, REMOTE_CAPTURE_DIR);
+  const firstFs = fakeRemoteFs({ temporaryCachePath: cache, processId: 7310 });
+  const secondFs = fakeRemoteFs({ temporaryCachePath: cache, processId: 7311, machine: firstFs.machine });
+  let firstOut = null;
+  let secondDone = false;
+  await remoteCaptureGame(t, {
+    remote: firstFs,
+    onScript: (game, args) => {
+      firstOut = args.outDir;
+      game.remote.write(path.posix.join(args.outDir, 'running.png'), STRIPS['running.png']);
+      game.remote.hooks.sentinel = () => {
+        if (secondDone && !game.remote.bytesOf(path.posix.join(args.outDir, 'done'))) {
+          finishSweep(game, args, { strips: { 'idle.png': STRIPS['idle.png'] } });
+        }
+      };
+    },
+  });
+  const sweep = call('capture_animations', { out: first.out, states: first.statesPath, timeout: 30 });
+  await until(() => firstFs.callsOf('sentinel').length > 0);
+  const live = remoteFilesUnder(firstFs, firstOut);
+  assert.deepEqual(live.sort(), [path.posix.join(firstOut, 'running.png'), path.posix.join(firstOut, 'states.json')]);
+
+  const secondGame = await remoteCaptureGame(t, { remote: secondFs, declare: false, onScript: finishSweep });
+  const client = new UnityInspectorClient({ host: '127.0.0.1', port: secondGame.stub.port });
+  t.after(() => client.disconnect());
+  const run = await runCapture(
+    { remote: true, statesPaths: [second.statesPath], out: second.out, gameOut: null, timeoutMs: 5000, player: 0 },
+    client,
+    { pollMs: 5, remotePollMs: 5, isRunning: async () => null },
+  );
+  assert.equal(run.outcome.status, 'done');
+  assert.equal(path.posix.dirname(secondGame.script.outDir), path.posix.join(root, '7311'));
+  assert.deepEqual(remoteFilesUnder(firstFs, firstOut).sort(), live, 'the second game\'s sweep left the first game\'s live folder whole');
+  assert.deepEqual(await fs.readFile(path.join(second.out, 'running.png')), STRIPS['running.png']);
+
+  secondDone = true;
+  const swept = payload(await sweep);
+  assert.equal(swept.status, 'done', swept.message);
+  assert.deepEqual(await fs.readFile(path.join(first.out, 'running.png')), STRIPS['running.png'], 'the strip the first game wrote before the second game\'s prep arrives');
+  assert.deepEqual(await fs.readFile(path.join(first.out, 'idle.png')), STRIPS['idle.png']);
+  assert.deepEqual(remoteFilesUnder(firstFs, root), [], 'each game removed its own folder after its fetch');
+  assertFenced();
 });
 
 test('the capture script hands a finished sweep\'s slot to its claim for the hold it was given', async () => {

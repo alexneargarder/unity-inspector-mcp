@@ -346,6 +346,7 @@ test('the misnamed keys real calls sent are refused, never run without them', as
     ['unload_script', { name: 'watch-field' }, '"name"', 'path'],
     ['spawn_entity', { entity: 'Mook', x: 1, y: 2 }, '"entity"', 'type'],
     ['inspect_component', { path: '/Player', component: 'Transform' }, '"component"', 'componentType'],
+    ['capture_animations', { out: '/tmp/capture-out', bro: 'Rambro', swapSettle: 2 }, '"swapSettle"', 'swapTimeout'],
   ];
   for (const [name, args, unknown, valid] of cases) {
     const text = await assertRefusedBeforeTheGame(name, args, new RegExp(unknown));

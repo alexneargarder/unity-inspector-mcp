@@ -89,8 +89,10 @@
         "code": "var d = System.AppDomain.CurrentDomain;\nvar rec = d.GetData(\"uimtest.level\") as string;\nd.SetData(\"uimtest.level\", null);\nif (rec == null) return \"no level recorded\";\nvar p = rec.Split('|');\nvar r = Unity_Inspector_Mod.StateModifier.GoToLevel(int.Parse(p[0]), int.Parse(p[1]));\nvar j = Newtonsoft.Json.Linq.JToken.FromObject(r);\nreturn \"loading recorded level \" + rec + \": success=\" + j[\"success\"] + \" \" + j.ToString(Newtonsoft.Json.Formatting.None);"
       },
       "expect": {
+        "success": true,
         "notContains": [
-          "failed"
+          "failed",
+          "success=False"
         ]
       }
     },
