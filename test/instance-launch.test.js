@@ -7,7 +7,7 @@ import { existsSync } from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { STUB_GAME_ROOT, fakeInspector, instanceListJsonl, seedInstanceDir, useStubLauncher, writeStubStopCommand } from './support/stub-launcher.js';
+import { STUB_GAME_ROOT, fakeInspector, instanceListJsonl, reservingListJsonl, seedInstanceDir, useStubLauncher, writeStubStopCommand } from './support/stub-launcher.js';
 import { conditionalProcReader, fakeFileSystem, fakeProcReader } from './support/fake-proc.js';
 
 const isLinux = process.platform === 'linux';
@@ -231,6 +231,73 @@ test('a cap that never frees is reported with the instances holding the slots', 
   assert.equal(result.runningInstances[0].last_launch, 1788687953);
   // The cap wait is its own budget and must not run to the full launch budget
   assert.ok(elapsed < 20000, `the cap wait overran: ${elapsed}ms`);
+});
+
+test('a launcher whose count of slots in use is at its cap is full with fewer games running', { timeout: 30000, skip: !isLinux }, async () => {
+  configureLaunchTiming({ capPollMs: 1, capWaitMs: 60 });
+  await control('cap-refusals', '99');
+  await control('list.json', reservingListJsonl(2, 2, [
+    { id: 'busy-one', running: true, pid: 944835, port: 9901, last_launch: 1788687953 },
+    { id: 'idle-one', last_launch: 0 },
+    { id: 'busy-two', launching: true, last_launch: 0 },
+  ]));
+
+  const result = payload(await launch());
+
+  assert.equal(result.state, 'cap-reached', result.message);
+  assert.match(result.message, /cap of 2 /);
+  assert.match(result.message, /Instances holding the slots: busy-one, busy-two \(launching\)\.$/);
+  assert.deepEqual(result.runningInstances, [
+    { id: 'busy-one', port: 9901, last_launch: 1788687953, stale: 0 },
+    { id: 'busy-two', port: null, last_launch: 0, stale: 0, launching: true },
+  ]);
+  // A wait that read the list as full never launched again
+  assert.equal((await launcherCalls()).filter(call => call === `instance ${SESSION} launch`).length, 1);
+});
+
+test('a reservation the list has no line for holds a slot, and the cap refusal counts it without naming it', { timeout: 30000, skip: !isLinux }, async () => {
+  configureLaunchTiming({ capPollMs: 1, capWaitMs: 60 });
+  await control('cap-refusals', '99');
+  await control('list.json', reservingListJsonl(2, 2, [{ id: 'busy-one', running: true, pid: 944835, port: 9901 }]));
+
+  const result = payload(await launch());
+
+  assert.equal(result.state, 'cap-reached', result.message);
+  assert.match(result.message,
+    /Instances holding the slots: busy-one\. 1 slot is held by a launch with no instance in the list yet\.$/);
+  assert.deepEqual(result.runningInstances.map(entry => entry.id), ['busy-one']);
+  assert.equal((await launcherCalls()).filter(call => call === `instance ${SESSION} launch`).length, 1);
+
+  // With a line of the list unparsed, the slot it does not name may be that line's instance
+  await control('list.json', reservingListJsonl(2, 2, [{ id: 'busy-one', running: true, pid: 944835, port: 9901 }]) +
+    '{"id":"torn","running":\n');
+  const torn = payload(await launch());
+  assert.match(torn.message, /1 slot is held by a launch with no instance in the list yet, or by an instance on a line that could not be parsed\. 1 line of that list could not be parsed/);
+});
+
+test('a launcher whose count of slots in use is under its cap has a slot free', { timeout: 30000, skip: !isLinux }, async () => {
+  await control('cap-refusals', '1');
+  await control('list.json', reservingListJsonl(2, 1, [{ id: 'busy-one', running: true, pid: 944835, port: 9901 }]));
+
+  const result = payload(await launch());
+
+  assert.equal(result.success, true, result.message);
+  assert.equal((await launcherCalls()).filter(call => call === `instance ${SESSION} launch`).length, 2, 'the launch was not retried');
+});
+
+test('a refusal a reserving launcher\'s list disagrees with names the slots in use and those it has no line for', { timeout: 30000, skip: !isLinux }, async () => {
+  configureLaunchTiming({ capPollMs: 1, capWaitMs: 60 });
+  await control('cap-refusals', '99');
+  await control('list.json', reservingListJsonl(8, 3, [
+    { id: 'busy-one', running: true, pid: 944835, port: 9901 },
+    { id: 'busy-two', launching: true },
+  ]));
+
+  const result = payload(await launch());
+
+  assert.equal(result.state, 'cap-reached', result.message);
+  assert.match(result.message, /list last showed 3 of 8 slots in use \(busy-one, busy-two \(launching\)\), yet the launcher refused this launch\. 1 slot is held by a launch with no instance in the list yet\.$/);
+  assert.doesNotMatch(result.message, /holding the slots/);
 });
 
 test('a refusal the launcher\'s own list disagrees with is reported as the list showed it', { timeout: 30000, skip: !isLinux }, async () => {

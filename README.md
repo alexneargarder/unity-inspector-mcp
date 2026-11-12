@@ -158,7 +158,7 @@ There are 33, 32 from the server and `restart_server` from the wrapper. A call t
 | `trace_spawns` | Record the game's mook, projectile and (on request) doodad spawn calls, then read them back by sequence number, until stopped or the server reconnects, which `restart_server` always does. |
 | `modify_component` | Write fields and properties on a component, instance or static, and read each back. Each property that could not be written, or did not hold the value, comes back with a reason. |
 | `set_game_speed` | Set the time scale (1.0 is normal), checked a frame later; a scene load, a cutscene or the game's own slow motion resets it. |
-| `simulate_input` | Press or hold a game action for a player, with an optional hold duration or repeat count, run an ordered sequence of held steps and pauses in one call, or press a mod's RocketLib key binding by name; the reply counts the frames on which the game read each press. |
+| `simulate_input` | Press or hold a game action for a player, with an optional hold duration or repeat count, run an ordered sequence of held steps and pauses in one call, or press a mod's RocketLib key binding by name; the reply counts the frames on which the game read each press. `tracks` starts several sequences on the same frame. |
 | `list_campaigns` | List campaigns with their indices. |
 | `go_to_level` | Go directly to a campaign/level pair, replying once the level is in play or a cutscene holds it. |
 | `restart_level` | Restart the current level, clearing checkpoints and trigger state, replying once it is in play again or a cutscene holds it. |
@@ -184,6 +184,12 @@ Under Proton and WSL the game returns Windows paths for screenshots, and the ser
 A script gets its own Harmony instance, a logger and a dictionary of its arguments, and its patches and GameObjects are cleaned up when it unloads. The format, the lifecycle, the ScriptContext API and the .NET 3.5 constraints are in [scripts/csharp/README.md](scripts/csharp/README.md). You can run a script that isn't in the library by passing an absolute path to it, it just won't show up in the catalog.
 
 Once a script is loaded, the types it defines are in scope for `execute_code`, by name or through reflection. `GetMethodBody()` on one of its methods and a Harmony patch on one are refused, since reading that method's body would take the game process down.
+
+`run-script.js` runs one script (a library name or a path, as with `execute_script`) from the shell as soon as the game answers, for when a script has to be running in the game's first few seconds. `--wait` keeps trying until the game is up, and `--new-token` waits for a token other than the one the file held when it started, so you can start it before a relaunch.
+
+```bash
+node run-script.js --port <port> --token-file <file> [--host <host>] [--wait <seconds>] [--new-token] [--arg <key>=<value>]... <script>
+```
 
 ## Test scripts
 

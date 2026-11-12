@@ -1691,7 +1691,7 @@ function toolDefinitions({ launchHelp = "" } = {}) {
             componentType: { type: "string" },
             memberPath: {
               type: "string",
-              description: "One member instead of the whole component, e.g. 'weapon.damage'",
+              description: "e.g. 'weapon.damage'",
             },
           },
           required: ["componentType"],
@@ -1728,7 +1728,7 @@ function toolDefinitions({ launchHelp = "" } = {}) {
       },
       {
         name: "take_screenshot",
-        description: "Screenshot the game; returns the saved path. An optional `highlight` outlines a target for that frame only: the reply has `highlighted` or `highlightError`.",
+        description: "Screenshot the game and return its path, keeping only the newest 50. An optional `highlight` outlines a target for that frame only: the reply has `highlighted` or `highlightError`.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1752,7 +1752,7 @@ function toolDefinitions({ launchHelp = "" } = {}) {
       },
       {
         name: "execute_code",
-        description: "Run C# in the Unity context: statements, local declarations, and 'return expr;' statements or a trailing expression, whose value comes back. Locals do not persist between calls; use static members for that. A loaded script's types are in scope. The result is resultSet:true with the value in 'result'; success:true, resultSet:false when it ran and returned nothing; or success:false with 'error', plus 'stackTrace', 'position' and 'statement' when the code threw. Code running past 9s is stopped at its next loop or call. Imports System, System.{Collections, Collections.Generic, IO, Linq, Reflection, Text}, UnityEngine, HarmonyLib, Unity_Inspector_Mod; other namespaces need a using or full name. Private and internal members and types are reachable. Math is the game's class: use System.Math or Mathf. string.Join takes a string[]: call .ToArray().",
+        description: "Run C# in the Unity context: statements, local declarations, and 'return expr;' statements or a trailing expression. Locals do not persist between calls; use static members for that. A loaded script's types are in scope. The result is resultSet:true with the value in 'result'; success:true, resultSet:false when it ran and returned nothing; or success:false with 'error', plus 'stackTrace', 'position' and 'statement' when the code threw. Code running past 9s is stopped at its next loop or call. Imports System, System.{Collections, Collections.Generic, IO, Linq, Reflection, Text}, UnityEngine, HarmonyLib, Unity_Inspector_Mod; other namespaces need a using or full name. Private and internal members and types are reachable. Math is the game's class: use System.Math or Mathf. string.Join takes a string[]: call .ToArray().",
         inputSchema: {
           type: "object",
           properties: {
@@ -1879,7 +1879,7 @@ function toolDefinitions({ launchHelp = "" } = {}) {
       },
       {
         name: "go_to_level",
-        description: "Go to a campaign level; replies once in play, or once a cutscene holds it (named in `cutscene`), else fails after 60s. An out-of-range campaignIndex is rejected; a levelIndex past the campaign's end loads the Victory map. A `warning` says that `simulate_input` `start` skips the cutscene.",
+        description: "Go to a campaign level; replies once in play, or once a cutscene holds it (named in `cutscene`, with a `warning`), else fails after 60s. An out-of-range campaignIndex is rejected; a levelIndex past the campaign's end loads the Victory map.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1892,7 +1892,7 @@ function toolDefinitions({ launchHelp = "" } = {}) {
       {
         name: "swap_bro",
         description:
-          "Swap a player's bro: recalls the current bro and spawns the new one at the same position, failing if the slot does not keep it. Requires Swap Bros Mod, and is refused when it is not active. A name that matches nothing answers `availableBros` plus the full `allNormal`, `allExpendabros` and `allUnfinished` rosters.",
+          "Swap a player's bro: recalls the current bro and spawns the new one at the same position, failing if the slot does not keep it. Refused unless Swap Bros Mod is active. A name that matches nothing answers `availableBros` plus the full `allNormal`, `allExpendabros` and `allUnfinished` rosters.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1913,7 +1913,7 @@ function toolDefinitions({ launchHelp = "" } = {}) {
       {
         name: "list_bros",
         description:
-          "List the bros swap_bro can use, with currentBro (the bro in the player's slot), selectedBro (Swap Bros Mod's pick) and currentBros (both, per active player). Requires Swap Bros Mod, and is refused when it is not active.",
+          "List the bros swap_bro can use, with currentBro (the bro in the player's slot), selectedBro (Swap Bros Mod's pick) and currentBros (both, per active player). Refused unless Swap Bros Mod is active.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1932,7 +1932,7 @@ function toolDefinitions({ launchHelp = "" } = {}) {
       },
       {
         name: "simulate_input",
-        description: "Simulate input: exactly one of 'action' (press or hold), 'binding' (a key binding, '<mod id>/<binding name>') or 'sequence' (steps). Replies when the plan ends; 'framesRead' counts the frames that read each press, and an unread press fails. 'highFive' is the interact button: it high-fives a prisoner, melees and activates the first switch within 16 units across, 24 up or down. A teleport door in range, a live grenade within 20 units or a citizen within 32 units takes the press first, and a held grenade or mook or a running special blocks it. Only 'player''s controller or binding entry reads it.",
+        description: "Press or hold input: exactly one of 'action', 'binding' (a key binding, '<mod id>/<binding name>'), 'sequence' (steps) or 'tracks' (2-8 sequences at once). Replies when the plan ends: 'framesRead' counts the frames that read each press, and an unread press fails. Only 'player''s controller or binding entry reads it. 'start' opens the pause menu, never 'escape'; that pause takes only the opening controller's input, never the real Esc key. 'highFive' (interact) high-fives a prisoner, melees and activates the first switch within 16 units across, 24 up or down. A teleport door in range, a live grenade within 20 units or a citizen within 32 units takes it first, and a held grenade or mook or a running special blocks it.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1949,12 +1949,13 @@ function toolDefinitions({ launchHelp = "" } = {}) {
                   action: { type: "string", description: "Omit for a pure pause" },
                   binding: { type: "string" },
                   duration: { type: "integer", description: "Ms held (default: 50)" },
-                  wait: { type: "integer", description: "Ms paused afterwards" },
+                  wait: { type: "integer", description: "Ms paused after" },
                 },
               },
             },
-            duration: { type: "integer", description: "Ms held, per press with count (default: 50)" },
-            count: { type: "integer", description: "Number of presses" },
+            tracks: { type: "array" },
+            duration: { type: "integer", description: "Ms held per press (default: 50)" },
+            count: { type: "integer" },
             interval: { type: "integer", description: "Ms between presses (default: 200)" },
             player: { type: "integer" },
           },
@@ -1982,7 +1983,7 @@ function toolDefinitions({ launchHelp = "" } = {}) {
       },
       {
         name: "game_state",
-        description: "The loaded level, game mode, player status and bro type. 'scene' is the Unity scene: every level is the one gameplay scene, and 'isCampaignScene' tells it from the world map, victory screen and cutscenes. The level is 'campaignName' (list_campaigns' 'name'), 'campaignDisplay' (its 'displayName'), 'levelName', 'levelIndex' (0-based) and 'levelNumber' (1-based), all null off a level. Also `target` (`instance`, `steam`, `remote`, or null until the launcher has answered), `port`, `instance` (else an `instanceReason`), the `logs` read_log uses, and when known `runningInstances` and `build`.",
+        description: "The loaded level, game mode, player status and bro type. 'scene' is the Unity scene: every level is the one gameplay scene, and 'isCampaignScene' tells it from the world map, victory screen and cutscenes. The level is 'campaignName' (list_campaigns' 'name'), 'campaignDisplay' (its 'displayName'), 'levelName', 'levelIndex' (0-based) and 'levelNumber' (1-based), all null off a level. Also `target` (`instance`, `steam`, `remote`, or null until the launcher answers), `port`, `instance` (else an `instanceReason`), the `logs` read_log uses, and when known `runningInstances` and `build`.",
         inputSchema: {
           type: "object",
           properties: {},
@@ -2018,7 +2019,7 @@ function toolDefinitions({ launchHelp = "" } = {}) {
       },
       {
         name: "execute_script",
-        description: "Compile and run a C# script file under execute_code's rules; list_scripts lists the library. Supports full class definitions, MonoBehaviours and Harmony patches. Scripts can define Main() for execution and Unload() for cleanup. Use ScriptContext for Harmony instances and logging.",
+        description: "Compile and run a C# script file under execute_code's rules; list_scripts lists the library. Full classes, MonoBehaviours and Harmony patches work. An optional Main() runs it and Unload() cleans up. ScriptContext gives Harmony instances and logging.",
         inputSchema: {
           type: "object",
           properties: {
@@ -2054,7 +2055,7 @@ function toolDefinitions({ launchHelp = "" } = {}) {
       {
         name: "capture_animations",
         description:
-          "Sweep a bro's animation states with the game clock held at zero, optionally loading a level and swapping the bro first: one " +
+          "Sweep a bro's animation states with the game clock held at zero: one " +
           "PNG strip per state, `capture.json` and `report.md` (cells against the state list), " +
           "all into `out`. The reply carries `status` and the report. Reference: `AGENTS.md`, Animation capture.",
         inputSchema: {
@@ -2070,7 +2071,7 @@ function toolDefinitions({ launchHelp = "" } = {}) {
               description: "Layered state lists, relative to lib/animation-capture/states/ (default: base-states.json)",
             },
             settle: { type: "number", minimum: 0, description: "Seconds after the level's player spawns (default: 3)" },
-            swapTimeout: { type: "number", minimum: 1, description: "Seconds to wait for the swap (default: 15)" },
+            swapTimeout: { type: "number", minimum: 1, description: "Seconds for the swap (default: 15)" },
             timeout: { type: "number", minimum: 1, description: "Seconds per wait, and per state swept (default: 60)" },
             player: { type: "integer", minimum: 0, maximum: 3 },
             box: { type: "number", minimum: 1, maximum: 256, description: "Crop-box half-size in world units; cells are 2*box px (default: 24)" },
@@ -2084,7 +2085,7 @@ function toolDefinitions({ launchHelp = "" } = {}) {
       },
       {
         name: "launch_game",
-        description: "Launch Broforce, wait for it to answer and point this server at it: by default this session's game instance (own profile, saves, port), else the user's game. steam: true targets the user's game, launched (its launch command, else Steam) only if not running; a visible window needs that command's placement option. A running game is pointed at, not relaunched, unless restart: true, which stops and relaunches only the target's game. Omitting launchArgs or vanilla its last launch carried is refused; launchArgs: \"\" and vanilla: false drop them." + launchHelp,
+        description: "Launch Broforce, wait for it to answer and point this server at it: by default this session's game instance (own profile, saves, port), else the user's game. steam: true targets the user's game, launched (its launch command, else Steam); a visible window needs that command's placement option. A running game is pointed at, not relaunched, unless restart: true, which stops and relaunches only the target's game. Omitting launchArgs or vanilla its last launch carried is refused; launchArgs: \"\" and vanilla: false drop them." + launchHelp,
         inputSchema: {
           type: "object",
           properties: {
@@ -2541,18 +2542,24 @@ function capReachedMessage(config, capReport, capPolls, capStart) {
   if (capReport?.cap === 0) {
     return `The configured launcher allows no instances to run (its cap is 0), so instance ${config.id} was not started.`;
   }
-  const holders = capReport?.running?.map(entry => entry.id).join(', ');
+  const holders = capReport?.holders?.map(entry => (entry.launching ? `${entry.id} (launching)` : entry.id)).join(', ');
+  const unlisted = capReport ? Math.max(0, capReport.count - capReport.holders.length) : 0;
+  const unlistedText = unlisted > 0
+    ? ` ${unlisted} slot${unlisted === 1 ? ' is' : 's are'} held by ${unlisted === 1 ? 'a launch' : 'launches'} with no instance in the list yet` +
+      (capReport.unparsed > 0 ? `, or by ${unlisted === 1 ? 'an instance on a line' : 'instances on lines'} that could not be parsed.` : '.')
+    : '';
+  const reserved = unlisted > 0 || Boolean(capReport?.holders.some(entry => entry.launching));
   const listIsFull = capReport?.cap !== null && capReport?.cap !== undefined && capReport.count >= capReport.cap;
   // Four endings, and only the first of them knows who holds the slots
   let who;
   if (capReport && listIsFull) {
-    who = ` Instances holding the slots: ${holders}.`;
+    who = (holders ? ` Instances holding the slots: ${holders}.` : '') + unlistedText;
   } else if (capReport) {
+    const inUse = `${capReport.count}${capReport.cap !== null ? ` of ${capReport.cap}` : ''}` +
+      (reserved ? ` slot${capReport.count === 1 ? '' : 's'} in use` : ' running');
     who = ` The launcher's list last showed ` +
-      (capReport.count === 0
-        ? 'no instances running'
-        : `${capReport.count}${capReport.cap !== null ? ` of ${capReport.cap}` : ''} running (${holders})`) +
-      `, yet the launcher refused this launch.`;
+      (capReport.count === 0 ? 'no instances running' : `${inUse}${holders ? ` (${holders})` : ''}`) +
+      `, yet the launcher refused this launch.` + unlistedText;
   } else if (capPolls > 0) {
     who = ` The launcher's instance list could not be read on any attempt, so which instances hold the slots is unknown.`;
   } else {
@@ -2992,7 +2999,7 @@ async function launchOnTarget({ args, signal, config, nextTarget, hasInstance, l
         launchCommand: launch.display,
         state: "cap-reached",
         message: capReachedMessage(config, capReport, capPolls, capStart ?? Date.now()),
-        ...(capReport?.running ? { runningInstances: capReport.running } : {}),
+        ...(capReport?.holders ? { runningInstances: capReport.holders } : {}),
         ...(ignoredArgsNote ? { note: ignoredArgsNote } : {}),
       });
     }
@@ -3684,6 +3691,7 @@ async function callTool(request, signal) {
           action: args.action,
           binding: args.binding,
           sequence: args.sequence,
+          tracks: args.tracks,
           duration: args.duration,
           count: args.count,
           interval: args.interval,

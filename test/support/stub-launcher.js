@@ -230,6 +230,17 @@ export function fakeInspector({ answers = true, hello = 'accept' } = {}) {
 // launcher stages one, its own unrelated `root`, and cap from a launcher that caps running
 // instances, an undefined cap being one that reports none. Then one line per instance directory.
 // The fixtures are that layout and nothing else.
+const instanceLine = (entry, extra = {}) => JSON.stringify({
+  id: String(entry.id),
+  running: entry.running ? 1 : 0,
+  pid: entry.pid ?? null,
+  port: entry.port ?? null,
+  display: entry.display ?? '',
+  last_launch: entry.last_launch ?? 1788687953,
+  stale: entry.stale ?? 0,
+  ...extra,
+});
+
 export function instanceListJsonl(
   cap,
   instances = [],
@@ -238,14 +249,24 @@ export function instanceListJsonl(
 ) {
   return [
     JSON.stringify({ instancesRoot, root: STUB_GAME_ROOT, stageRoot, cap }),
-    ...instances.map(entry => JSON.stringify({
-      id: String(entry.id),
-      running: entry.running ? 1 : 0,
-      pid: entry.pid ?? null,
-      port: entry.port ?? null,
-      display: entry.display ?? '',
-      last_launch: entry.last_launch ?? 1788687953,
-      stale: entry.stale ?? 0,
+    ...instances.map(entry => instanceLine(entry)),
+  ].join('\n') + '\n';
+}
+
+// A launcher admitting launches by reservation adds the header's count of slots in use and each
+// line's launching flag, beside a launched_by the server never reads
+export function reservingListJsonl(cap, count, instances = []) {
+  return [
+    JSON.stringify({
+      root: STUB_GAME_ROOT,
+      instancesRoot: process.env.STUB_INSTANCES_ROOT,
+      stageRoot: process.env.STUB_STAGE_ROOT,
+      cap,
+      count,
+    }),
+    ...instances.map(entry => instanceLine(entry, {
+      launched_by: entry.running ? { session_id: '', session_name: 'user shell' } : null,
+      launching: entry.launching ? 1 : 0,
     })),
   ].join('\n') + '\n';
 }

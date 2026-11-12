@@ -1,6 +1,6 @@
 {
   "name": "simulate_input forms and set_game_speed values",
-  "description": "Covers simulate_input single presses, holds (with their effect on the bro), a 5 second hold, count and interval repeats, sequences and wait-only sequences, menu buttons, bro actions, unknown actions, the 60 second limits, negative values, malformed sequences, and the frames that read each press, the warning when no bro can act on read input (paused), the note when the bro took it at game speed 0, and the failure when no frame read it (a player who is not playing, an input block, players held still), a held start toggling the pause once, fire joining no player in a level, escape backing out of the Offline/Online choice at the main menu and fire opening it again, mod key bindings pressed through binding (Furibrosa's Switch Weapon, alone and as a sequence step, and Utility Mod's Pause/Unpause Game pausing and resuming the game) with player 1's Pause/Unpause, which Utility Mod never reads, failing unread, and unknown bindings and mixed forms refused; and set_game_speed at 0, fractional, above 1, the 10 limit, and the refused range (negative, above 10), with bare NaN and Infinity literals sent to the mod's message handler directly, since JSON as the server sends it carries neither. Plays campaign 0 level 2. It changes one Utility Mod setting itself where the build has it, the isGamePaused flag its Pause/Unpause binding toggles, from the step that records it until it is put back, with whether that binding is polled, before the level is reloaded; its restore otherwise only puts back what a failed spawning.json run recorded, so a settings save outside those steps writes the user's values. Its first steps undo whatever an earlier run left changed; its last steps restore the speed and the pause and reload the level it started in. Its cleanup runs the restore again whatever ended the steps: pause, speed, the Utility Mod pause, the second player, IronBro, the lock, the Swap Bros selection, and the Utility Mod settings and HeroController values that a failed spawning or inspection run recorded. It then reloads the level it started in.",
+  "description": "Covers simulate_input single presses, holds (with their effect on the bro), a 5 second hold, count and interval repeats, sequences and wait-only sequences, menu buttons, bro actions, unknown actions, the 60 second limits, negative values, malformed sequences, and the frames that read each press, the warning when no bro can act on read input (paused), the note when the bro took it at game speed 0, and the failure when no frame read it (a player who is not playing, an input block, players held still), a held start toggling the pause once, a pause closed by the start that opened it, fire joining no player in a level, escape backing out of the Offline/Online choice at the main menu and fire opening it again, mod key bindings pressed through binding (Furibrosa's Switch Weapon, alone and as a sequence step, and Utility Mod's Pause/Unpause Game pausing and resuming the game) with player 1's Pause/Unpause, which Utility Mod never reads, failing unread, and unknown bindings and mixed forms refused; and set_game_speed at 0, fractional, above 1, the 10 limit, and the refused range (negative, above 10), with bare NaN and Infinity literals sent to the mod's message handler directly, since JSON as the server sends it carries neither. Plays campaign 0 level 2. It changes one Utility Mod setting itself where the build has it, the isGamePaused flag its Pause/Unpause binding toggles, from the step that records it until it is put back, with whether that binding is polled, before the level is reloaded; its restore otherwise only puts back what a failed spawning.json run recorded, so a settings save outside those steps writes the user's values. Its first steps undo whatever an earlier run left changed; its last steps restore the speed and the pause and reload the level it started in. Its cleanup runs the restore again whatever ended the steps: pause, speed, the Utility Mod pause, the second player, IronBro, the lock, the Swap Bros selection, and the Utility Mod settings and HeroController values that a failed spawning or inspection run recorded. It then reloads the level it started in.",
   "steps": [
     {
       "command": "simulate_input",
@@ -504,7 +504,7 @@
       "expect": {
         "success": false,
         "contains": [
-          "Exactly one of action, binding or sequence is required"
+          "Exactly one of action, binding, sequence or tracks is required"
         ]
       }
     },
@@ -521,7 +521,7 @@
       "expect": {
         "success": false,
         "contains": [
-          "Provide only one of action, binding and sequence"
+          "Provide only one of action, binding, sequence and tracks"
         ]
       }
     },
@@ -1433,7 +1433,7 @@
       "expect": {
         "success": false,
         "contains": [
-          "Provide only one of action, binding and sequence"
+          "Provide only one of action, binding, sequence and tracks"
         ]
       }
     },
@@ -1595,6 +1595,58 @@
         ],
         "notContains": [
           "failed"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "start"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "warning"
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "until": {
+        "timeout": 20,
+        "interval": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"pauseState\": \"MenuPause\""
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "start"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "warning"
+        ]
+      }
+    },
+    {
+      "command": "game_state",
+      "params": {},
+      "until": {
+        "timeout": 20,
+        "interval": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"pauseState\": \"UnPaused\""
         ]
       }
     },

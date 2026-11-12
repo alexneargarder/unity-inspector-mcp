@@ -104,6 +104,7 @@ You can use any game-side Unity Inspector MCP tool in your scripts:
   - Actions: up, down, left, right, fire, jump, special, highFive, gesture, sprint, start, escape
   - Supports duration (hold time), count (repeated presses), and sequence (ordered steps run back to back)
   - `binding` presses a mod's RocketLib key binding in place of an action
+  - `tracks` starts several sequences on the same frame
 
 ### Inspection
 - `game_state` - Get the loaded level, game mode and player status

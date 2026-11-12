@@ -3,7 +3,7 @@
 ## The TCP client
 
 - Protocol: `{"id":"...","method":"...","params":{...}}\n` → `{"id":"...","success":true,"result":{...}}\n`. Every connection opens with the hello, `{"id":"...","method":"hello","params":{"token":...,"protocol":1}}`; `connect()` resolves only once the mod accepts it (Handshake in `.claude/rules/connection.md`).
-- The mod answers one line at a time per connection, so `sendCommand` queues: a command is written only once the previous one settled, and its timeout starts at its own write. A command that times out, or is cancelled while the mod still runs it, drops the socket, so the next command gets a fresh connection and mod receive thread. Replies route by `id`; one arriving after its command timed out is dropped.
+- The mod answers one line at a time per connection, so `sendCommand` queues: a command is written only once the previous one settled, and its timeout starts at its own write. A command that times out, or is cancelled while the mod still runs it, drops the socket, so the next command gets a fresh connection and mod receive thread. Replies route by `id`; one arriving after its command timed out is dropped. A `success: false` reply rejects with the mod's `error` and `code` `COMMAND_FAILED`.
 
 ## The animation-capture sweep driver
 

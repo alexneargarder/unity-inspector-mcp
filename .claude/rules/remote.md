@@ -6,7 +6,9 @@ paths:
   - "lib/game-process.js"
   - "lib/animation-capture.js"
   - "lib/script-library.js"
+  - "run-script.js"
   - "test/remote*.test.js"
+  - "test/run-script.test.js"
 ---
 
 # Remote game target
@@ -46,6 +48,15 @@ A game on another machine, reached through an ssh tunnel on loopback or at a LAN
   - a close during the hello: on loopback nothing is behind the tunnel (the game not running there, its mod's server stopped, or the tunnel forwarding to another port); direct, the mod's server stopped or restarting or another program on the port
   - a close under a command: the command may have run, naming the tunnel only on loopback
 - `REMOTE_GONE_MESSAGE` in `lib/unity-client.js` matches those messages but the timeout, and `run_test_script` reads a match as the game gone: rewording one means updating it.
+
+## run-script.js
+
+`node run-script.js --port <port> --token-file <file> [--host <host>] [--wait <seconds>] [--new-token] [--arg <key>=<value>]... <script>`
+
+- It runs one C# script in a game as soon as the game answers, for a script that must run in the game's first seconds, over its own connection made as a remote target's client makes one.
+- `--wait` retries every 100ms, for up to that many seconds, while the game is not ready yet (no token file, nothing listening, a hello closed, unanswered or refused for its token), and ends at once on a protocol or old-mod refusal or an answer that is not the mod's.
+- `--new-token` (needs `--wait`) makes no attempt until the token file holds a valid token other than the one it held at the start, so the order is: start it, relaunch, then copy the token again and again until it exits.
+- stdout is the `execute_script` result alone, or `{success: false, error}` for the mod's own refusal, and it exits 0 when the script ran, 1 when it failed in the game or got no reply, 2 on a usage error or an unreadable script, and 3 with no connection.
 
 ## Transfers (`lib/remote-files.js`)
 

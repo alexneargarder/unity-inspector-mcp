@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { startStubServer, reply } from './support/stub-server.js';
-import { CSHARP_SCRIPTS_DIR } from '../lib/script-library.js';
+import { CSHARP_SCRIPTS_DIR, validateTestScriptSteps } from '../lib/script-library.js';
 import { wslMountRoot } from '../lib/unity-client.js';
 import { BACKDROP_SOURCE_PATH } from '../lib/backdrop.js';
 
@@ -107,7 +107,7 @@ test('a dotted member path reaches the game unchanged', async () => {
   assert.deepEqual(written.params.properties, { 'transform.localPosition.x': 3.5 });
 });
 
-test('simulate_input needs exactly one of action, binding and sequence', async () => {
+test('simulate_input needs exactly one of action, binding, sequence and tracks', async () => {
   const neither = await handleToolCall({ params: { name: 'simulate_input', arguments: {} } });
   assert.equal(neither.isError, true);
   assert.match(textOf(neither), /action/);
@@ -123,17 +123,24 @@ test('simulate_input needs exactly one of action, binding and sequence', async (
   const empty = await handleToolCall({ params: { name: 'simulate_input', arguments: { sequence: [] } } });
   assert.equal(empty.isError, true, 'an empty sequence is not a sequence');
 
+  const tracks = [[{ action: 'right' }], [{ action: 'fire' }]];
   for (const args of [
     { action: 'fire', binding: 'Utility Mod/Pause/Unpause Game' },
     { binding: 'Utility Mod/Pause/Unpause Game', sequence: [{ action: 'jump' }] },
+    { action: 'jump', tracks },
+    { binding: 'Furibrosa/Switch Weapon', tracks },
+    { sequence: [{ action: 'jump' }], tracks },
+    { action: 'jump', tracks: [] },
   ]) {
-    await assertRefusedBeforeTheGame('simulate_input', args, /Exactly one of action, binding or sequence is required/);
+    await assertRefusedBeforeTheGame('simulate_input', args, /^Error: Provide only one of action, binding, sequence and tracks$/);
   }
+  await assertRefusedBeforeTheGame('simulate_input', { action: '' }, /^Error: Exactly one of action, binding, sequence or tracks is required$/);
 });
 
 test('simulate_input refuses a malformed plan before it reaches the game', async () => {
   const cases = [
     [{ sequence: [{ action: 'right', hold: 2000 }] }, /Step 0 has no key "hold"; a step takes action, binding, duration and wait/],
+    [{ sequence: [{ click: [10, 20] }] }, /^Error: Step 0 has no key "click"; a step takes action, binding, duration and wait$/],
     [{ sequence: [{ key: 'jump' }] }, /Step 0 has no key "key"/],
     [{ sequence: [{ action: 'jump', delay: 100 }] }, /Step 0 has no key "delay"/],
     [{ sequence: [{ wait: 500, duration: 90000 }] }, /Step 0 has a duration but no action or binding/],
@@ -172,6 +179,84 @@ test('simulate_input answers with the finished plan, polling the game until it e
     answers.delete('simulate_input');
     answers.delete('input_plan');
   }
+});
+
+test('simulate_input forwards tracks to the game untouched', async () => {
+  const tracks = [
+    [{ action: 'right', duration: 600 }],
+    [{ wait: 200 }, { action: 'fire', duration: 100 }],
+  ];
+  const response = await call('simulate_input', { tracks, player: 1 });
+  assert.ok(!response.isError, textOf(response));
+  const sent = lastRequest('simulate_input').params;
+  assert.deepEqual(sent.tracks, tracks);
+  assert.equal(sent.player, 1);
+  assert.equal(sent.action, undefined, 'no action is invented for a tracks call');
+  assert.equal(sent.sequence, undefined, 'no sequence is invented for a tracks call');
+});
+
+test('simulate_input refuses malformed tracks before they reach the game', async () => {
+  const fire = [{ action: 'fire' }];
+  const cases = [
+    [{ tracks: 5 }, /^Error: simulate_input: tracks must be an array, got 5$/],
+    [{ tracks: [fire] }, /^Error: tracks takes 2 to 8 tracks, got 1$/],
+    [{ tracks: [fire, []] }, /^Error: track 2 has no steps$/],
+    [{ tracks: [fire, 'jump'] }, /^Error: track 2 is not an array of steps$/],
+    [{ tracks: [fire, [{ action: 'jump', duration: '50' }]] }, /^Error: tracks\[1\]\[0\]\.duration must be a number, got "50"$/],
+    [{ tracks: [fire, [{ action: 'jump', duration: 2.5 }]] }, /^Error: tracks\[1\]\[0\]\.duration must be an integer, got 2.5$/],
+    [{ tracks: [fire, [{ wait: 100 }, { action: 'Fire' }]] }, /^Error: tracks 1 and 2 both press fire; two tracks may not press the same key$/],
+    [{ tracks: [fire, [{ action: 'jump', binding: 'Furibrosa/Switch Weapon' }]] }, /^Error: track 2: Step 0 has both an action and a binding; a step presses one$/],
+    [{ tracks: [fire, [{ action: 'jump' }]], count: 2 }, /apply to an action, not to tracks/],
+  ];
+  for (const [args, pattern] of cases) await assertRefusedBeforeTheGame('simulate_input', args, pattern);
+});
+
+test('a tracks call answers with the composed result, and a failed track makes it an error with its body unchanged', async (t) => {
+  const tracks = [[{ action: 'right', duration: 300 }], [{ wait: 100 }, { action: 'fire' }]];
+  const passed = {
+    success: true,
+    tracks: [
+      { success: true, steps: 1, totalMs: 300, player: 0, framesRead: [18] },
+      { success: true, steps: 2, totalMs: 150, player: 0, framesRead: [null, 3] },
+    ],
+  };
+  const failed = {
+    success: false,
+    error: 'track 1: Stopped at step 0 of 1: taken over by a later plan',
+    tracks: [
+      { success: false, steps: 1, totalMs: 300, player: 0, framesRead: [4], error: 'Stopped at step 0 of 1: taken over by a later plan' },
+      { success: true, steps: 2, totalMs: 150, player: 0, framesRead: [null, 3] },
+    ],
+  };
+  answers.set('simulate_input', { pending: true, planId: 43, remainingMs: 10 });
+  t.after(() => { answers.delete('simulate_input'); answers.delete('input_plan'); });
+
+  for (const composed of [passed, failed]) {
+    answers.set('input_plan', composed);
+    const before = requests.length;
+    const response = await call('simulate_input', { tracks });
+    assert.equal(response.isError, composed.success ? undefined : true, textOf(response));
+    assert.deepEqual(JSON.parse(textOf(response)), composed);
+    assert.deepEqual(requests.slice(before).map((r) => [r.method, r.params]), [
+      ['simulate_input', { tracks }],
+      ['input_plan', { planId: 43 }],
+    ]);
+  }
+});
+
+test('a test-script step may carry tracks, and what only the mod refuses reaches the mod', () => {
+  const steps = [
+    { command: 'simulate_input', params: { tracks: [[{ action: 'right', duration: 600 }], [{ wait: 200 }, { action: 'fire' }]] } },
+    { command: 'simulate_input', params: { tracks: [[{ action: 'fire' }], [{ action: 'fire' }]] }, expect: { success: false } },
+  ];
+  assert.deepEqual(validateTestScriptSteps(steps, { toolArguments: toolArguments() }), []);
+
+  assert.deepEqual(
+    validateTestScriptSteps([
+      { command: 'simulate_input', params: { tracks: 'x' } },
+    ], { toolArguments: toolArguments() }),
+    ['step 1: simulate_input: tracks must be an array, got "x"'],
+  );
 });
 
 test('capture_animations is refused while a test script runs, its waits included', { timeout: 20000 }, async (t) => {
@@ -501,10 +586,10 @@ test('a missing required argument is refused before anything reaches the game', 
     ['swap_bro', {}, /Bro name is required/],
     ['set_game_speed', {}, /Speed value is required/],
     ['set_player_health', {}, /Health value is required/],
-    ['simulate_input', { action: '' }, /Exactly one of action, binding or sequence/],
-    ['simulate_input', { binding: '' }, /Exactly one of action, binding or sequence/],
-    ['simulate_input', { sequence: [] }, /Exactly one of action, binding or sequence/],
-    ['simulate_input', {}, /Exactly one of action, binding or sequence/],
+    ['simulate_input', { action: '' }, /Exactly one of action, binding, sequence or tracks/],
+    ['simulate_input', { binding: '' }, /Exactly one of action, binding, sequence or tracks/],
+    ['simulate_input', { sequence: [] }, /Exactly one of action, binding, sequence or tracks/],
+    ['simulate_input', {}, /Exactly one of action, binding, sequence or tracks/],
     ['spawn_entity', { x: 1, y: 2 }, /Entity type and coordinates are required/],
     ['spawn_entity', { type: 'Mook', y: 2 }, /Entity type and coordinates are required/],
     ['spawn_entity', { type: 'Mook', x: 1 }, /Entity type and coordinates are required/],

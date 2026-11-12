@@ -104,11 +104,12 @@ Claude Code loads each when a file matching its `paths:` is read; otherwise read
 - `.claude/rules/connection.md` — the handshake and token search, command timeouts, cancellation
 - `.claude/rules/wrapper.md` — `restart_server`, the respawn lockout, the wrapper's log, the reaper at session end
 - `.claude/rules/tool-behaviour.md` — per-tool behaviour and reply fields, argument checking, `list_enemies`, the `execute_code` contract
+- `.claude/rules/input.md` — `simulate_input`: plan limits, frame reads, takeover, stops, tracks, which controller reads a press, the pause rule, bindings
 - `.claude/rules/scripts.md` — the C# script library, `execute_script`, `run_test_script`'s shape, cleanup and `logs`
 - `.claude/rules/logs.md` — `read_log`: which file, in what order, staleness, `onlyNew`
-- `.claude/rules/remote.md` — the remote game target: declaration, the env path, reach, the token search and the connection's failure replies, file transfers and local copies, screenshots, the log mirror, `run_test_script` and `capture_animations` on it, restart
+- `.claude/rules/remote.md` — the remote game target: declaration, the env path, reach, the token search and the connection's failure replies, the `run-script.js` client, file transfers and local copies, screenshots, the log mirror, `run_test_script` and `capture_animations` on it, restart
 - `.claude/rules/testing.md` — the test fixtures and fences, the set to run before a pull request, the rule for changes, the matrix's conventions
-- `.claude/rules/testing-matrix-server.md` — input-class matrix: server tests of the other tools and the handshake
+- `.claude/rules/testing-matrix-server.md` — input-class matrix: server tests of the other tools, the handshake and `run-script.js`
 - `.claude/rules/testing-matrix-node-tools.md` — input-class matrix: server tests of `capture_animations`, `list_scripts`, `list_test_scripts`, `read_log`, `restart_server`, `run_test_script`
 - `.claude/rules/testing-matrix-launch-stop.md` — input-class matrix: server tests of `launch_game`, `stop_game`, `wait_for_game`
 - `.claude/rules/testing-matrix-in-game.md` — input-class matrix: in-game steps

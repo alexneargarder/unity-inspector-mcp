@@ -77,6 +77,35 @@ test('simulate_input budgets the planned time, a frame allowance per press and t
   );
 });
 
+test('simulate_input budgets tracks by their longest track', () => {
+  const tracks = [
+    [{ action: 'right', duration: 4000 }],
+    [{ wait: 1000 }, { action: 'fire', duration: 100 }, { wait: 3500 }],
+  ];
+  assert.equal(
+    commandTimeout('simulate_input', { tracks }),
+    1000 + 100 + 3500 + INPUT_PRESS_ALLOWANCE_MS + MARGIN_MS,
+    'the tracks run together, so the longest one is the plan',
+  );
+
+  const manyPresses = [
+    [{ action: 'right', duration: 8000 }],
+    Array.from({ length: 20 }, () => ({ action: 'fire', duration: 200 })),
+  ];
+  assert.equal(
+    commandTimeout('simulate_input', { tracks: manyPresses }),
+    20 * 200 + 20 * INPUT_PRESS_ALLOWANCE_MS + MARGIN_MS,
+    'each track carries its own frame allowance, so a track of many short presses can be the longest',
+  );
+
+  assert.equal(
+    commandTimeout('simulate_input', { tracks: [[{ action: 'fire' }], [{ wait: 6000 }]] }),
+    6000 + MARGIN_MS,
+    'a track that is only a pause can be the longest',
+  );
+  assert.equal(commandTimeout('simulate_input', { tracks: [[{ action: 'fire' }], 'not a track'] }), DEFAULT_COMMAND_TIMEOUT_MS);
+});
+
 test('a simulate_input budget is a number a timer can hold, whatever the arguments', () => {
   const strings = commandTimeout('simulate_input', {
     sequence: [{ action: 'right', duration: '500' }, { action: 'jump', duration: '500' }],
@@ -100,9 +129,87 @@ test('simulateInputProblem accepts every well-formed plan', () => {
     { binding: 'Furibrosa/Switch Weapon', duration: 120, count: 3, interval: 0, player: 2 },
     { binding: 'Furibrosa/Switch Weapon', sequence: [] },
     { sequence: [{ binding: 'Furibrosa/Switch Weapon', duration: 100, wait: 50 }, { action: 'jump' }] },
+    { tracks: [[{ action: 'right', duration: 600 }], [{ wait: 200 }, { action: 'fire' }]] },
+    { tracks: [[{ action: 'fire' }, { wait: 100 }, { action: 'fire' }], [{ binding: 'Furibrosa/Switch Weapon' }]], player: 2 },
+    { tracks: ['up', 'down', 'left', 'right', 'fire', 'jump', 'special', 'highFive'].map((action) => [{ action }]) },
+    { tracks: [[{ action: 'jump' }], [{ action: 'fire' }]], sequence: [] },
   ]) {
     assert.equal(simulateInputProblem(args), null, JSON.stringify(args));
   }
+});
+
+test('simulateInputProblem refuses every malformed tracks plan in the mod\'s own words', () => {
+  const fire = [{ action: 'fire' }];
+  const jump = [{ action: 'jump' }];
+  const beside = 'duration, count and interval apply to an action, not to tracks; give each step its own duration and wait';
+  const cases = [
+    [{ tracks: 'x' }, 'tracks must be an array of tracks, each an array of steps'],
+    [{ action: 'fire', tracks: 5 }, 'tracks must be an array of tracks, each an array of steps'],
+    [{ tracks: [] }, 'tracks takes 2 to 8 tracks, got 0'],
+    [{ tracks: [fire] }, 'tracks takes 2 to 8 tracks, got 1'],
+    [{ tracks: Array.from({ length: 9 }, (_, i) => [{ wait: i }]) }, 'tracks takes 2 to 8 tracks, got 9'],
+    [{ tracks: [fire, []] }, 'track 2 has no steps'],
+    [{ tracks: [fire, { action: 'jump' }] }, 'track 2 is not an array of steps'],
+    [{ tracks: [fire, [5]] }, 'track 2: Step 0 is not an object'],
+    [{ tracks: [fire, [{ action: 'jump', hold: 20 }]] }, 'track 2: Step 0 has no key "hold"; a step takes action, binding, duration and wait'],
+    [{ tracks: [fire, [{ wait: 10 }, { action: 5 }]] }, 'track 2: Step 1: action must be a string'],
+    [{ tracks: [fire, [{ binding: true }]] }, 'track 2: Step 0: binding must be a string'],
+    [{ tracks: [[{ action: 'right', duration: '500' }], jump] }, 'tracks[0][0].duration must be a number, got "500"'],
+    [{ tracks: [jump, [{ action: 'right' }, { wait: 2.5 }]] }, 'tracks[1][1].wait must be an integer, got 2.5'],
+    [{ tracks: [jump, [{ action: 'right', duration: 3e9 }]] }, 'tracks[1][0].duration must be an integer from -2147483648 to 2147483647, got 3000000000'],
+    [{ tracks: [[{ action: 'right', wait: -1 }], jump] }, 'track 1: Step 0 has a negative duration or wait'],
+    [{ tracks: [[{ wait: 100, duration: 50 }], jump] }, 'track 1: Step 0 has a duration but no action or binding; a pause is a step with only a wait'],
+    [{ tracks: [fire, [{ action: 'jump', binding: 'Furibrosa/Switch Weapon', duration: '5' }]] }, 'track 2: Step 0 has both an action and a binding; a step presses one'],
+    [{ tracks: [fire, [{ wait: 50 }, { action: 'FIRE' }]] }, 'tracks 1 and 2 both press fire; two tracks may not press the same key'],
+    [{ tracks: [[{ action: 'highFive' }], [{ action: 'HIGHFIVE' }]] }, 'tracks 1 and 2 both press highfive; two tracks may not press the same key'],
+    [{ tracks: [jump, [{ binding: 'Furibrosa/Switch Weapon' }], [{ wait: 50 }, { binding: 'Furibrosa/Switch Weapon' }]] }, 'tracks 2 and 3 both press Furibrosa/Switch Weapon; two tracks may not press the same key'],
+    [{ tracks: [fire, jump], duration: 100 }, beside],
+    [{ tracks: [fire, jump], count: 2 }, beside],
+    [{ tracks: [fire, jump], interval: 0 }, beside],
+    [{ tracks: [fire, jump], player: 4 }, 'player must be 0 to 3, got 4'],
+    [{ tracks: [fire, jump], player: 1.5 }, 'player must be an integer, got 1.5'],
+    [{ action: 'fire', duration: -3e9 }, 'duration must be an integer from -2147483648 to 2147483647, got -3000000000'],
+    [{ action: 'fire', tracks: [fire, jump] }, 'Provide only one of action, binding, sequence and tracks'],
+    [{ action: 'jump', tracks: [] }, 'Provide only one of action, binding, sequence and tracks'],
+    [{}, 'Exactly one of action, binding, sequence or tracks is required'],
+    [{ sequence: [{ action: 'jump', binding: 'Furibrosa/Switch Weapon' }] }, 'Step 0 has both an action and a binding; a step presses one'],
+    [{ sequence: [{ action: 'right' }, { action: 'jump', wait: 3e9 }] }, 'sequence[1].wait must be an integer from -2147483648 to 2147483647, got 3000000000'],
+  ];
+  for (const [args, message] of cases) assert.equal(simulateInputProblem(args), message, JSON.stringify(args));
+});
+
+test('a tracks call is one plan, timed by its longest track: its planId is polled to the end and the composed result comes back as the game gave it', { timeout: 20000 }, async (t) => {
+  const composed = {
+    success: false,
+    error: 'track 2: No frame read fire: the game is holding players still',
+    tracks: [
+      { success: true, steps: 1, totalMs: 9000, player: 0, framesRead: [270] },
+      { success: false, steps: 2, totalMs: 300, player: 0, framesRead: [null, 0], error: 'No frame read fire: the game is holding players still' },
+    ],
+  };
+  let polls = 0;
+  const seen = [];
+  const stub = await startStubServer((request, socket) => {
+    seen.push(request);
+    if (request.method === 'simulate_input') {
+      setTimeout(() => reply(socket, request.id, { pending: true, planId: 21, remainingMs: 300 }), DEFAULT_COMMAND_TIMEOUT_MS + 500);
+    } else {
+      reply(socket, request.id, ++polls < 3 ? { pending: true, planId: 21, remainingMs: 100 } : composed);
+    }
+  });
+  const client = connectedClient(stub.port);
+  t.after(async () => { client.disconnect(); await stub.close(); });
+
+  const tracks = [[{ action: 'right', duration: 9000 }], [{ wait: 200 }, { action: 'fire', duration: 100 }]];
+  const result = await client.sendCommand('simulate_input', { tracks, player: 0 });
+  assert.deepEqual(result, composed, 'an acceptance after the 6s default counts, and a failed track is the mod\'s answer, not a thrown error');
+  assert.deepEqual(seen[0].params, { tracks, player: 0 });
+  assert.deepEqual(seen.slice(1).map((r) => [r.method, r.params]), [
+    ['input_plan', { planId: 21 }],
+    ['input_plan', { planId: 21 }],
+    ['input_plan', { planId: 21 }],
+  ]);
+  assert.deepEqual(client.inFlightCommands(), []);
 });
 
 test('an input plan is polled until it ends, and other commands are answered meanwhile', { timeout: 10000 }, async (t) => {

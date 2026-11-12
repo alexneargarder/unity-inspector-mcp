@@ -219,6 +219,9 @@ test('the launcher\'s instance list is read as the JSON Lines it prints', () => 
   assert.deepEqual(withRunning.running, [
     { id: 'live-a-49cf67', port: 9900, last_launch: 1788687953, stale: 0 },
   ]);
+  // With no count in the header the slots in use are the running games, and they are the holders
+  assert.equal(withRunning.count, 1);
+  assert.deepEqual(withRunning.holders, withRunning.running);
 
   // One unreadable line is one line, not the answer
   const noisy = summarizeInstanceList([
@@ -256,5 +259,44 @@ test('the launcher\'s instance list is read as the JSON Lines it prints', () => 
 
   for (const nothing of ['', '   \n\n', 'not json', '[]', '42', undefined, null]) {
     assert.equal(summarizeInstanceList(nothing), null, JSON.stringify(nothing));
+  }
+});
+
+test('a launcher that admits launches by reservation reports the slots in use and which holders are launching', () => {
+  const header = (count) => JSON.stringify({
+    root: '/opt/launcher/game', instancesRoot: INSTANCES_ROOT, stageRoot: '/var/lib/agent-games/stages', cap: 8, count,
+  });
+  const live = '{"id":"live-a","running":1,"pid":4171139,"port":9900,"display":"","last_launch":1794429295,"stale":0,' +
+    '"launched_by":{"session_id":"","session_name":"user shell"},"launching":0}';
+  const idle = '{"id":"idle-c","running":0,"pid":null,"port":null,"display":"","last_launch":0,"stale":0,"launched_by":null,"launching":0}';
+  const starting = '{"id":"starting-d","running":0,"pid":null,"port":null,"display":"","last_launch":0,"stale":0,"launched_by":null,"launching":1}';
+  const liveEntry = { id: 'live-a', port: 9900, last_launch: 1794429295, stale: 0 };
+
+  // One running, one idle and one launching: the launching one holds a slot and is no running game
+  const launching = summarizeInstanceList([header(2), live, idle, starting].join('\n'));
+  assert.equal(launching.cap, 8);
+  assert.equal(launching.count, 2);
+  assert.deepEqual(launching.running, [liveEntry]);
+  assert.deepEqual(launching.ids, ['live-a']);
+  assert.deepEqual(launching.holders, [
+    liveEntry,
+    { id: 'starting-d', port: null, last_launch: 0, stale: 0, launching: true },
+  ]);
+
+  // A reservation made before its instance's directory exists counts in the header and has no line
+  const unlisted = summarizeInstanceList([header(2), live].join('\n'));
+  assert.equal(unlisted.count, 2);
+  assert.deepEqual(unlisted.holders, [liveEntry]);
+  assert.deepEqual(unlisted.running, [liveEntry]);
+
+  const empty = summarizeInstanceList(header(0));
+  assert.equal(empty.count, 0);
+  assert.deepEqual(empty.holders, []);
+  assert.equal(empty.instancesRoot, INSTANCES_ROOT);
+
+  // A count that is no slot count falls back to the running games, never to NaN
+  for (const count of [undefined, null, -1, 1.5, '2', 'two', true, {}]) {
+    const summary = summarizeInstanceList([header(count), live, starting].join('\n'));
+    assert.equal(summary.count, 1, JSON.stringify(count));
   }
 });

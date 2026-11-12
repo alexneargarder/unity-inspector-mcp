@@ -1,6 +1,6 @@
 {
   "name": "simulate_input sequence",
-  "description": "Runs a two-press special combo as one game-side sequence and a repeated fire press with a per-press hold, then the mod's refusals of a misnamed step key, a fractional count sent to the mod's message handler directly, and a count beside a sequence, and that the mod keeps only the newest unread plan results. Plays campaign 0 level 2: its first steps load it and its last steps reload the level it started in. Its cleanup runs that reload when the steps stopped before it",
+  "description": "Runs a two-press special combo as one game-side sequence and a repeated fire press with a per-press hold, then the mod's refusals of a misnamed step key, a fractional count sent to the mod's message handler directly, and a count beside a sequence, that the mod keeps only the newest unread plan results, and the cancel of a plan by its own connection and by another. Then a direction held on one track while fire is pressed from an offset on another, through the tool and again, the other way, through the mod's message handler, where each track's framesRead is checked, the mod's refusal of a key repeated across tracks, and an escape in a level opening no pause. Then, through the mod's message handler, so a plan runs on across steps: a later call taking over one track's key of a tracks call and a single plan's key, only that track and that plan failing; a tracks call cancelled by its planId and another, with a single plan started under the same connection, whose connection's plans are released as a closed connection's are, every plan stopped and its keys released; the 32-result keep counting a tracks call once; and a tracks call and a single plan stopped by the closing reload's scene load. Plays campaign 0 level 2: its first steps load it and its last steps reload the level it started in. Its cleanup cancels every plan a step started through the handler and runs that reload when the steps stopped before it",
   "steps": [
     {
       "command": "simulate_input",
@@ -121,7 +121,7 @@
         "contains": [
           "Step 0 has no key ",
           "hold",
-          "; a step takes action, binding, duration and wait"
+          "; a step takes action, binding"
         ]
       }
     },
@@ -239,6 +239,271 @@
       }
     },
     {
+      "command": "simulate_input",
+      "params": {
+        "tracks": [
+          [
+            {
+              "action": "right",
+              "duration": 600
+            }
+          ],
+          [
+            {
+              "wait": 200
+            },
+            {
+              "action": "fire",
+              "duration": 100
+            }
+          ]
+        ]
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"tracks\": ["
+        ],
+        "notContains": [
+          "warning"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nd.SetData(\"uimtest.tracks\", null);\nd.SetData(\"uimtest.tracks.read\", null);\nvar owner = new object();\nvar started = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"tracks\\\",\\\"method\\\":\\\"simulate_input\\\",\\\"params\\\":{\\\"tracks\\\":[[{\\\"action\\\":\\\"left\\\",\\\"duration\\\":600}],[{\\\"wait\\\":200},{\\\"action\\\":\\\"fire\\\",\\\"duration\\\":100}]]}}\", owner));\nvar res = started[\"result\"] as Newtonsoft.Json.Linq.JObject;\nif (res == null || res[\"planId\"] == null) return \"not started: \" + started.ToString(Newtonsoft.Json.Formatting.None);\nd.SetData(\"uimtest.tracks\", new object[] { owner, (int)res[\"planId\"] });\ndouble rem = (double)res[\"remainingMs\"];\nreturn \"started plan \" + res[\"planId\"] + \" longest=\" + (rem > 450 && rem < 850) + \" remainingMs=\" + rem;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "started plan ",
+          "longest=True"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar done = d.GetData(\"uimtest.tracks.read\") as string;\nif (done != null) return done;\nvar held = d.GetData(\"uimtest.tracks\") as object[];\nif (held == null) return \"no tracks plan recorded\";\nvar reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"tracks\\\",\\\"method\\\":\\\"input_plan\\\",\\\"params\\\":{\\\"planId\\\":\" + held[1] + \"}}\", held[0]));\nvar r = reply[\"result\"] as Newtonsoft.Json.Linq.JObject ?? reply;\nvar pending = r[\"pending\"];\nif (pending != null && pending.Type == Newtonsoft.Json.Linq.JTokenType.Boolean && (bool)pending) return \"pending\";\nd.SetData(\"uimtest.tracks\", null);\nvar tracks = r[\"tracks\"] as Newtonsoft.Json.Linq.JArray;\nstring s;\nif (tracks == null || tracks.Count != 2) s = \"no two tracks: \" + r.ToString(Newtonsoft.Json.Formatting.None);\nelse {\n  System.Func<Newtonsoft.Json.Linq.JToken, int, Newtonsoft.Json.Linq.JToken> at = (t, i) => t is Newtonsoft.Json.Linq.JArray ? (i < ((Newtonsoft.Json.Linq.JArray)t).Count ? ((Newtonsoft.Json.Linq.JArray)t)[i] : null) : (i == 0 ? t : null);\n  System.Func<Newtonsoft.Json.Linq.JToken, bool> read = t => t != null && t.Type == Newtonsoft.Json.Linq.JTokenType.Integer && (int)t > 0;\n  var offset = at(tracks[1][\"framesRead\"], 0);\n  s = \"success=\" + r[\"success\"] + \" track1 read=\" + read(at(tracks[0][\"framesRead\"], 0)) + \" track2 offset=\" + (offset != null && offset.Type == Newtonsoft.Json.Linq.JTokenType.Null) + \" read=\" + read(at(tracks[1][\"framesRead\"], 1)) + \" | \" + r.ToString(Newtonsoft.Json.Formatting.None);\n}\nd.SetData(\"uimtest.tracks.read\", s);\nreturn s;"
+      },
+      "until": {
+        "timeout": 10,
+        "interval": 0.25
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "success=True track1 read=True track2 offset=True read=True"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "tracks": [
+          [
+            {
+              "action": "fire"
+            }
+          ],
+          [
+            {
+              "wait": 50
+            },
+            {
+              "action": "fire"
+            }
+          ]
+        ]
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "tracks 1 and 2 both press fire; two tracks may not press the same key"
+        ],
+        "notContains": [
+          "\"framesRead\""
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "escape"
+      },
+      "expect": {
+        "notContains": [
+          "Internal error"
+        ]
+      },
+      "wait": 1000
+    },
+    {
+      "command": "game_state",
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"pauseState\": \"UnPaused\""
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nd.SetData(\"uimtest.takeover\", null);\nd.SetData(\"uimtest.takeover.read\", null);\nd.SetData(\"uimtest.takeover.single\", null);\nd.SetData(\"uimtest.takeover.single.read\", null);\nvar handler = new Unity_Inspector_Mod.MessageHandler();\nstring log = \"started\";\nvar owner0 = new object();\nvar reply0 = Newtonsoft.Json.Linq.JObject.Parse(handler.HandleMessage(\"{\\\"id\\\":\\\"seq\\\",\\\"method\\\":\\\"simulate_input\\\",\\\"params\\\":{\\\"tracks\\\":[[{\\\"action\\\":\\\"up\\\",\\\"duration\\\":1500}],[{\\\"action\\\":\\\"sprint\\\",\\\"duration\\\":5000}]]}}\", owner0));\nvar res0 = reply0[\"result\"] as Newtonsoft.Json.Linq.JObject;\nif (res0 == null || res0[\"planId\"] == null) return \"not started: \" + reply0.ToString(Newtonsoft.Json.Formatting.None);\nd.SetData(\"uimtest.takeover\", new object[] { owner0, (int)res0[\"planId\"] });\nlog += \" plan \" + res0[\"planId\"];\nvar owner1 = new object();\nvar reply1 = Newtonsoft.Json.Linq.JObject.Parse(handler.HandleMessage(\"{\\\"id\\\":\\\"seq\\\",\\\"method\\\":\\\"simulate_input\\\",\\\"params\\\":{\\\"action\\\":\\\"down\\\",\\\"duration\\\":5000}}\", owner1));\nvar res1 = reply1[\"result\"] as Newtonsoft.Json.Linq.JObject;\nif (res1 == null || res1[\"planId\"] == null) return \"not started: \" + reply1.ToString(Newtonsoft.Json.Formatting.None);\nd.SetData(\"uimtest.takeover.single\", new object[] { owner1, (int)res1[\"planId\"] });\nlog += \" plan \" + res1[\"planId\"];\nreturn log;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "started plan "
+        ],
+        "notContains": [
+          "not started"
+        ]
+      },
+      "wait": 300
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "sequence": [
+          {
+            "action": "sprint"
+          },
+          {
+            "action": "down"
+          }
+        ]
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"steps\": 2"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar done = d.GetData(\"uimtest.takeover.single.read\") as string;\nif (done != null) return done;\nvar held = d.GetData(\"uimtest.takeover.single\") as object[];\nif (held == null) return \"no plan recorded under uimtest.takeover.single\";\nvar reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"seq\\\",\\\"method\\\":\\\"input_plan\\\",\\\"params\\\":{\\\"planId\\\":\" + held[1] + \"}}\", held[0]));\nvar r = reply[\"result\"] as Newtonsoft.Json.Linq.JObject ?? reply;\nvar pending = r[\"pending\"];\nif (pending != null && pending.Type == Newtonsoft.Json.Linq.JTokenType.Boolean && (bool)pending) return \"pending\";\nd.SetData(\"uimtest.takeover.single\", null);\nstring s = \"success=\" + r[\"success\"] + \" error=\" + r[\"error\"];\nd.SetData(\"uimtest.takeover.single.read\", s);\nreturn s;"
+      },
+      "until": {
+        "timeout": 5,
+        "interval": 0.25
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "success=False error=down was released after ",
+          "ms of its 5000ms: a later simulate_input for player 0 took over down"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar done = d.GetData(\"uimtest.takeover.read\") as string;\nif (done != null) return done;\nvar held = d.GetData(\"uimtest.takeover\") as object[];\nif (held == null) return \"no plan recorded under uimtest.takeover\";\nvar reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"seq\\\",\\\"method\\\":\\\"input_plan\\\",\\\"params\\\":{\\\"planId\\\":\" + held[1] + \"}}\", held[0]));\nvar r = reply[\"result\"] as Newtonsoft.Json.Linq.JObject ?? reply;\nvar pending = r[\"pending\"];\nif (pending != null && pending.Type == Newtonsoft.Json.Linq.JTokenType.Boolean && (bool)pending) return \"pending\";\nd.SetData(\"uimtest.takeover\", null);\nvar tracks = r[\"tracks\"] as Newtonsoft.Json.Linq.JArray;\nstring s = tracks == null || tracks.Count != 2 ? \"no two tracks: \" + r.ToString(Newtonsoft.Json.Formatting.None)\n  : \"success=\" + r[\"success\"] + \" | error=\" + r[\"error\"] + \" | track1 success=\" + tracks[0][\"success\"] + \" error=\" + tracks[0][\"error\"] + \" | track2 success=\" + tracks[1][\"success\"] + \" error=\" + tracks[1][\"error\"];\nd.SetData(\"uimtest.takeover.read\", s);\nreturn s;"
+      },
+      "until": {
+        "timeout": 10,
+        "interval": 0.25
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "success=False | error=track 2: step 0 (sprint) was released after ",
+          "ms of its 5000ms: a later simulate_input for player 0 took over sprint",
+          "| track1 success=True error= | track2 success=False error=step 0 (sprint) was released after "
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nd.SetData(\"uimtest.tcancel\", null);\nd.SetData(\"uimtest.tcancel.read\", null);\nd.SetData(\"uimtest.tclosed\", null);\nd.SetData(\"uimtest.tclosed.read\", null);\nd.SetData(\"uimtest.tclosed.single\", null);\nd.SetData(\"uimtest.tclosed.single.read\", null);\nvar handler = new Unity_Inspector_Mod.MessageHandler();\nstring log = \"started\";\nvar owner0 = new object();\nvar reply0 = Newtonsoft.Json.Linq.JObject.Parse(handler.HandleMessage(\"{\\\"id\\\":\\\"seq\\\",\\\"method\\\":\\\"simulate_input\\\",\\\"params\\\":{\\\"tracks\\\":[[{\\\"action\\\":\\\"up\\\",\\\"duration\\\":20000}],[{\\\"wait\\\":100},{\\\"action\\\":\\\"sprint\\\",\\\"duration\\\":20000}]]}}\", owner0));\nvar res0 = reply0[\"result\"] as Newtonsoft.Json.Linq.JObject;\nif (res0 == null || res0[\"planId\"] == null) return \"not started: \" + reply0.ToString(Newtonsoft.Json.Formatting.None);\nd.SetData(\"uimtest.tcancel\", new object[] { owner0, (int)res0[\"planId\"] });\nlog += \" plan \" + res0[\"planId\"];\nvar owner1 = new object();\nvar reply1 = Newtonsoft.Json.Linq.JObject.Parse(handler.HandleMessage(\"{\\\"id\\\":\\\"seq\\\",\\\"method\\\":\\\"simulate_input\\\",\\\"params\\\":{\\\"tracks\\\":[[{\\\"action\\\":\\\"down\\\",\\\"duration\\\":20000}],[{\\\"wait\\\":100},{\\\"action\\\":\\\"gesture\\\",\\\"duration\\\":20000}]]}}\", owner1));\nvar res1 = reply1[\"result\"] as Newtonsoft.Json.Linq.JObject;\nif (res1 == null || res1[\"planId\"] == null) return \"not started: \" + reply1.ToString(Newtonsoft.Json.Formatting.None);\nd.SetData(\"uimtest.tclosed\", new object[] { owner1, (int)res1[\"planId\"] });\nlog += \" plan \" + res1[\"planId\"];\nvar reply2 = Newtonsoft.Json.Linq.JObject.Parse(handler.HandleMessage(\"{\\\"id\\\":\\\"seq\\\",\\\"method\\\":\\\"simulate_input\\\",\\\"params\\\":{\\\"action\\\":\\\"left\\\",\\\"duration\\\":20000}}\", owner1));\nvar res2 = reply2[\"result\"] as Newtonsoft.Json.Linq.JObject;\nif (res2 == null || res2[\"planId\"] == null) return \"not started: \" + reply2.ToString(Newtonsoft.Json.Formatting.None);\nd.SetData(\"uimtest.tclosed.single\", new object[] { owner1, (int)res2[\"planId\"] });\nlog += \" plan \" + res2[\"planId\"];\nreturn log;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "started plan "
+        ],
+        "notContains": [
+          "not started"
+        ]
+      },
+      "wait": 400
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar handler = new Unity_Inspector_Mod.MessageHandler();\nvar cancelled = d.GetData(\"uimtest.tcancel\") as object[];\nvar closed = d.GetData(\"uimtest.tclosed\") as object[];\nif (cancelled == null || closed == null) return \"no tracks plans recorded\";\nvar running = (System.Collections.IList)typeof(Unity_Inspector_Mod.InputSimulator).GetField(\"running\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).GetValue(null);\nint before = running.Count;\nstring cancel = \"{\\\"id\\\":\\\"seq\\\",\\\"method\\\":\\\"cancel_input_plan\\\",\\\"params\\\":{\\\"planId\\\":\" + cancelled[1] + \"}}\";\nstring other = Newtonsoft.Json.Linq.JObject.Parse(handler.HandleMessage(cancel, new object()))[\"result\"][\"cancelled\"].ToString();\nstring mine = Newtonsoft.Json.Linq.JObject.Parse(handler.HandleMessage(cancel, cancelled[0]))[\"result\"][\"cancelled\"].ToString();\nstring again = Newtonsoft.Json.Linq.JObject.Parse(handler.HandleMessage(cancel, cancelled[0]))[\"result\"][\"cancelled\"].ToString();\nstring poll = handler.HandleMessage(\"{\\\"id\\\":\\\"seq\\\",\\\"method\\\":\\\"input_plan\\\",\\\"params\\\":{\\\"planId\\\":\" + cancelled[1] + \"}}\", cancelled[0]);\nd.SetData(\"uimtest.tcancel\", null);\nUnity_Inspector_Mod.InputSimulator.ReleaseOwner(closed[0]);\nstring closedPoll = handler.HandleMessage(\"{\\\"id\\\":\\\"seq\\\",\\\"method\\\":\\\"input_plan\\\",\\\"params\\\":{\\\"planId\\\":\" + closed[1] + \"}}\", closed[0]);\nd.SetData(\"uimtest.tclosed\", null);\nreturn \"running=\" + before + \" other=\" + other + \" mine=\" + mine + \" again=\" + again + \" poll=\" + (poll.Contains(\"No input plan\") ? \"gone\" : poll) + \" released=\" + (closedPoll.Contains(\"No input plan\") ? \"gone\" : closedPoll);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "running=5 other=False mine=True again=False poll=gone released=gone"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var t = typeof(Unity_Inspector_Mod.InputSimulator);\nvar fl = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static;\nvar running = (System.Collections.IList)t.GetField(\"running\", fl).GetValue(null);\nvar keys = (System.Array)t.GetField(\"keys\", fl).GetValue(null);\nint frame = UnityEngine.Time.frameCount;\nSystem.Func<int, string> state = k => {\n  object st = keys.GetValue(0, k);\n  var ft = st.GetType();\n  int down = (int)ft.GetField(\"DownFrom\").GetValue(st), up = (int)ft.GetField(\"UpFrom\").GetValue(st);\n  return ft.GetField(\"Owner\").GetValue(st) == null && !(down >= 0 && frame >= down && frame < up) ? \"released\" : \"held\";\n};\nvar d = System.AppDomain.CurrentDomain;\nstring single = d.GetData(\"uimtest.tclosed.single.read\") as string;\nvar held = d.GetData(\"uimtest.tclosed.single\") as object[];\nif (single == null && held == null) single = \"no single plan recorded\";\nif (single == null) {\n  string poll = new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"seq\\\",\\\"method\\\":\\\"input_plan\\\",\\\"params\\\":{\\\"planId\\\":\" + held[1] + \"}}\", held[0]);\n  var reply = Newtonsoft.Json.Linq.JObject.Parse(poll);\n  var r = reply[\"result\"] as Newtonsoft.Json.Linq.JObject ?? reply;\n  var pending = r[\"pending\"];\n  if (pending != null && pending.Type == Newtonsoft.Json.Linq.JTokenType.Boolean && (bool)pending) single = \"pending\";\n  else {\n    single = poll.Contains(\"No input plan\") ? \"gone\" : \"ended on its own instead of being released: \" + r.ToString(Newtonsoft.Json.Formatting.None);\n    d.SetData(\"uimtest.tclosed.single\", null);\n    d.SetData(\"uimtest.tclosed.single.read\", single);\n  }\n}\nreturn \"running=\" + running.Count + \" up=\" + state(Unity_Inspector_Mod.InputSimulator.Up) + \" sprint=\" + state(Unity_Inspector_Mod.InputSimulator.Sprint) + \" down=\" + state(Unity_Inspector_Mod.InputSimulator.Down) + \" gesture=\" + state(Unity_Inspector_Mod.InputSimulator.Gesture) + \" left=\" + state(Unity_Inspector_Mod.InputSimulator.Left) + \" single=\" + single + \" active=\" + Unity_Inspector_Mod.InputSimulator.Active;"
+      },
+      "until": {
+        "timeout": 3,
+        "interval": 0.25
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "running=0 up=released sprint=released down=released gesture=released left=released single=gone active=False"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var ids = new System.Collections.Generic.List<string>();\nfor (int i = 0; i < 40; i++) {\n  var r = (Newtonsoft.Json.Linq.JObject)Unity_Inspector_Mod.InputSimulator.StartPlan(Newtonsoft.Json.Linq.JObject.Parse(\"{\\\"tracks\\\":[[{\\\"wait\\\":1}],[{\\\"wait\\\":1}]]}\"), null);\n  ids.Add(r[\"planId\"].ToString());\n}\nSystem.AppDomain.CurrentDomain.SetData(\"uimtest.keep\", ids[7] + \"|\" + ids[8] + \"|\" + ids[39]);\nreturn \"started \" + ids.Count + \" unpolled tracks calls\";"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "started 40 unpolled tracks calls"
+        ]
+      },
+      "wait": 1000
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar p = ((string)d.GetData(\"uimtest.keep\")).Split('|');\nd.SetData(\"uimtest.keep\", null);\nSystem.Func<string, string> read = id => {\n  string s = Unity_Inspector_Mod.InputSimulator.PlanStatus(Newtonsoft.Json.Linq.JObject.Parse(\"{\\\"planId\\\":\" + id + \"}\")).ToString();\n  return s.Contains(\"No input plan\") ? \"evicted\" : s.Contains(\"\\\"tracks\\\": [\") ? \"kept\" : \"other: \" + s;\n};\nreturn \"8th=\" + read(p[0]) + \" 9th=\" + read(p[1]) + \" 40th=\" + read(p[2]);"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "8th=evicted 9th=kept 40th=kept"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nd.SetData(\"uimtest.sceneload\", null);\nd.SetData(\"uimtest.sceneload.read\", null);\nd.SetData(\"uimtest.sceneload.single\", null);\nd.SetData(\"uimtest.sceneload.single.read\", null);\nvar handler = new Unity_Inspector_Mod.MessageHandler();\nstring log = \"started\";\nvar owner0 = new object();\nvar reply0 = Newtonsoft.Json.Linq.JObject.Parse(handler.HandleMessage(\"{\\\"id\\\":\\\"seq\\\",\\\"method\\\":\\\"simulate_input\\\",\\\"params\\\":{\\\"tracks\\\":[[{\\\"action\\\":\\\"up\\\",\\\"duration\\\":20000}],[{\\\"wait\\\":100},{\\\"action\\\":\\\"sprint\\\",\\\"duration\\\":20000}]]}}\", owner0));\nvar res0 = reply0[\"result\"] as Newtonsoft.Json.Linq.JObject;\nif (res0 == null || res0[\"planId\"] == null) return \"not started: \" + reply0.ToString(Newtonsoft.Json.Formatting.None);\nd.SetData(\"uimtest.sceneload\", new object[] { owner0, (int)res0[\"planId\"] });\nlog += \" plan \" + res0[\"planId\"];\nvar owner1 = new object();\nvar reply1 = Newtonsoft.Json.Linq.JObject.Parse(handler.HandleMessage(\"{\\\"id\\\":\\\"seq\\\",\\\"method\\\":\\\"simulate_input\\\",\\\"params\\\":{\\\"action\\\":\\\"down\\\",\\\"duration\\\":20000}}\", owner1));\nvar res1 = reply1[\"result\"] as Newtonsoft.Json.Linq.JObject;\nif (res1 == null || res1[\"planId\"] == null) return \"not started: \" + reply1.ToString(Newtonsoft.Json.Formatting.None);\nd.SetData(\"uimtest.sceneload.single\", new object[] { owner1, (int)res1[\"planId\"] });\nlog += \" plan \" + res1[\"planId\"];\nreturn log;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "started plan "
+        ],
+        "notContains": [
+          "not started"
+        ]
+      },
+      "wait": 300
+    },
+    {
       "command": "execute_code",
       "params": {
         "code": "var d = System.AppDomain.CurrentDomain;\nvar rec = (d.GetData(\"uimtest.level\") as string) ?? \"0|1\";\nd.SetData(\"uimtest.level\", null);\nvar p = rec.Split('|');\nvar r = Unity_Inspector_Mod.StateModifier.GoToLevel(int.Parse(p[0]), int.Parse(p[1]));\nvar j = Newtonsoft.Json.Linq.JToken.FromObject(r);\nreturn \"loading recorded level \" + rec + \": success=\" + j[\"success\"] + \" \" + j.ToString(Newtonsoft.Json.Formatting.None);"
@@ -262,13 +527,50 @@
           "\"state\": \"alive\""
         ]
       }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar done = d.GetData(\"uimtest.sceneload.single.read\") as string;\nif (done != null) return done;\nvar held = d.GetData(\"uimtest.sceneload.single\") as object[];\nif (held == null) return \"no plan recorded under uimtest.sceneload.single\";\nvar reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"seq\\\",\\\"method\\\":\\\"input_plan\\\",\\\"params\\\":{\\\"planId\\\":\" + held[1] + \"}}\", held[0]));\nvar r = reply[\"result\"] as Newtonsoft.Json.Linq.JObject ?? reply;\nvar pending = r[\"pending\"];\nif (pending != null && pending.Type == Newtonsoft.Json.Linq.JTokenType.Boolean && (bool)pending) return \"pending\";\nd.SetData(\"uimtest.sceneload.single\", null);\nstring s = \"success=\" + r[\"success\"] + \" error=\" + r[\"error\"];\nd.SetData(\"uimtest.sceneload.single.read\", s);\nreturn s;"
+      },
+      "until": {
+        "timeout": 5,
+        "interval": 0.25
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "success=False error=down was released after ",
+          "ms of its 20000ms: scene ",
+          " loaded"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar done = d.GetData(\"uimtest.sceneload.read\") as string;\nif (done != null) return done;\nvar held = d.GetData(\"uimtest.sceneload\") as object[];\nif (held == null) return \"no plan recorded under uimtest.sceneload\";\nvar reply = Newtonsoft.Json.Linq.JObject.Parse(new Unity_Inspector_Mod.MessageHandler().HandleMessage(\"{\\\"id\\\":\\\"seq\\\",\\\"method\\\":\\\"input_plan\\\",\\\"params\\\":{\\\"planId\\\":\" + held[1] + \"}}\", held[0]));\nvar r = reply[\"result\"] as Newtonsoft.Json.Linq.JObject ?? reply;\nvar pending = r[\"pending\"];\nif (pending != null && pending.Type == Newtonsoft.Json.Linq.JTokenType.Boolean && (bool)pending) return \"pending\";\nd.SetData(\"uimtest.sceneload\", null);\nvar tracks = r[\"tracks\"] as Newtonsoft.Json.Linq.JArray;\nstring s = tracks == null || tracks.Count != 2 ? \"no two tracks: \" + r.ToString(Newtonsoft.Json.Formatting.None)\n  : \"success=\" + r[\"success\"] + \" | error=\" + r[\"error\"] + \" | track1 success=\" + tracks[0][\"success\"] + \" error=\" + tracks[0][\"error\"] + \" | track2 success=\" + tracks[1][\"success\"] + \" error=\" + tracks[1][\"error\"];\nd.SetData(\"uimtest.sceneload.read\", s);\nreturn s;"
+      },
+      "until": {
+        "timeout": 5,
+        "interval": 0.25
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "success=False | error=track 1: step 0 (up) was released after ",
+          "ms of its 20000ms: scene ",
+          "| track1 success=False error=step 0 (up) was released after ",
+          "| track2 success=False error=step 1 (sprint) was released after "
+        ]
+      }
     }
   ],
   "cleanup": [
     {
       "command": "execute_code",
       "params": {
-        "code": "var d = System.AppDomain.CurrentDomain;\nstring log = \"\";\nvar levelRec = d.GetData(\"uimtest.level\") as string;\nd.SetData(\"uimtest.level\", null);\nd.SetData(\"uimtest.settle\", null);\nif (levelRec != null) {\n  var lp = levelRec.Split('|');\n  var lr = Unity_Inspector_Mod.StateModifier.GoToLevel(int.Parse(lp[0]), int.Parse(lp[1]));\n  var lj = Newtonsoft.Json.Linq.JToken.FromObject(lr);\n  log += \"loading recorded level \" + levelRec + \": success=\" + lj[\"success\"] + \" \" + lj.ToString(Newtonsoft.Json.Formatting.None);\n}\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+        "code": "var d = System.AppDomain.CurrentDomain;\nstring log = \"\";\nvar levelRec = d.GetData(\"uimtest.level\") as string;\nd.SetData(\"uimtest.level\", null);\nd.SetData(\"uimtest.settle\", null);\nd.SetData(\"uimtest.keep\", null);\nvar handler = new Unity_Inspector_Mod.MessageHandler();\nforeach (var key in new[] { \"uimtest.tracks\", \"uimtest.takeover\", \"uimtest.takeover.single\", \"uimtest.tcancel\", \"uimtest.tclosed\", \"uimtest.tclosed.single\", \"uimtest.sceneload\", \"uimtest.sceneload.single\" }) {\n  var held = d.GetData(key) as object[];\n  d.SetData(key, null);\n  d.SetData(key + \".read\", null);\n  if (held != null && held[1] != null) log += key + \" cancelled=\" + Newtonsoft.Json.Linq.JObject.Parse(handler.HandleMessage(\"{\\\"id\\\":\\\"cleanup\\\",\\\"method\\\":\\\"cancel_input_plan\\\",\\\"params\\\":{\\\"planId\\\":\" + held[1] + \"}}\", held[0]))[\"result\"][\"cancelled\"] + \" \";\n}\nif (levelRec != null) {\n  var lp = levelRec.Split('|');\n  var lr = Unity_Inspector_Mod.StateModifier.GoToLevel(int.Parse(lp[0]), int.Parse(lp[1]));\n  var lj = Newtonsoft.Json.Linq.JToken.FromObject(lr);\n  log += \"loading recorded level \" + levelRec + \": success=\" + lj[\"success\"] + \" \" + lj.ToString(Newtonsoft.Json.Formatting.None);\n}\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
       },
       "expect": {
         "success": true,

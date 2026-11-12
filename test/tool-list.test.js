@@ -66,7 +66,7 @@ test('simulate_input advertises the sequence form and what the actions do', asyn
   assert.match(tool.description, /'sequence'/);
   assert.match(tool.description, /'binding' \(a key binding, '<mod id>\/<binding name>'\)/);
   assert.match(tool.description, /highFive/);
-  assert.match(tool.description, /interact button/);
+  assert.match(tool.description, /'highFive' \(interact\)/);
   assert.match(tool.description, /switch/);
   for (const exception of [/teleport door/, /live grenade within 20 units/, /citizen within 32 units/, /running special blocks it/]) {
     assert.match(tool.description, exception, 'a caller who reads only this needs to know what takes or blocks the press');
@@ -75,6 +75,22 @@ test('simulate_input advertises the sequence form and what the actions do', asyn
   assert.match(tool.description, /framesRead/);
   assert.equal(tool.inputSchema.properties.count.type, 'integer');
   assert.equal(tool.inputSchema.properties.duration.type, 'integer');
+});
+
+test('simulate_input opens with what it does, and advertises tracks and whose input a pause takes', async () => {
+  const tool = await toolNamed('simulate_input');
+
+  assert.match(tool.description, /^Press or hold input: exactly one of 'action'/);
+  assert.equal(tool.inputSchema.properties.tracks?.type, 'array');
+
+  assert.match(tool.description, /'tracks' \(2-8 sequences at once\)/);
+  assert.match(tool.description, /'start' opens the pause menu, never 'escape'/);
+  assert.match(tool.description, /'start' opens the pause menu, never 'escape'; that pause takes only the opening controller's input, never the real Esc key/);
+  assert.doesNotMatch(tool.description, /closes it/, 'a pause also closes on its own controller\'s accept on Resume');
+});
+
+test('take_screenshot says only the newest 50 screenshots are kept', async () => {
+  assert.match((await toolNamed('take_screenshot')).description, /keeping only the newest 50/);
 });
 
 test('query_gameobjects advertises base-type matching and the scan fields', async () => {
@@ -125,7 +141,7 @@ test('the state tools declare the arguments the mod reads as integers as integer
 });
 
 test('the level tools say they reply once the level is in play', async () => {
-  assert.match((await toolNamed('go_to_level')).description, /replies once in play, or once a cutscene holds it \(named in `cutscene`\), else fails after 60s/);
+  assert.match((await toolNamed('go_to_level')).description, /replies once in play, or once a cutscene holds it \(named in `cutscene`, with a `warning`\), else fails after 60s/);
   assert.match((await toolNamed('go_to_level')).inputSchema.properties.campaignIndex.description, /^0-25$/);
   assert.match((await toolNamed('restart_level')).description, /replies once it is in play again/);
   assert.match((await toolNamed('set_game_speed')).description, /verified a frame later/);
@@ -169,7 +185,8 @@ test('inspect_component advertises static members, dotted paths and suggestions'
   assert.match(description, /dotted path/);
   assert.match(description, /'suggestions'/);
   assert.equal(tool.inputSchema.properties.memberPath?.type, 'string');
-  assert.match(tool.inputSchema.properties.memberPath.description, /instead of the whole component/);
+  assert.match(description, /'memberPath' reads one member/);
+  assert.match(tool.inputSchema.properties.memberPath.description, /weapon\.damage/);
   assert.deepEqual(tool.inputSchema.required, ['componentType'], 'memberPath stays optional, and path gives way to instanceId');
   assert.equal(tool.inputSchema.properties.instanceId?.type, 'integer');
 });
@@ -183,8 +200,7 @@ test('the bro tools advertise the Swap Bros Mod gate and the rosters a miss answ
 
   for (const name of ['swap_bro', 'list_bros']) {
     const { description } = await toolNamed(name);
-    assert.match(description, /Requires Swap Bros Mod/, name);
-    assert.match(description, /refused when it is not active/, name);
+    assert.match(description, /Refused unless Swap Bros Mod is active/, name);
     assert.doesNotMatch(
       description,
       /falls back/i,

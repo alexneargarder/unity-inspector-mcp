@@ -68,6 +68,19 @@ paths:
 | N | a remote target's token: the declared file reread on every connect, never `UNITY_INSPECTOR_TOKEN_FILE`; a refused one | RT `the declared token file is read again on every connect, never UNITY_INSPECTOR_TOKEN_FILE, and a refusal names it`, `a token refusal names tokenFile and says to copy the token again` |
 | N | a token file holding anything but 64 lowercase hex characters, on every target | RT `a token file holding anything but 64 lowercase hex characters sends no token, on every target, and the refusal names it` |
 
+## run-script.js
+
+| | class | covered by |
+|---|---|---|
+| N | one attempt: the script's source, name, args and origin; the reply alone on stdout | RS `one attempt sends the script with its source, name and args, and prints the reply alone` |
+| N | run through a path with a symlinked directory in it | RS `run through a path with a symlinked directory in it, the client still sends the script` |
+| N | a failure in the result; the mod's own refusal | RS `a failure reply, in the result or the mod's own, is printed and exits 1` |
+| N | `--wait`: nothing listening at first; a refused token, then the right one | RS `--wait with nothing listening connects once the game listens, and sends the script once`, `--wait with the token refused connects once the right token is written` |
+| N | `--new-token`: an old game that would take the file's token; the file rewritten with the same token; a different token dated before the start; no token at the start | RS `--new-token sends the old game nothing, and the script reaches the new game once its token is written`, `--new-token takes a token file rewritten with the same token for the old game`, `--new-token takes a different token as new however old the file's time, and any token when there was none` |
+| N | the wait running out; one attempt with nothing listening | RS `a wait that runs out exits 3 naming the last cause, and so does one attempt with nothing listening` |
+| N | a protocol mismatch; an answer that is not the mod's | RS `a protocol mismatch, or an answer that is not the mod's, ends the wait at once` |
+| N | no script, port or token file; `--new-token` without `--wait`; a malformed `--arg` | RS `usage errors exit 2 with the usage line and connect to nothing` |
+
 ## execute_code
 
 | | class | covered by |
@@ -196,15 +209,22 @@ paths:
 
 | | class | covered by |
 |---|---|---|
-| N | neither form, two of action, binding and sequence, an empty sequence alone, an empty action or binding, a non-array sequence | TH `simulate_input needs exactly one of action, binding and sequence`, `a missing required argument is refused before anything reaches the game` |
+| N | neither form; two of action, binding, sequence and `tracks`; an empty sequence alone; an empty `tracks` beside an action; an empty action or binding; a non-array sequence | TH `simulate_input needs exactly one of action, binding, sequence and tracks`, `a missing required argument is refused before anything reaches the game`, `every tool refuses an argument of the wrong type, naming it, the type and what was sent`; SI `simulateInputProblem refuses every malformed tracks plan in the mod's own words` |
 | N | an action beside an empty sequence; every action field | TH `simulate_input forwards every field of the action form` |
 | N | a sequence | TH `simulate_input forwards a sequence to the game untouched` |
 | N | a binding with every field of the action form; a binding step in a sequence | TH `simulate_input forwards a binding with every field of the action form, and a binding step in a sequence` |
+| N | `tracks` with `player` | TH `simulate_input forwards tracks to the game untouched` |
+| N | `tracks` not an array, fewer than 2 or more than 8, an empty track, a track that is not an array; a track's step not an object, misnamed, mistyped, past the int range, negative, a pause with a duration, or holding both an action and a binding; one key in two tracks, in any case; `duration`, `count` or `interval` beside `tracks`; `player` out of range or fractional with it | SI `simulateInputProblem refuses every malformed tracks plan in the mod's own words`; TH `simulate_input refuses malformed tracks before they reach the game` |
+| N | a test-script step carrying `tracks`, one only the mod refuses, a mistyped one | TH `a test-script step may carry tracks, and what only the mod refuses reaches the mod` |
+| N | what the tool does; `tracks` and the pause rule in the description | TL `simulate_input opens with what it does, and advertises tracks and whose input a pause takes` |
 | N | `run_in_background` and other stray keys | TH `the misnamed keys real calls sent are refused, never run without them` |
 | N | a misnamed step key; a number sent as a string or a fraction; `count` 0; `duration`, `count` or `interval` beside a sequence; a pause step with a duration; an action that is not a string; `player` out of range; a step with both an action and a binding; a binding that is not a string, alone or in a step; a binding's `count` 0 or negative `duration` | TH `simulate_input refuses a malformed plan before it reaches the game` |
-| N | every well-formed plan | SI `simulateInputProblem accepts every well-formed plan` |
+| N | every well-formed plan: `tracks` with an offset, a key pressed twice in one track, all eight, beside an empty sequence | SI `simulateInputProblem accepts every well-formed plan` |
 | N | the budget for holds, repeats and sequences, binding presses and binding steps included; numeric strings; a budget past a timer's range | SI `simulate_input budgets the planned time, a frame allowance per press and the transport margin`, `a simulate_input budget is a number a timer can hold, whatever the arguments` |
+| N | the budget of `tracks`: the longest track, each with its own frame allowance, a pause alone included; a track that is not an array | SI `simulate_input budgets tracks by their longest track` |
 | N | a plan the game answers pending: polled to its end with other commands answered meanwhile; refused at once; never finished | SI `an input plan is polled until it ends, and other commands are answered meanwhile`, `a refused plan is answered without polling`, `a plan the game never finishes times out on its own budget`; TH `simulate_input answers with the finished plan, polling the game until it ends` |
+| N | a `tracks` call: timed by its longest track past the 6s default, its one `planId` polled to the composed result; a failed track's result, passed back unchanged as an error reply | SI `a tracks call is one plan, timed by its longest track: its planId is polled to the end and the composed result comes back as the game gave it`; TH `a tracks call answers with the composed result, and a failed track makes it an error with its body unchanged` |
+| N | a cancelled `tracks` call | SI `a cancelled call stops its plan in the game and returns at once` |
 | N | an acceptance or a poll answered after the 6s default, inside the plan's budget | SI `the initial request is timed to the plan's budget, not the 6s default`, `a poll answered after the default command timeout still counts, inside the plan's budget` |
 | N | a plan queued behind a slower command | SI `a plan queued behind a slower command keeps its whole budget` |
 | N | a call cancelled between polls, with its poll running, with its poll queued; a cancel the game never answers or refuses, or for a finished plan; a plan past its budget; one that ends by itself | SI `a cancelled call stops its plan in the game and returns at once`, `a call cancelled with its poll running sends no cancel: the socket it drops stops the plan`, `a call cancelled with its poll queued behind another command still cancels the plan`, `a cancel the game never answers holds nothing up, and its budget drops the connection the plan is tied to`, `a plan already finished, or a cancel the game refuses, is no error`, `a plan past its budget is cancelled too, so the game stops pressing when the caller gives up`, `a plan that ends by itself sends no cancel` |
@@ -240,6 +260,7 @@ paths:
 | N | `backdrop` true or a colour: the render sent as one `execute_code`, the path translated, the colour answered; false, null, false with a highlight | TH `take_screenshot with backdrop sends the render as one execute_code and answers its path and colour`, `take_screenshot with backdrop false or absent is the ordinary shot`; UC `toolCommand sends a take_screenshot backdrop as the render on execute_code, and refuses it with a highlight`; TL `take_screenshot and capture_animations advertise backdrop as a boolean or a colour` |
 | N | `backdrop` no colour, of another type, or with a highlight | TH `take_screenshot refuses a backdrop that is no colour, and one with a highlight, before the game` |
 | N | a backdrop render that throws, returns no path, or meets a main thread that does not answer | TH `a failed backdrop render is a plain error naming it, never the render source's position` |
+| N | the newest-50 keep in the description | TL `take_screenshot says only the newest 50 screenshots are kept` |
 | N | a remote target: a plain shot, a backdrop shot and a test-script step fetched, never a local file at the same path; a `C:/` game path; a fetch that fails; past 50 fetched | RF `a plain shot, a backdrop shot and a test-script step each land the game's bytes here, never the decoy's`, `a C:/ game path is fetched as the game names it, never through this machine's Proton prefix`, `a screenshot that cannot be fetched is a tool error naming the game's own path`, `only the newest 50 fetched screenshots are kept` |
 
 ## teleport_player

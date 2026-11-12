@@ -18,13 +18,13 @@ Run each script below with `run_test_script` on a game of your own: this session
 
 - Start each script in campaign 0 level 2 (`go_to_level {campaignIndex: 0, levelIndex: 1}`).
 - Run `scripts-lifecycle.json` twice in one game.
-- A failing world-map probe in `game-states.json` (steps 79-82, run in the second or so the world map stays up) is a timing miss: run it again.
+- A failing world-map probe in `game-states.json` (steps 83-86, run in the second or so the world map stays up) is a timing miss: run it again.
 - The `example-*.json` and `scenario-*.json` scripts are not part of the set.
 
 | script | needs |
 |---|---|
 | `bros.json` | Swap Bros Mod with BroMaker enabled and `alwaysChosen` on; Cobro, Test_Rambro, Bronobi, R.J. Brocready and Test_LegacySpriteKey installed and unlocked; Control Enemies Mod disabled, or its spawn-as-enemy off |
-| `game-states.json` | Swap Bros Mod; BroMakerLib; a current save slot holding a campaign; Control Enemies Mod disabled, or its spawn-as-enemy off |
+| `game-states.json` | Swap Bros Mod; BroMakerLib; a current save slot holding a campaign that is not IronBro; Control Enemies Mod disabled, or its spawn-as-enemy off |
 | `player-states.json` | Swap Bros Mod; BroMakerLib; the second player slot empty; Control Enemies Mod disabled, or its spawn-as-enemy off |
 | `execute-code-shapes.json` | RocketLib; BroMakerLib with Cobro; Swap Bros Mod |
 | `execute-code-errors.json` | BroMakerLib and RocketLib |
@@ -56,7 +56,7 @@ A row goes in the file for what covers it:
 - `testing-matrix-in-game-scripts.md`: an in-game step of capture_animations, execute_code, execute_script, run_test_script and unload_script
 - `testing-matrix-node-tools.md`: server tests of capture_animations, list_scripts, list_test_scripts, read_log, restart_server and run_test_script
 - `testing-matrix-launch-stop.md`: server tests of launch_game, stop_game and wait_for_game
-- `testing-matrix-server.md`: server tests of every other tool, of every tool at once, and of the connection handshake
+- `testing-matrix-server.md`: server tests of every other tool, of every tool at once, of the connection handshake and of `run-script.js`
 
 A class is one kind of input a tool sees in real use. The first column groups the rows:
 
@@ -85,4 +85,4 @@ Server tests are cited by file and full test name. In-game steps are cited by sc
 | PP | `test/process-platforms.test.js` | | SC | `test/stale-code.test.js` |
 | RT | `test/remote-target.test.js` | | RF | `test/remote-files.test.js` |
 | RC | `test/remote-capture.test.js` | | GD | `test/game-data.test.js` |
-| LR | `test/launch-repeat.test.js` | | | |
+| LR | `test/launch-repeat.test.js` | | RS | `test/run-script.test.js` |

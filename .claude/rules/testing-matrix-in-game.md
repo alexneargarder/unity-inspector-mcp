@@ -22,12 +22,12 @@ paths:
 |---|---|---|
 | S | in a level | game-states 7; levels 9, 13, 16 |
 | S | a level loading, its level fields null | game-states 8-10 |
-| S | main menu, its level fields null | game-states 40, 71 |
-| S | the join screen, before and after a join | game-states 64, 67 |
+| S | main menu, its level fields null | game-states 40, 75 |
+| S | the join screen, before and after a join, and after a second player's join | game-states 64, 67, 71 |
 | S | a joined slot whose Player the level has not spawned: at the join screen, while a level loads (`playerCount` 1) | game-states 10, 67 |
-| S | world map, its level fields null | game-states 79 |
+| S | world map, its level fields null | game-states 83 |
 | S | the main thread held: `mainThreadAnswered` false with an `error` | inspection 157 |
-| S | finished level: `isInGame` false | game-states 87-88; levels 69 |
+| S | finished level: `isInGame` false | game-states 91-92; levels 69 |
 | S | a challenge map; the Victory map | levels 19, 27 |
 | S | dead; respawning | player-states 50, 70 |
 | S | two players | player-states 99 |
@@ -56,10 +56,10 @@ paths:
 | C | a level past the campaign's end | levels 25-27 |
 | C | the main thread held past the 3 s budget: the level left as it was | levels 47-51 |
 | S | during a load | game-states 33-38 |
-| S | from the main menu | game-states 72-76; levels 59 |
+| S | from the main menu | game-states 76-80; levels 59 |
 | S | from the main menu with no save slot it could use | levels 56-58 |
 | S | from the pause menu: a persistent object the pause deactivated is active again | levels 60-62 |
-| S | from the world map | game-states 83-86 |
+| S | from the world map | game-states 87-90 |
 | S | with the player dead | player-states 54-58 |
 | S | in IronBro | player-states 143-146 |
 
@@ -67,7 +67,7 @@ paths:
 
 | | class | covered by |
 |---|---|---|
-| C | the whole component: HeroController, exact TestVanDammeAnim, a bro subclass, SpriteRenderer | inspection 24-26, 102 |
+| C | the whole component: HeroController, exact TestVanDammeAnim, a bro subclass, SpriteRenderer, its warning-form obsolete `castShadows` listed | inspection 24-26, 102 |
 | C | component absent; object absent; component by full type name | inspection 27-28, 101 |
 | C | members by kind: int, Color, null, statics, private, enum, arrays, List, Object reference, Vector3, const | inspection 29-41 |
 | C | dotted paths: a struct field, through a static array | inspection 42-43 |
@@ -78,6 +78,8 @@ paths:
 | C | a member read with the main thread held past its 5 s budget; the read after | inspection 114-116 |
 | C | the whole component: a base field an indexer named `Item` shadows, a field holding `m_`, a static getter left unrun, a getter that throws, a destroyed reference, a List | inspection 118 |
 | C | a getter that throws; a write-only property; a static getter by `memberPath` | inspection 119-121 |
+| C | the whole component: an `AudioSource`, its error-form obsolete properties left out, no engine error logged | inspection 185, 187-188 |
+| C | an error-form obsolete property named through `memberPath` | not produced by any step: its getter logs an engine error on every read |
 | C | a numeric segment into a List of structs; past its end; a destroyed reference | inspection 122-124 |
 | C | a component named by its base type | inspection 132 |
 | C | a type whose script was replaced | inspection 145-148 |
@@ -97,6 +99,7 @@ paths:
 | C | `detailed` on a small object | inspection 23 |
 | C | the bro in detail; an object with over 2,000 children | inspection 108-109, which call `GameObjectInspector.InspectGameObject` through execute_code, not the tool |
 | C | the 30,000-character detailed budget and the 100-child cap with `childrenTruncated`, through the tool | inspection 111-112 |
+| C | `detailed` on an object carrying an `AudioSource`, its error-form obsolete properties left out, no engine error logged | inspection 185-186, 188 |
 
 ## inspect_player
 
@@ -104,7 +107,7 @@ paths:
 |---|---|---|
 | S | in a level | levels 10 |
 | S | main menu | game-states 41 |
-| S | a joined slot whose Player the level has not spawned: at the join screen, while a level loads, on the world map | game-states 13, 68, 80 |
+| S | a joined slot whose Player the level has not spawned: at the join screen, while a level loads, on the world map | game-states 13, 68, 84 |
 | S | dead; respawning; piloting | player-states 51, 71, 82 |
 | S | a bro the game holds | player-states 156 |
 | S | two players | player-states 100 |
@@ -141,7 +144,7 @@ paths:
 | C | registered units that are inactive: not listed | spawning 96-97 |
 | C | the main thread held past the 5 s budget: `success: false` with `error` and nothing else; the call after | spawning 110-112 |
 | C | a corpse: `isAlive` false, beside `aliveCount` | spawning 120-123 |
-| S | main menu; world map | game-states 48, 81 |
+| S | main menu; world map | game-states 48, 85 |
 | S | a level loading | game-states 14-17 |
 | S | a piloted vehicle, its `IsEnemy` read before the pilot climbed in | player-states 80, 83 |
 | S | a cutscene | player-states 132 |
@@ -214,7 +217,7 @@ paths:
 |---|---|---|
 | C | in a level | levels 11-13 |
 | S | main menu | game-states 47; levels 52-55 |
-| S | world map | game-states 82 |
+| S | world map | game-states 86 |
 | S | a level loading | game-states 24-26 |
 | S | dead | player-states 62-66 |
 | S | paused | player-states 123-128 |
@@ -259,6 +262,7 @@ paths:
 | | class | covered by |
 |---|---|---|
 | C | a plan cancelled by its own connection, by another's, twice and then polled, its keys released; a cancel of no such plan and with no `planId` | input-sequence 13-16; through a real cancelled call: not produced by any step, since a step cannot cancel the call it runs in; SI and RTS rows |
+| C | a `tracks` call cancelled by its own connection, by another's, twice and then polled; a plan or a `tracks` call released with its connection's plans (`InputSimulator.ReleaseOwner`); every key released | input-sequence 27-29; a real connection closing: not produced by any step; SI rows |
 | C | a press, in any case | input 11-12, 19 |
 | C | a hold; 5 s, released when its reply arrives | input 14-17 |
 | C | a pause step with a duration | input 18 |
@@ -280,10 +284,12 @@ paths:
 | S | an input block; players held still | input 75-80 |
 | C | a misnamed step key; a duration sent as a string and a fractional count, both sent to the mod's message handler directly; a count beside a sequence | input-sequence 8-10; param-types 8 |
 | C | more finished plans than the mod keeps, never polled | input-sequence 11-12 |
-| S | two players holding one action at once; a later plan taking over a running one; a plan stopped by a scene load or a closed connection | not produced by any step: `run_test_script` runs its steps one at a time, so no two plans overlap |
+| S | a later plan taking over a running plan's key, and one track's key of a `tracks` call | input-sequence 23-26 |
+| S | a plan and a `tracks` call stopped by a scene load | input-sequence 32-36 |
+| S | two players holding one action at once | not produced by any step: no script presses for two players at once |
 | S | `escape` backing out of the Offline/Online choice, an `InputObserver` menu, and fire opening it again | input 82-92 |
 | S | the deathmatch score screen and flyby helicopter (`IsControllerPressing*`), cutscene fast-forward and the credits (`GetControllerHoldingFire`) | not produced by any step: no script plays deathmatch, a fast-forwardable cutscene or the credits |
-| S | menu keys at the main menu; fire through to the join screen | game-states 54-69 |
+| S | menu keys at the main menu; fire through to the join screen | game-states 54-68, 73 |
 | S | a level loading | game-states 27-29 |
 | S | `player` 1 with two players | player-states 106-107 |
 | C | `binding` for a bro's binding read every frame whatever its key: Furibrosa's Switch Weapon switching his weapon | input 104-107 |
@@ -293,6 +299,13 @@ paths:
 | C | an unknown binding, in a known mod and in an unknown one | input 108-109 |
 | C | `binding` beside `action`; a sequence step with both | input 110-111 |
 | S | RocketLib absent, or the `KeyBinding.IsDown` patch not installed | not produced by any step: the mod requires RocketLib, and a step cannot unpatch the mod's own postfix |
+| C | `tracks`: a direction held on one track and `fire` from an offset on another, through the tool and the mod's message handler | input-sequence 17-19 |
+| C | a key repeated across tracks | input-sequence 20 |
+| C | unread `tracks` results under the 32-result keep, a call counted once | input-sequence 30-31 |
+| S | `escape` in a level with no pause open | input-sequence 21-22 |
+| S | a pause a simulated `start` opened: closed by that controller's `start`, `escape` or accept on Resume; left open by another controller's press and the real Esc key | `escape`: input 45-49, 71-74; `start`: input 121-124; accept on Resume: input 99-102; the rest: not produced by any step: no script presses a second controller during a pause, and `simulate_input` has no real Esc key |
+| S | `JoinScreen` with a local player playing: a press for a slot nobody plays joins through controller 5, the `note` naming it | game-states 69-72 |
+| S | `HeroSelectController`, `escape` from a joined controller there; every gamepad controller owned; a slot a player on another machine plays, in a level and in a menu | not produced by any step: no script reaches the versus hero select or plays online |
 
 ## spawn_entity
 

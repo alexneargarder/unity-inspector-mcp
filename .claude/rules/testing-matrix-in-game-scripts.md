@@ -111,7 +111,7 @@ paths:
 | S | no level: menu reads | game-states 53 |
 | S | a cutscene | player-states 129, 133 |
 | S | an empty second player slot | player-states 7 |
-| S | a scene load started from code | game-states 39, 70, 77 |
+| S | a scene load started from code | game-states 39, 74, 81 |
 | C | a call after a `Main()` stopped at its budget; after one still running past its budget and grace | scripts-lifecycle 79, 85 |
 
 ## execute_script
