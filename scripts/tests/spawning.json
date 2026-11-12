@@ -1,6 +1,6 @@
 {
   "name": "spawn_entity, list_enemies and trace_spawns",
-  "description": "Covers spawn_entity with Utility Mod's disableEnemySpawn on, off, bypassed with ignoreSuppression, and with Utility Mod disabled in memory; every route (networked mooks, the mooks the networked prefab list lacks spawned locally, local vehicles, bosses and worms, the Facehugger and Screecher helpers), name forms, unknown names and Bro, positions and initial velocity; list_enemies with suppression on and off, after spawns, over a full level and on Challenge_Alien with its inactive face huggers left out, with a corpse lying in the level, and while a MonoBehaviour's Update holds the main thread past its 5 s budget; alien and hell units spawned in a jungle level; and trace_spawns refusals, those the server refuses first sent to the mod's message handler directly, the idle read, the default and every named target, a replacing start, since cursors, ring overflow, and stop, which removes its own prefixes. Plays campaign 0 level 2; spawns happen at x 600-660 and at x 300 with the game frozen; the bro is made invulnerable and every spawned unit is destroyed after it is listed. Needs Swap Bros Mod, BroMakerLib, Utility Mod and campaign 16. A settings save during the run writes the disableEnemySpawn it found, not the value a step set in memory: step 6 loads the utility-mod-save-guard library script, step 125 proves it with a real save and step 126 unloads it; Utility Mod's enabled flag is a static no save writes. Its first steps undo whatever an earlier run left changed; its last steps restore Utility Mod's settings, stop the trace and reload the level it started in. Its cleanup runs the restore again whatever ended the steps: pause, speed, the second player, IronBro, the lock, the Swap Bros selection, and the Utility Mod settings and HeroController values it recorded; it also stops the trace, reloads the level it started in and unloads the save guard.",
+  "description": "Covers spawn_entity with Utility Mod's disableEnemySpawn on, off, bypassed with ignoreSuppression, and with Utility Mod disabled in memory; every route (networked mooks, the mooks the networked prefab list lacks spawned locally, local vehicles, bosses and worms, the Facehugger and Screecher helpers), name forms, unknown names and Bro, villager and animal prefab names, which suppression leaves alone, an enemy's prefab name refused as unknown, a Citizen joining Map.citizens and a bro's high-five connecting with it, positions and initial velocity; list_enemies with suppression on and off, after spawns, over a full level and on Challenge_Alien with its inactive face huggers left out, with a corpse lying in the level, and while a MonoBehaviour's Update holds the main thread past its 5 s budget; alien and hell units spawned in a jungle level; and trace_spawns refusals, those the server refuses first sent to the mod's message handler directly, the idle read, the default and every named target, a replacing start, since cursors, ring overflow, and stop, which removes its own prefixes. Plays campaign 0 level 2; spawns happen at x 600-660, at x 300 with the game frozen and, for the high-five, beside the bro moved to x 784; the bro is made invulnerable and every spawned unit is destroyed after it is listed. Needs Swap Bros Mod, BroMakerLib, Utility Mod and campaign 16. A settings save during the run writes the disableEnemySpawn it found, not the value a step set in memory: step 6 loads the utility-mod-save-guard library script, step 135 proves it with a real save and step 136 unloads it; Utility Mod's enabled flag is a static no save writes. Its first steps undo whatever an earlier run left changed; its last steps restore Utility Mod's settings, stop the trace and reload the level it started in. Its cleanup ends a high-five's slow motion and runs the restore again whatever ended the steps: pause, speed, the second player, IronBro, the lock, the Swap Bros selection, and the Utility Mod settings and HeroController values it recorded; it also stops the trace, reloads the level it started in and unloads the save guard.",
   "steps": [
     {
       "command": "simulate_input",
@@ -402,7 +402,10 @@
         "contains": [
           "Unknown unit type 'xx'",
           "\"availableTypes\": [",
-          "\"Sand Worm\""
+          "\"Sand Worm\"",
+          "the villager and animal prefab names that follow them in availableTypes",
+          "Citizen spawns a citizen",
+          "\"Pig Rotten\""
         ]
       }
     },
@@ -417,6 +420,44 @@
         "success": false,
         "contains": [
           "use swap_bro to change the bro a player has"
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "pig rotten",
+        "x": 650,
+        "y": 500
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"type\": \"Pig Rotten\"",
+          "\"prefab\": \"Pig Rotten\"",
+          "\"unitType\": \"RottenPig\"",
+          "\"networked\": false"
+        ],
+        "notContains": [
+          "suppressionFound"
+        ]
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "ZMook",
+        "x": 600,
+        "y": 500
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "Unknown unit type 'ZMook'",
+          "\"availableTypes\": ["
+        ],
+        "notContains": [
+          "\"ZMook\""
         ]
       }
     },
@@ -456,6 +497,129 @@
         "success": true,
         "contains": [
           "destroyed"
+        ]
+      }
+    },
+    {
+      "command": "teleport_player",
+      "params": {
+        "x": 784,
+        "y": 408
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "spawn_entity",
+      "params": {
+        "type": "Citizen",
+        "x": 792,
+        "y": 420
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"unitType\": \"Villager\"",
+          "\"networked\": false",
+          "\"instanceId\": "
+        ],
+        "notContains": [
+          "suppressionFound"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar ids = (d.GetData(\"uimtest.u3.baseline\") as string) ?? \",\";\nVillager found = null;\nint n = 0;\nforeach (var v in UnityEngine.Object.FindObjectsOfType<Villager>()) {\n  if (ids.Contains(\",\" + v.GetInstanceID() + \",\")) continue;\n  n++;\n  if (found == null || System.Math.Abs(v.X - 792f) < System.Math.Abs(found.X - 792f)) found = v;\n}\nif (found == null) return \"no new villager\";\nd.SetData(\"uimtest.citizen\", found.GetInstanceID());\nvar cit = found as Citizen;\nreturn n + \" new villager(s); nearest \" + found.name + \" is \" + (cit == null ? \"not a Citizen but \" + found.GetType().Name : \"a Citizen, in Map.citizens=\" + Map.citizens.Contains(cit));"
+      },
+      "until": {
+        "timeout": 30,
+        "interval": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "is a Citizen, in Map.citizens=True"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar id = d.GetData(\"uimtest.citizen\");\nCitizen cit = null;\nforeach (var u in UnityEngine.Object.FindObjectsOfType<Citizen>()) if (id != null && u.GetInstanceID() == (int)id) cit = u;\nif (cit == null) return \"citizen missing\";\nvar c = HeroController.players[0].character;\nif (!c.IsOnGround() || !cit.IsOnGround()) return \"waiting: bro on ground=\" + c.IsOnGround() + \", citizen on ground=\" + cit.IsOnGround();\nif (cit.playerNum < 0 || cit.playerNum == c.playerNum) return \"a high-five cannot reach this citizen: its playerNum is \" + cit.playerNum + \", and Map.CheckHighFive skips a unit whose playerNum is below 0 or the bro's \" + c.playerNum;\nforeach (var w in cit.GetComponents<DisableWhenOffCamera>()) w.canDisable = false;\nif (cit.enemyAI != null) { cit.enemyAI.enabled = false; cit.enemyAI.ClearActionQueue(true); }\ncit.xI = 0f;\nc.xI = 0f;\ncit.SetXY(c.X + 8f, cit.Y);\ncit.SetPosition();\ncit.transform.localScale = new Vector3(-1f, cit.transform.localScale.y, 1f);\nc.transform.localScale = new Vector3(1f, c.transform.localScale.y, 1f);\nvar hf = typeof(Citizen).GetField(\"hasHighFived\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nreturn (System.Math.Abs(cit.Y - c.Y) < 4f ? \"face to face\" : \"not level\") + \": bro at \" + c.X.ToString(ic) + \",\" + c.Y.ToString(ic) + \" facing \" + c.Direction + \", citizen at \" + cit.X.ToString(ic) + \",\" + cit.Y.ToString(ic) + \" facing \" + cit.Direction + \" playerNum=\" + cit.playerNum + \" nearby=\" + Map.IsCitizenNearby(c.X, c.Y, 32, 32) + \" hasHighFived=\" + hf.GetValue(cit);"
+      },
+      "until": {
+        "timeout": 15,
+        "interval": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "face to face",
+          "nearby=True",
+          "hasHighFived=False"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "highFive",
+        "duration": 300
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"action\": \"highFive\""
+        ],
+        "notContains": [
+          "warning"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar id = d.GetData(\"uimtest.citizen\");\nCitizen cit = null;\nforeach (var u in UnityEngine.Object.FindObjectsOfType<Citizen>()) if (id != null && u.GetInstanceID() == (int)id) cit = u;\nif (cit == null) return \"citizen missing\";\nvar hf = typeof(Citizen).GetField(\"hasHighFived\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\nvar tb = typeof(HeroController).GetField(\"timeBoostTime\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);\nreturn \"hasHighFived=\" + hf.GetValue(cit) + \" timeBoostTime=\" + tb.GetValue(null) + \" speed=\" + UnityEngine.Time.timeScale;"
+      },
+      "until": {
+        "timeout": 10,
+        "interval": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "hasHighFived=True"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nd.SetData(\"uimtest.citizen\", null);\nvar tb = typeof(HeroController).GetField(\"timeBoostTime\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);\nbool boosted = (float)tb.GetValue(null) > 0f;\nif (boosted) HeroController.CancelTimeBroBoost();\nvar ids = (d.GetData(\"uimtest.u3.baseline\") as string) ?? \",\";\nint n = 0;\nforeach (var u in UnityEngine.Object.FindObjectsOfType<NetworkedUnit>()) {\n  if (!u.IsEnemy || ids.Contains(\",\" + u.GetInstanceID() + \",\")) continue;\n  if (u.transform.parent != null && u.transform.parent.GetComponent<NetworkedUnit>() != null) continue;\n  UnityEngine.Object.Destroy(u.gameObject);\n  n++;\n}\nreturn \"destroyed \" + n + \" spawned units, slow motion \" + (boosted ? \"ended\" : \"not running\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "destroyed"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var tb = typeof(HeroController).GetField(\"timeBoostTime\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);\nfloat left = (float)tb.GetValue(null);\nreturn left <= 0f && UnityEngine.Time.timeScale == 1f ? \"slow motion over, speed 1\" : \"waiting: timeBoostTime=\" + left + \" speed=\" + UnityEngine.Time.timeScale;"
+      },
+      "until": {
+        "timeout": 15,
+        "interval": 1
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "slow motion over, speed 1"
         ]
       }
     },
@@ -1739,6 +1903,18 @@
     }
   ],
   "cleanup": [
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nd.SetData(\"uimtest.citizen\", null);\nvar tb = typeof(HeroController).GetField(\"timeBoostTime\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);\nbool boosted = (float)tb.GetValue(null) > 0f;\nif (boosted) HeroController.CancelTimeBroBoost();\nreturn \"high-five slow motion \" + (boosted ? \"ended\" : \"not running\");"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "high-five slow motion"
+        ]
+      }
+    },
     {
       "command": "execute_code",
       "params": {

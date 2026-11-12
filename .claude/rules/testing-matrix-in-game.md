@@ -12,7 +12,7 @@ paths:
 | C | a caller error in a request, answered at once under its own id with no `Internal error` prefix | execute-code-shapes 99, over a second connection of its own, opened with the hello and its token |
 | C | a number or boolean of the wrong JSON type, a non-integer and an out-of-range int, a float past the float range, a null optional and a null required argument, sent to the mod's message handler directly since the server refuses them first | param-types 1-21 |
 | C | a caller error (bad path): its own message, no `Internal error`, nothing logged | inspection 22, 173 |
-| C | a main thread that does not answer: `success: false`, `mainThreadAnswered: false`, no `Internal error`, no stack | inspection 115, 175, 178; levels 49; spawning 101; scripts-lifecycle 83-84, 90, 93, 96, 101; execute-code-shapes 66 |
+| C | a main thread that does not answer: `success: false`, `mainThreadAnswered: false`, no `Internal error`, no stack | inspection 115, 175, 178; levels 49; spawning 111; scripts-lifecycle 83-84, 90, 93, 96, 101; execute-code-shapes 66 |
 | C | a caller error (a parameter value that does not convert): its own message, no `Internal error` | param-types 1-16 |
 | C | a parameter caller error left out of the log; a conversion error under a `Newtonsoft.Json.Linq` frame; an internal `ArgumentException` still logged as `Internal error` | not produced by any step: param-types reads no log, every parameter read goes through `ReadInt`, `ReadLong`, `ReadFloat` and `ReadBool` but `take_screenshot`'s highlight, whose type checks answer a field of the wrong type with a `highlightError` before anything converts it (inspection 136-137), and no step makes the mod throw on its own data |
 
@@ -133,14 +133,14 @@ paths:
 
 | | class | covered by |
 |---|---|---|
-| M | suppression on, enemies left; on, inactive units left out | spawning 12, 87 |
-| C | after spawns: mooks, a villager, bosses, vehicles, a worm, aliens | spawning 24, 31, 43 |
-| M | suppression off with units | spawning 50 |
-| M | a full level after suppression is turned off; back on | spawning 52-58 |
-| M | the suppressor mod disabled | spawning 64, 89 |
-| C | registered units that are inactive: not listed | spawning 86-87 |
-| C | the main thread held past the 5 s budget: `success: false` with `error` and nothing else; the call after | spawning 100-102 |
-| C | a corpse: `isAlive` false, beside `aliveCount` | spawning 110-113 |
+| M | suppression on, enemies left; on, inactive units left out | spawning 12, 97 |
+| C | after spawns: mooks, a villager, bosses, vehicles, a worm, aliens | spawning 24, 33, 53 |
+| M | suppression off with units | spawning 60 |
+| M | a full level after suppression is turned off; back on | spawning 62-68 |
+| M | the suppressor mod disabled | spawning 74, 99 |
+| C | registered units that are inactive: not listed | spawning 96-97 |
+| C | the main thread held past the 5 s budget: `success: false` with `error` and nothing else; the call after | spawning 110-112 |
+| C | a corpse: `isAlive` false, beside `aliveCount` | spawning 120-123 |
 | S | main menu; world map | game-states 48, 81 |
 | S | a level loading | game-states 14-17 |
 | S | a piloted vehicle, its `IsEnemy` read before the pilot climbed in | player-states 80, 83 |
@@ -223,7 +223,7 @@ paths:
 | S | a bro's intro on the restart: answered with `cutscene` and its warning, `start` skipping it | levels 92-96 |
 | C | no GameModeController; an online client | not produced by any step: code review |
 | S | a finished level | not produced by any step: the level test is the one levels 67-73 cover for the slot tools |
-| M | after suppression is turned off and on | spawning 52-58 |
+| M | after suppression is turned off and on | spawning 62-68 |
 
 ## set_game_speed
 
@@ -270,6 +270,7 @@ paths:
 | C | a hold or repeat over 60 s; an unknown action | input 37-39 |
 | C | `player` 7 | input 40 |
 | C | bro actions: highFive, gesture, sprint | input 42-44 |
+| S | `highFive` with a citizen beside the bro, facing it: the high-five connects | spawning 38-40 |
 | C | `start` and `escape` in a level | input 45-49 |
 | S | a press the pause menu takes as accept | input 99-102 |
 | S | paused | input 47 |
@@ -298,23 +299,26 @@ paths:
 | | class | covered by |
 |---|---|---|
 | M | a Mook suppressed; bypassed | spawning 20, 22-23 |
-| M | a settings save while a step holds `disableEnemySpawn` changed: the value found reaches the file, the changed one stays in memory | spawning 6, 125 |
+| M | a settings save while a step holds `disableEnemySpawn` changed: the value found reaches the file, the changed one stays in memory | spawning 6, 135 |
 | C | player-states leaves the Utility Mod slots as found | player-states 173, 197 |
-| C | display, enum and messy names; unknown; `Bro` | spawning 25-29 |
-| C | a villager | spawning 30 |
-| C | Mech, Mook Truck, Stealth Tank, Terrorkopter, Satan Miniboss, Sand Worm | spawning 34-39 |
-| C | Facehugger and Screecher; floats and initial velocity | spawning 40-42 |
-| C | negative and far coordinates | spawning 44-45 |
-| M | suppression off; bypassed while off | spawning 48-49 |
-| M | the suppressor mod disabled, its setting still on | spawning 60-63 |
-| M | a local mook suppressed; local mooks bypassed | spawning 91-96 |
+| C | display, enum and messy names; unknown, its `availableTypes` and error naming the villager and animal prefab names; `Bro` | spawning 25-29 |
+| C | a villager or animal prefab name RocketLib does not resolve, in another case and spacing, with suppression on | spawning 30 |
+| C | a prefab name the villager and animal filter leaves out (an enemy's) | spawning 31 |
+| C | a villager by RocketLib's name | spawning 32 |
+| C | `Citizen`: a `Citizen`, in `Map.citizens` | spawning 36-37 |
+| C | Mech, Mook Truck, Stealth Tank, Terrorkopter, Satan Miniboss, Sand Worm | spawning 44-49 |
+| C | Facehugger and Screecher; floats and initial velocity | spawning 50-52 |
+| C | negative and far coordinates | spawning 54-55 |
+| M | suppression off; bypassed while off | spawning 58-59 |
+| M | the suppressor mod disabled, its setting still on | spawning 70-73 |
+| M | a local mook suppressed; local mooks bypassed | spawning 101-106 |
 | S | main menu | game-states 49 |
 | S | a level loading | game-states 18-20 |
 | S | a finished level | levels 68 |
 | C | a non-finite coordinate or velocity | not produced by any step: JSON numbers are finite; code review |
-| C | alien and hell units in a jungle level | spawning 103-108 |
+| C | alien and hell units in a jungle level | spawning 113-118 |
 | C | a prefab the level's theme lacks | not produced by any step: all seven level themes hold a prefab for every type |
-| C | a local spawn that returns nothing | spawning 91 for the local mook route; the Facehugger and Screecher helpers are not produced by any step: code review only |
+| C | a local spawn that returns nothing | spawning 101 for the local mook route; the Facehugger and Screecher helpers are not produced by any step: code review only |
 
 ## swap_bro
 
@@ -401,11 +405,11 @@ paths:
 | C | `stop` and `read` with no trace | spawning 9, 13, 18 |
 | C | an unknown action; unknown, empty and non-array targets, all but the empty ones sent to the mod's message handler directly | spawning 14-17 |
 | C | the default targets; a suppressed spawn recorded | spawning 19-21 |
-| C | a replacing start; a local mook and a projectile | spawning 67-71 |
-| C | `since` past the counter, between records, not a number (sent to the mod's message handler directly) | spawning 72-74 |
-| C | a doodad on a level load | spawning 75-77, step 77 reading `SpawnTrace.Read` through execute_code, not the tool |
-| C | stop; ring overflow | spawning 78-83 |
-| C | stop removes its own prefixes | spawning 114-117 |
+| C | a replacing start; a local mook and a projectile | spawning 77-81 |
+| C | `since` past the counter, between records, not a number (sent to the mod's message handler directly) | spawning 82-84 |
+| C | a doodad on a level load | spawning 85-87, step 87 reading `SpawnTrace.Read` through execute_code, not the tool |
+| C | stop; ring overflow | spawning 88-93 |
+| C | stop removes its own prefixes | spawning 124-127 |
 
 ## Not produced by any step
 

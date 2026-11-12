@@ -1813,18 +1813,18 @@ function toolDefinitions({ launchHelp = "" } = {}) {
       },
       {
         name: "spawn_entity",
-        description: "Spawn a unit at a world position; a level must be loaded. `Baneling` is the theme's mosquito and `Screecher` its baneling; `Bro` is refused — use swap_bro. Success returns `unitType`, `instanceId` and `networked`; a failure returns `error`, with `availableTypes` on an unknown name.",
+        description: "Spawn a unit at a world position, `xI`/`yI` its initial velocity (up positive); a level must be loaded. `Baneling` is the theme's mosquito and `Screecher` its baneling; `Bro` is refused — use swap_bro. Success returns `unitType`, `instanceId` and `networked`; a failure returns `error`, with `availableTypes` on an unknown name.",
         inputSchema: {
           type: "object",
           properties: {
             type: {
               type: "string",
-              description: "A RocketLib UnitType, by enum or display name; case, spaces and punctuation are ignored",
+              description: "A RocketLib UnitType by enum or display name, or a villager or animal prefab name, ignoring case, spaces and punctuation; `Citizen` is a citizen, the unit a high-five needs",
             },
             x: { type: "number" },
             y: { type: "number" },
-            xI: { type: "number", description: "Initial horizontal velocity", default: 0 },
-            yI: { type: "number", description: "Initial vertical velocity, up is positive", default: 0 },
+            xI: { type: "number", default: 0 },
+            yI: { type: "number", default: 0 },
             ignoreSuppression: {
               type: "boolean",
               description: "Lift Utility Mod's disableEnemySpawn for this spawn; reply adds suppressionFound",
@@ -2108,7 +2108,7 @@ function toolDefinitions({ launchHelp = "" } = {}) {
       },
       {
         name: "stop_game",
-        description: "Stop the game this server is pointed at, and nothing else: this session's own instance, or the user's game when the server is pointed there.",
+        description: "Stop the game this server is pointed at, and nothing else: this session's own instance, or the user's game.",
         inputSchema: {
           type: "object",
           properties: {
