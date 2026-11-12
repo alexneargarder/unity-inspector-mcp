@@ -141,7 +141,7 @@ paths:
 | M | suppression off with units | spawning 60 |
 | M | a full level after suppression is turned off; back on | spawning 62-68 |
 | M | the suppressor mod disabled | spawning 74, 99 |
-| C | registered units that are inactive: not listed | spawning 96-97 |
+| C | units in `Map.units` that are inactive: not listed | spawning 96-97 |
 | C | the main thread held past the 5 s budget: `success: false` with `error` and nothing else; the call after | spawning 110-112 |
 | C | a corpse: `isAlive` false, beside `aliveCount` | spawning 120-123 |
 | S | main menu; world map | game-states 48, 85 |
@@ -318,13 +318,13 @@ paths:
 | C | a villager or animal prefab name RocketLib does not resolve, in another case and spacing, with suppression on | spawning 30 |
 | C | a prefab name the villager and animal filter leaves out (an enemy's) | spawning 31 |
 | C | a villager by RocketLib's name | spawning 32 |
-| C | `Citizen`: a `Citizen`, in `Map.citizens` | spawning 36-37 |
+| C | `Citizen`: a `Citizen`, in `Map.citizens`, registered and parented under the map | spawning 36-37 |
 | C | Mech, Mook Truck, Stealth Tank, Terrorkopter, Satan Miniboss, Sand Worm | spawning 44-49 |
-| C | Facehugger and Screecher; floats and initial velocity | spawning 50-52 |
+| C | Facehugger and Screecher; floats and initial velocity; each registered with the network registry and parented under the map | spawning 50-52, step 52 reading the registration |
 | C | negative and far coordinates | spawning 54-55 |
 | M | suppression off; bypassed while off | spawning 58-59 |
 | M | the suppressor mod disabled, its setting still on | spawning 70-73 |
-| M | a local mook suppressed; local mooks bypassed | spawning 101-106 |
+| M | a local mook suppressed; local mooks bypassed, registered and parented under the map | spawning 101-106 |
 | S | main menu | game-states 49 |
 | S | a level loading | game-states 18-20 |
 | S | a finished level | levels 68 |

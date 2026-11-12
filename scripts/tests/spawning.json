@@ -1,6 +1,6 @@
 {
   "name": "spawn_entity, list_enemies and trace_spawns",
-  "description": "Covers spawn_entity with Utility Mod's disableEnemySpawn on, off, bypassed with ignoreSuppression, and with Utility Mod disabled in memory; every route (networked mooks, the mooks the networked prefab list lacks spawned locally, local vehicles, bosses and worms, the Facehugger and Screecher helpers), name forms, unknown names and Bro, villager and animal prefab names, which suppression leaves alone, an enemy's prefab name refused as unknown, a Citizen joining Map.citizens and a bro's high-five connecting with it, positions and initial velocity; list_enemies with suppression on and off, after spawns, over a full level and on Challenge_Alien with its inactive face huggers left out, with a corpse lying in the level, and while a MonoBehaviour's Update holds the main thread past its 5 s budget; alien and hell units spawned in a jungle level; and trace_spawns refusals, those the server refuses first sent to the mod's message handler directly, the idle read, the default and every named target, a replacing start, since cursors, ring overflow, and stop, which removes its own prefixes. Plays campaign 0 level 2; spawns happen at x 600-660, at x 300 with the game frozen and, for the high-five, beside the bro moved to x 784; the bro is made invulnerable and every spawned unit is destroyed after it is listed. Needs Swap Bros Mod, BroMakerLib, Utility Mod and campaign 16. A settings save during the run writes the disableEnemySpawn it found, not the value a step set in memory: step 6 loads the utility-mod-save-guard library script, step 135 proves it with a real save and step 136 unloads it; Utility Mod's enabled flag is a static no save writes. Its first steps undo whatever an earlier run left changed; its last steps restore Utility Mod's settings, stop the trace and reload the level it started in. Its cleanup ends a high-five's slow motion and runs the restore again whatever ended the steps: pause, speed, the second player, IronBro, the lock, the Swap Bros selection, and the Utility Mod settings and HeroController values it recorded; it also stops the trace, reloads the level it started in and unloads the save guard.",
+  "description": "Covers spawn_entity with Utility Mod's disableEnemySpawn on, off, bypassed with ignoreSuppression, and with Utility Mod disabled in memory; every route (networked mooks, the mooks the networked prefab list lacks spawned locally, local vehicles, bosses and worms, the Facehugger and Screecher helpers), the local mooks, the citizen, the Facehugger and the Screecher parented under the map and registered with the network registry, name forms, unknown names and Bro, villager and animal prefab names, which suppression leaves alone, an enemy's prefab name refused as unknown, a Citizen joining Map.citizens and a bro's high-five connecting with it, positions and initial velocity; list_enemies with suppression on and off, after spawns, over a full level and on Challenge_Alien with its inactive face huggers left out, with a corpse lying in the level, and while a MonoBehaviour's Update holds the main thread past its 5 s budget; alien and hell units spawned in a jungle level; and trace_spawns refusals, those the server refuses first sent to the mod's message handler directly, the idle read, the default and every named target, a replacing start, since cursors, ring overflow, and stop, which removes its own prefixes. Plays campaign 0 level 2; spawns happen at x 600-660, at x 300 with the game frozen and, for the high-five, beside the bro moved to x 784; the bro is made invulnerable and every spawned unit is destroyed after it is listed. Needs Swap Bros Mod, BroMakerLib, Utility Mod and campaign 16. A settings save during the run writes the disableEnemySpawn it found, not the value a step set in memory: step 6 loads the utility-mod-save-guard library script, step 135 proves it with a real save and step 136 unloads it; Utility Mod's enabled flag is a static no save writes. Its first steps undo whatever an earlier run left changed; its last steps restore Utility Mod's settings, stop the trace and reload the level it started in. Its cleanup ends a high-five's slow motion and runs the restore again whatever ended the steps: pause, speed, the second player, IronBro, the lock, the Swap Bros selection, and the Utility Mod settings and HeroController values it recorded; it also stops the trace, reloads the level it started in and unloads the save guard.",
   "steps": [
     {
       "command": "simulate_input",
@@ -532,7 +532,7 @@
     {
       "command": "execute_code",
       "params": {
-        "code": "var d = System.AppDomain.CurrentDomain;\nvar ids = (d.GetData(\"uimtest.u3.baseline\") as string) ?? \",\";\nVillager found = null;\nint n = 0;\nforeach (var v in UnityEngine.Object.FindObjectsOfType<Villager>()) {\n  if (ids.Contains(\",\" + v.GetInstanceID() + \",\")) continue;\n  n++;\n  if (found == null || System.Math.Abs(v.X - 792f) < System.Math.Abs(found.X - 792f)) found = v;\n}\nif (found == null) return \"no new villager\";\nd.SetData(\"uimtest.citizen\", found.GetInstanceID());\nvar cit = found as Citizen;\nreturn n + \" new villager(s); nearest \" + found.name + \" is \" + (cit == null ? \"not a Citizen but \" + found.GetType().Name : \"a Citizen, in Map.citizens=\" + Map.citizens.Contains(cit));"
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar ids = (d.GetData(\"uimtest.u3.baseline\") as string) ?? \",\";\nVillager found = null;\nint n = 0;\nforeach (var v in UnityEngine.Object.FindObjectsOfType<Villager>()) {\n  if (ids.Contains(\",\" + v.GetInstanceID() + \",\")) continue;\n  n++;\n  if (found == null || System.Math.Abs(v.X - 792f) < System.Math.Abs(found.X - 792f)) found = v;\n}\nif (found == null) return \"no new villager\";\nd.SetData(\"uimtest.citizen\", found.GetInstanceID());\nvar cit = found as Citizen;\nreturn n + \" new villager(s); nearest \" + found.name + \" is \" + (cit == null ? \"not a Citizen but \" + found.GetType().Name : \"a Citizen, in Map.citizens=\" + Map.citizens.Contains(cit)) + \" registered=\" + (Registry.GetNID(found.gameObject) != NID.NoID) + \" parent=\" + (Map.Instance != null && found.transform.parent == Map.Instance.transform ? \"Map\" : found.transform.parent == null ? \"none\" : found.transform.parent.name);"
       },
       "until": {
         "timeout": 30,
@@ -541,7 +541,7 @@
       "expect": {
         "success": true,
         "contains": [
-          "is a Citizen, in Map.citizens=True"
+          "is a Citizen, in Map.citizens=True registered=True parent=Map"
         ]
       }
     },
@@ -772,11 +772,12 @@
     {
       "command": "execute_code",
       "params": {
-        "code": "var sb = new System.Text.StringBuilder();\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nforeach (var u in UnityEngine.Object.FindObjectsOfType<Unit>()) {\n  if (!u.name.StartsWith(\"ZAlienFaceHugger\")) continue;\n  sb.Append(u.name + \" at \" + u.X.ToString(ic) + \",\" + u.Y.ToString(ic) + \" xI=\" + u.xI.ToString(ic) + \" yI=\" + u.yI.ToString(ic) + \"; \");\n}\nreturn sb.Length == 0 ? \"no facehugger\" : sb.ToString();"
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar ids = (d.GetData(\"uimtest.u3.baseline\") as string) ?? \",\";\nvar sb = new System.Text.StringBuilder();\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nint huggers = 0, screechers = 0, ok = 0;\nforeach (var u in UnityEngine.Object.FindObjectsOfType<Unit>()) {\n  bool hugger = u.name.StartsWith(\"ZAlienFaceHugger\");\n  if (!hugger && !u.name.StartsWith(\"ZAlienMelter\")) continue;\n  if (ids.Contains(\",\" + u.GetInstanceID() + \",\")) continue;\n  if (hugger) huggers++; else screechers++;\n  bool registered = Registry.GetNID(u.gameObject) != NID.NoID;\n  bool underMap = Map.Instance != null && u.transform.parent == Map.Instance.transform;\n  if (registered && underMap) ok++;\n  sb.Append(u.name + \" at \" + u.X.ToString(ic) + \",\" + u.Y.ToString(ic) + \" xI=\" + u.xI.ToString(ic) + \" yI=\" + u.yI.ToString(ic) + \" registered=\" + registered + \" parent=\" + (Map.Instance != null && u.transform.parent == Map.Instance.transform ? \"Map\" : u.transform.parent == null ? \"none\" : u.transform.parent.name) + \"; \");\n}\nreturn huggers + \" facehugger(s), \" + screechers + \" screecher(s), \" + ok + \" of \" + (huggers + screechers) + \" registered and parented to the map: \" + sb;"
       },
       "expect": {
         "success": true,
         "contains": [
+          "1 facehugger(s), 1 screecher(s), 2 of 2 registered and parented to the map",
           "at 300.5,520.25 xI=40 yI=60"
         ]
       }
@@ -1353,12 +1354,12 @@
     {
       "command": "execute_code",
       "params": {
-        "code": "int inactive = 0, active = 0;\nvar names = new List<string>();\nforeach (var u in Map.units) { if (u == null) continue; if (u.gameObject.activeInHierarchy) active++; else { inactive++; if (!names.Contains(u.name)) names.Add(u.name); } }\nnames.Sort();\nreturn \"registered inactive=\" + inactive + \" active=\" + active + \" inactive names: \" + string.Join(\", \", names.ToArray());"
+        "code": "int inactive = 0, active = 0;\nvar names = new List<string>();\nforeach (var u in Map.units) { if (u == null) continue; if (u.gameObject.activeInHierarchy) active++; else { inactive++; if (!names.Contains(u.name)) names.Add(u.name); } }\nnames.Sort();\nreturn \"in Map.units inactive=\" + inactive + \" active=\" + active + \" inactive names: \" + string.Join(\", \", names.ToArray());"
       },
       "expect": {
         "success": true,
         "contains": [
-          "registered inactive=52",
+          "in Map.units inactive=52",
           "ZAlienFaceHugger"
         ]
       }
@@ -1507,12 +1508,12 @@
     {
       "command": "execute_code",
       "params": {
-        "code": "var want = new[] { \"ZMookTreasure(Clone)\", \"ZMookSuicideBigGuy(Clone)\", \"ZMookBigGuy Strong(Clone)\", \"ZMookArmouredGuy Brown(Clone)\" };\nvar sb = new System.Text.StringBuilder();\nint ok = 0;\nforeach (var n in want) {\n  Mook found = null;\n  foreach (var m in UnityEngine.Object.FindObjectsOfType<Mook>()) if (m.name == n) { found = m; break; }\n  if (found == null) { sb.Append(n + \" missing; \"); continue; }\n  bool parented = Map.Instance != null && found.transform.parent == Map.Instance.transform;\n  bool registered = Map.units.Contains(found);\n  if (parented && registered) ok++;\n  sb.Append(n + \" parent=\" + (found.transform.parent == null ? \"none\" : found.transform.parent.name) + \" registered=\" + registered + \"; \");\n}\nreturn ok + \" of \" + want.Length + \" local mooks parented to the map and registered: \" + sb;"
+        "code": "var want = new[] { \"ZMookTreasure(Clone)\", \"ZMookSuicideBigGuy(Clone)\", \"ZMookBigGuy Strong(Clone)\", \"ZMookArmouredGuy Brown(Clone)\" };\nvar sb = new System.Text.StringBuilder();\nint ok = 0;\nforeach (var n in want) {\n  Mook found = null;\n  foreach (var m in UnityEngine.Object.FindObjectsOfType<Mook>()) if (m.name == n) { found = m; break; }\n  if (found == null) { sb.Append(n + \" missing; \"); continue; }\n  bool parented = Map.Instance != null && found.transform.parent == Map.Instance.transform;\n  bool inUnits = Map.units.Contains(found);\n  bool registered = Registry.GetNID(found.gameObject) != NID.NoID;\n  if (parented && inUnits && registered) ok++;\n  sb.Append(n + \" parent=\" + (found.transform.parent == null ? \"none\" : found.transform.parent.name) + \" inMapUnits=\" + inUnits + \" registered=\" + registered + \"; \");\n}\nreturn ok + \" of \" + want.Length + \" local mooks parented to the map, in Map.units and registered: \" + sb;"
       },
       "expect": {
         "success": true,
         "contains": [
-          "4 of 4 local mooks parented to the map and registered"
+          "4 of 4 local mooks parented to the map, in Map.units and registered"
         ]
       }
     },
@@ -1648,12 +1649,12 @@
     {
       "command": "execute_code",
       "params": {
-        "code": "var want = new[] { \"ZAlienXenomorph(Clone) [local]\", \"ZHellDog(Clone) [local]\" };\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nvar sb = new System.Text.StringBuilder();\nint ok = 0;\nforeach (var n in want) {\n  Unit found = null;\n  foreach (var u in UnityEngine.Object.FindObjectsOfType<Unit>()) if (u.name == n) { found = u; break; }\n  if (found == null) { sb.Append(n + \" missing; \"); continue; }\n  bool live = found.gameObject.activeInHierarchy && found.health > 0 && Map.units.Contains(found);\n  if (live) ok++;\n  sb.Append(n + \" active=\" + found.gameObject.activeInHierarchy + \" health=\" + found.health + \" registered=\" + Map.units.Contains(found) + \" at \" + found.X.ToString(ic) + \",\" + found.Y.ToString(ic) + \"; \");\n}\nreturn ok + \" of \" + want.Length + \" units active, alive and registered in theme \" + Map.Instance.activeTheme.name + \": \" + sb;"
+        "code": "var want = new[] { \"ZAlienXenomorph(Clone) [local]\", \"ZHellDog(Clone) [local]\" };\nvar ic = System.Globalization.CultureInfo.InvariantCulture;\nvar sb = new System.Text.StringBuilder();\nint ok = 0;\nforeach (var n in want) {\n  Unit found = null;\n  foreach (var u in UnityEngine.Object.FindObjectsOfType<Unit>()) if (u.name == n) { found = u; break; }\n  if (found == null) { sb.Append(n + \" missing; \"); continue; }\n  bool live = found.gameObject.activeInHierarchy && found.health > 0 && Map.units.Contains(found);\n  if (live) ok++;\n  sb.Append(n + \" active=\" + found.gameObject.activeInHierarchy + \" health=\" + found.health + \" inMapUnits=\" + Map.units.Contains(found) + \" at \" + found.X.ToString(ic) + \",\" + found.Y.ToString(ic) + \"; \");\n}\nreturn ok + \" of \" + want.Length + \" units active, alive and in Map.units in theme \" + Map.Instance.activeTheme.name + \": \" + sb;"
       },
       "expect": {
         "success": true,
         "contains": [
-          "2 of 2 units active, alive and registered in theme Themeholder Jungle"
+          "2 of 2 units active, alive and in Map.units in theme Themeholder Jungle"
         ]
       }
     },
