@@ -64,7 +64,7 @@
     },
     {
       "command": "simulate_input",
-      "params": { "action": "escape" }
+      "params": { "action": "cancel" }
     },
     {
       "command": "execute_code",

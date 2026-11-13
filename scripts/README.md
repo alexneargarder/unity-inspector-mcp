@@ -101,7 +101,7 @@ You can use any game-side Unity Inspector MCP tool in your scripts:
 
 ### Input Simulation
 - `simulate_input` - Simulate controller input
-  - Actions: up, down, left, right, fire, jump, special, highFive, gesture, sprint, start, escape
+  - Actions: up, down, left, right, fire, jump, special, highFive, gesture, sprint, start, cancel (a controller's cancel press), escape (the keyboard's Escape key)
   - Supports duration (hold time), count (repeated presses), and sequence (ordered steps run back to back)
   - `binding` presses a mod's RocketLib key binding in place of an action
   - `tracks` starts several sequences on the same frame
@@ -229,6 +229,7 @@ You can use any game-side Unity Inspector MCP tool in your scripts:
   ```
 - At the main menu, wait for the menu, not only the `MainMenu` scene: the game ignores menu input for 3 s after the scene loads, then for 0.3 s each time the menu becomes active (0.15 s for accept). Poll an `execute_code` step that returns the `MainMenu` object's `MenuActive` with `until` for `True`, and give it `"wait": 500`, as `game-states.json` does
 - Add short waits after input to let animations complete
+- Start menu presses 0.2 s or more apart: a menu drops a direction within 0.2 s of the last press it took, and an accept or decline within 0.05 s, and a dropped press still answers as read. A repeated press starts `duration` plus `interval` after the one before, 250 ms with the defaults
 - No wait needed if the next command doesn't depend on the previous one
 
 ### Script Organization

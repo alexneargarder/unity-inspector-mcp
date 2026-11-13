@@ -24,7 +24,7 @@ paths:
 - default 6s — commands the mod answers without a main-thread action (`list_campaigns`), and `ping`, whose main-thread round trip has a 1s budget
 - one main-thread action of 5s or less (`game_state`, `inspect_gameobject`, `inspect_component`, `inspect_player`, `list_gameobjects`, `query_gameobjects`, `list_enemies`, `teleport_player`, `set_player_health`, `spawn_entity`, `trace_spawns`, `list_bros`, `set_bro` (the mod command `nextSpawn` sends)): 12s
 - `modify_component`: 15s — the write's 5s action, then a 1s action that starts a read one frame later and a 1s wait for it
-- `take_screenshot`: 19s — up to 2s waiting for another capture, the 3s highlight action, the 3s action that requests the capture, then up to 3s for the complete PNG; with `backdrop` it goes as `execute_code` and takes that budget
+- `take_screenshot`: 19s — up to 2s waiting for another capture, the 3s highlight action, the 3s action that requests the capture, then up to 3s from the request for the frame's read to begin, and the read itself; with `backdrop` it goes as `execute_code` and takes that budget
 - `go_to_level`: 70.25s — the 3s load request (6s), then the in-play wait: 60s of 250ms polls, the last a 1s action (2s); `restart_level`: 74.25s, the same after a 5s restart action (10s)
 - `swap_bro`: 16.5s — the 5s swap (10s), a 500ms pause and a 2s confirmation (4s)
 - `set_game_speed`: 17.02s — the 5s write (10s), then 2s reads (4s) for up to 1s, 20ms apart, until two frames have run

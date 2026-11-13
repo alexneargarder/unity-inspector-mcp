@@ -43,7 +43,7 @@
     {
       "command": "simulate_input",
       "params": {
-        "action": "escape"
+        "action": "cancel"
       },
       "wait": 2000
     },

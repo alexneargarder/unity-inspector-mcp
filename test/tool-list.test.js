@@ -84,8 +84,9 @@ test('simulate_input opens with what it does, and advertises tracks and whose in
   assert.equal(tool.inputSchema.properties.tracks?.type, 'array');
 
   assert.match(tool.description, /'tracks' \(2-8 sequences at once\)/);
-  assert.match(tool.description, /'start' opens the pause menu, never 'escape'/);
-  assert.match(tool.description, /'start' opens the pause menu, never 'escape'; that pause takes only the opening controller's input, never the real Esc key/);
+  assert.match(tool.description, /'start' opens the pause menu, as 'escape', the keyboard's Escape key, does in a level/);
+  assert.match(tool.description, /a pause takes only its opener's input, so 'escape' closes a pause it opened and 'cancel', a controller's cancel press that also backs out of menus, closes a pause that controller's 'start' opened/);
+  assert.match(tool.inputSchema.properties.action.description, /\bcancel\b/);
   assert.doesNotMatch(tool.description, /closes it/, 'a pause also closes on its own controller\'s accept on Resume');
 });
 

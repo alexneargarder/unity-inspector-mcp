@@ -6,6 +6,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const SERVER_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'index.js');
+const { shutdownOnce } = await import('../index.js');
 const posix = process.platform !== 'win32';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -29,16 +30,34 @@ async function startServer(t) {
 const within = (promise, ms) => Promise.race([promise, sleep(ms).then(() => null)]);
 const shutdownLines = (text) => text.split('\n').filter((line) => line.includes('Shutting down'));
 
-test('the server shuts down when its stdin closes, once, however many triggers follow', { timeout: 20000, skip: !posix }, async (t) => {
+test('the server shuts down when its stdin closes', { timeout: 20000, skip: !posix }, async (t) => {
   const server = await startServer(t);
 
   server.proc.stdin.end();
-  await sleep(50);
-  server.proc.kill('SIGTERM');
   const ended = await within(server.exited, 5000);
 
-  assert.deepEqual(ended, { code: 0, signal: null });
+  assert.deepEqual(ended, { code: 0, signal: null }, `the server ended ${JSON.stringify(ended)}: ${server.stderr()}`);
   assert.deepEqual(shutdownLines(server.stderr()), ['Shutting down Unity Inspector MCP server (stdin end)...']);
+});
+
+test('a shutdown trigger that lands while a shutdown is in progress starts no second shutdown', async (t) => {
+  const logged = t.mock.method(console, 'error', () => {});
+  const exits = [];
+  let exited;
+  const firstExit = new Promise((resolve) => { exited = resolve; });
+  const exit = (code) => {
+    exits.push(code);
+    exited();
+  };
+
+  shutdownOnce('stdin end', { exit });
+  shutdownOnce('SIGTERM', { exit });
+  assert.deepEqual(exits, [], 'the first shutdown had already exited when the second trigger landed');
+  await firstExit;
+
+  assert.deepEqual(exits, [0]);
+  const lines = logged.mock.calls.map((call) => String(call.arguments[0])).filter((line) => line.includes('Shutting down'));
+  assert.deepEqual(lines, ['Shutting down Unity Inspector MCP server (stdin end)...']);
 });
 
 test('the server shuts down on a hangup', { timeout: 20000, skip: !posix }, async (t) => {

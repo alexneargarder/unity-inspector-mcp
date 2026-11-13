@@ -5,7 +5,7 @@
     {
       "command": "simulate_input",
       "params": {
-        "action": "escape"
+        "action": "cancel"
       },
       "until": {
         "timeout": 90,
@@ -1792,7 +1792,7 @@
     {
       "command": "simulate_input",
       "params": {
-        "action": "escape"
+        "action": "cancel"
       },
       "expect": {
         "success": true

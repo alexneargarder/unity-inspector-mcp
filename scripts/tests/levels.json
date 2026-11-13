@@ -1,11 +1,11 @@
 {
   "name": "Level loading, restart and screenshot highlights",
-  "description": "Covers list_campaigns, go_to_level over the stock and challenge campaigns, out-of-range campaign and level indices, every challenge and Muscle Temple campaign once, a fractional campaign index sent to the mod's message handler directly, a load from the main menu with no save slot it could use, a load from the pause menu and a restart from a cutscene (a persistent object the pause deactivated is active again after each), the slot tools refused on a finished level, during the switch to the next scene and during a fade, a level index past the campaign's end (the Victory map), an intro cutscene re-armed for Indiana Brones on Mission1's first level, whose bros arrive by transport, which go_to_level and restart_level each answer once it holds the level, naming it, and start skips, and a load while a MonoBehaviour's Update holds the main thread past its 3 s budget, which leaves the level as it was; restart_level in a level and at the main menu, where it is refused; inspect_player in a level; and take_screenshot plain and with every highlight form: an object path, an off-screen object, an object with nothing to outline, an inactive or missing object, an empty path, rectangles on, partly on and off the screen or with a negative size, a rectangle missing a field, null, and a number, array and bool sent to the mod's message handler directly from a thread of its own, since the server refuses them before they are sent. The highlights use campaign 0 level 2: the on-screen rectangles are computed from the camera's view, whatever the window size, and sent to the mod's message handler from a thread of their own; the off-screen ones sit a million units away; and probe objects the script creates above the bro. Needs Swap Bros Mod and BroMakerLib, and Utility Mod's disableEnemySpawn on, under which a load carries no suppression warning. It changes no Utility Mod setting itself: its restore only puts back what a failed spawning.json run recorded, so a settings save during the run writes the user's values. Its first steps undo whatever an earlier run left changed and wait for any load in progress to settle; its last steps destroy the probes and reload the level it started in. Its cleanup runs the restore again whatever ended the steps: pause, speed, the second player, IronBro, the lock, the Swap Bros selection, Indiana Brones's unlock and the bros yet to be played, and the Utility Mod settings and HeroController values that a failed spawning or inspection run recorded. It then reloads the level it started in.",
+  "description": "Covers list_campaigns, go_to_level over the stock and challenge campaigns, out-of-range campaign and level indices, every challenge and Muscle Temple campaign once, a fractional campaign index sent to the mod's message handler directly, a load from the main menu with no save slot it could use, a load from the pause menu and a restart from a cutscene (a persistent object the pause deactivated is active again after each), the slot tools refused on a finished level, during the switch to the next scene and during a fade, a level index past the campaign's end (the Victory map), an intro cutscene re-armed for Indiana Brones on Mission1's first level, whose bros arrive by transport, which go_to_level and restart_level each answer once it holds the level, naming it, and start skips, and a load while a MonoBehaviour's Update holds the main thread past its 3 s budget, which leaves the level as it was; restart_level in a level and at the main menu, where it is refused; inspect_player in a level; and take_screenshot plain and with every highlight form: an object path, an off-screen object, an object with nothing to outline, an inactive or missing object, an empty path, rectangles on, partly on and off the screen or with a negative size, a rectangle missing a field, null, and a number, array and bool sent to the mod's message handler directly from a thread of its own, since the server refuses them before they are sent; and take_screenshot plain on Mission1's first level while a coroutine requests an engine screenshot of a file in the game's temporary folder every frame, which neither displaces the capture nor stops: the capture is taken and the coroutine still writes its own captures afterwards. The highlights use campaign 0 level 2: the on-screen rectangles are computed from the camera's view, whatever the window size, and sent to the mod's message handler from a thread of their own; the off-screen ones sit a million units away; and probe objects the script creates above the bro. Needs Swap Bros Mod and BroMakerLib, and Utility Mod's disableEnemySpawn on, under which a load carries no suppression warning. It changes no Utility Mod setting itself: its restore only puts back what a failed spawning.json run recorded, so a settings save during the run writes the user's values. Its first steps undo whatever an earlier run left changed and wait for any load in progress to settle; its last steps stop the screenshot coroutine and delete its file, destroy the probes and reload the level it started in. Its cleanup runs the restore again whatever ended the steps: the screenshot coroutine and its file, pause, speed, the second player, IronBro, the lock, the Swap Bros selection, Indiana Brones's unlock and the bros yet to be played, and the Utility Mod settings and HeroController values that a failed spawning or inspection run recorded. It then reloads the level it started in.",
   "steps": [
     {
       "command": "simulate_input",
       "params": {
-        "action": "escape"
+        "action": "cancel"
       },
       "until": {
         "timeout": 90,
@@ -1308,9 +1308,89 @@
       }
     },
     {
+      "command": "execute_code",
+      "params": {
+        "code": "public class UimShotRival : MonoBehaviour\n{\n    public static System.Action<string> Capture;\n    public static string FilePath;\n    public static int Calls;\n    public static int Written;\n    public static int Missed;\n    public static int CheckedFrame;\n\n    public System.Collections.IEnumerator Loop()\n    {\n        while (true)\n        {\n            yield return null;\n            if (Calls > 0)\n            {\n                if (System.IO.File.Exists(FilePath)) { Written++; System.IO.File.Delete(FilePath); }\n                else Missed++;\n                CheckedFrame = UnityEngine.Time.frameCount - 1;\n            }\n            Capture(FilePath);\n            Calls++;\n        }\n    }\n}\nforeach (var tr in Resources.FindObjectsOfTypeAll<Transform>())\n  if (tr != null && tr.parent == null && tr.name == \"UimShotRival\" && tr.gameObject.scene.IsValid()) UnityEngine.Object.DestroyImmediate(tr.gameObject);\nvar d = System.AppDomain.CurrentDomain;\nd.SetData(\"uimtest.rival\", null);\nd.SetData(\"uimtest.rival.at\", null);\nvar sc = System.Type.GetType(\"UnityEngine.ScreenCapture, UnityEngine.ScreenCaptureModule\");\nvar m = sc == null ? null : sc.GetMethod(\"CaptureScreenshot\", new[] { typeof(string) });\nif (m == null) return \"ScreenCapture.CaptureScreenshot(string) not found\";\nUimShotRival.Capture = (System.Action<string>)System.Delegate.CreateDelegate(typeof(System.Action<string>), m);\nSystem.IO.Directory.CreateDirectory(UnityEngine.Application.temporaryCachePath);\nUimShotRival.FilePath = System.IO.Path.Combine(UnityEngine.Application.temporaryCachePath, \"uim-shot-rival.png\");\nif (System.IO.File.Exists(UimShotRival.FilePath)) System.IO.File.Delete(UimShotRival.FilePath);\nUimShotRival.Calls = 0;\nUimShotRival.Written = 0;\nUimShotRival.Missed = 0;\nUimShotRival.CheckedFrame = -1;\nvar rival = new GameObject(\"UimShotRival\").AddComponent<UimShotRival>();\nrival.StartCoroutine(rival.Loop());\nreturn \"rival capture started at \" + UimShotRival.FilePath;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "rival capture started at "
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return (UimShotRival.Written >= 10 ? \"rival capturing\" : \"rival not settled\") + \": calls=\" + UimShotRival.Calls + \" written=\" + UimShotRival.Written + \" missed=\" + UimShotRival.Missed;"
+      },
+      "until": {
+        "timeout": 30,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "rival capturing: "
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nd.SetData(\"uimtest.rival\", UimShotRival.Calls + \"|\" + UimShotRival.Written);\nd.SetData(\"uimtest.rival.at\", null);\nreturn \"rival recorded at calls=\" + UimShotRival.Calls + \" written=\" + UimShotRival.Written + \" missed=\" + UimShotRival.Missed;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "rival recorded at "
+        ]
+      }
+    },
+    {
+      "command": "take_screenshot",
+      "params": {},
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"path\": \"",
+          ".png"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nvar rec = d.GetData(\"uimtest.rival\") as string;\nif (rec == null) return \"no rival record\";\nvar at = d.GetData(\"uimtest.rival.at\") as string;\nif (at == null)\n{\n    d.SetData(\"uimtest.rival.at\", UnityEngine.Time.frameCount + \"|\" + UimShotRival.Written);\n    return \"rival not caught up: baseline taken at frame \" + UnityEngine.Time.frameCount + \", checked frame \" + UimShotRival.CheckedFrame;\n}\nvar a = at.Split('|');\nint atFrame = int.Parse(a[0]);\nint writtenAt = int.Parse(a[1]);\nif (UimShotRival.CheckedFrame < atFrame) return \"rival not caught up: checked frame \" + UimShotRival.CheckedFrame + \" of \" + atFrame;\nvar p = rec.Split('|');\nint callsBefore = int.Parse(p[0]);\nint writtenBefore = int.Parse(p[1]);\nbool kept = UimShotRival.Written > writtenAt;\nif (kept) { d.SetData(\"uimtest.rival\", null); d.SetData(\"uimtest.rival.at\", null); }\nreturn (kept ? \"rival kept writing\" : \"rival stopped writing\") + \": calls \" + callsBefore + \" -> \" + UimShotRival.Calls + \", written \" + writtenBefore + \" -> \" + UimShotRival.Written + \" (\" + writtenAt + \" when the screenshot's reply was in), missed \" + UimShotRival.Missed;"
+      },
+      "until": {
+        "timeout": 10,
+        "interval": 1
+      },
+      "expect": {
+        "contains": [
+          "rival kept writing: "
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nd.SetData(\"uimtest.rival\", null);\nd.SetData(\"uimtest.rival.at\", null);\nstring log = \"\";\ntry {\n  int gone = 0;\n  foreach (var tr in Resources.FindObjectsOfTypeAll<Transform>()) {\n    if (tr == null || tr.parent != null || tr.name != \"UimShotRival\" || !tr.gameObject.scene.IsValid()) continue;\n    UnityEngine.Object.DestroyImmediate(tr.gameObject);\n    gone++;\n  }\n  if (gone > 0) log += \"rival-destroyed=\" + gone + \" \";\n} catch (System.Exception ex) { log += \"rival cleanup failed: \" + ex.Message + \" \"; }\ntry {\n  var f = System.IO.Path.Combine(UnityEngine.Application.temporaryCachePath, \"uim-shot-rival.png\");\n  if (System.IO.File.Exists(f)) { System.IO.File.Delete(f); log += \"rival-file-deleted \"; }\n} catch (System.Exception ex) { log += \"rival file delete failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "rival-destroyed=1"
+        ],
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
+    {
       "command": "simulate_input",
       "params": {
-        "action": "escape"
+        "action": "cancel"
       },
       "expect": {
         "success": true
@@ -1389,6 +1469,18 @@
     }
   ],
   "cleanup": [
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var d = System.AppDomain.CurrentDomain;\nd.SetData(\"uimtest.rival\", null);\nd.SetData(\"uimtest.rival.at\", null);\nstring log = \"\";\ntry {\n  int gone = 0;\n  foreach (var tr in Resources.FindObjectsOfTypeAll<Transform>()) {\n    if (tr == null || tr.parent != null || tr.name != \"UimShotRival\" || !tr.gameObject.scene.IsValid()) continue;\n    UnityEngine.Object.DestroyImmediate(tr.gameObject);\n    gone++;\n  }\n  if (gone > 0) log += \"rival-destroyed=\" + gone + \" \";\n} catch (System.Exception ex) { log += \"rival cleanup failed: \" + ex.Message + \" \"; }\ntry {\n  var f = System.IO.Path.Combine(UnityEngine.Application.temporaryCachePath, \"uim-shot-rival.png\");\n  if (System.IO.File.Exists(f)) { System.IO.File.Delete(f); log += \"rival-file-deleted \"; }\n} catch (System.Exception ex) { log += \"rival file delete failed: \" + ex.Message + \" \"; }\nreturn log.Length == 0 ? \"nothing to restore\" : log;"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "failed"
+        ]
+      }
+    },
     {
       "command": "execute_code",
       "params": {

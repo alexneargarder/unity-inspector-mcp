@@ -9,6 +9,7 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import net from 'net';
+import { randomBytes } from 'crypto';
 import os from 'os';
 import fs from 'fs/promises';
 import path from 'path';
@@ -36,7 +37,7 @@ import {
 import { START_TIME_TOLERANCE_MS, fileIdOf, isPlayerLogName, linesBackward, readGuard, sameLogRun, sameRun } from './lib/log-delta.js';
 import { changedSince, serverCodeFiles } from './lib/stale-code.js';
 import { logMirrorPaths, withLogMirrors } from './lib/remote-files.js';
-import { forgetLaunchRecords, lastLaunch, launchRecordsWritten, recordLaunch } from './lib/launch-record.js';
+import { forgetLaunchRecords, lastLaunch, launchOutputFile, launchRecordsWritten, recordLaunch } from './lib/launch-record.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -45,10 +46,12 @@ const NEW_LINES_MAX_BYTES = 64 * 1024;
 const READ_LOG_MAX_BYTES = 64 * 1024;
 const LAUNCH_LOG_TAIL_LINES = 20;
 const LAUNCH_STDERR_LIMIT_BYTES = 4096;
+const LAUNCH_OUTPUT_LIMIT_BYTES = 1024 * 1024;
+const LAUNCH_OUTPUT_POLL_MS = 25;
+export const LAUNCH_OUTPUT_MARK = 'unity-inspector-mcp: the launch command exited ';
 const LAUNCH_LOG_TAIL_BYTES = 64 * 1024;
 // The launcher prefixes its own lines with a timestamp; the game's stdout lands in the same file
 const LAUNCH_LOG_LINE_RE = /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] /;
-const LAUNCH_POLL_TIMEOUT_MS = 60000;
 // The launcher waits on the pid, the window, the audio sink and then the port before it gives up
 const INSTANCE_LAUNCH_POLL_TIMEOUT_MS = 180000;
 // A vanilla launch has nothing to poll, so the launch command's own exit is the only verdict
@@ -246,6 +249,8 @@ const launchTiming = {
   probeRetryMs: LAUNCHER_RETRY_MS,
   rootRetryMs: LAUNCHER_RETRY_MS,
   vanillaExitWaitMs: VANILLA_EXIT_WAIT_MS,
+  launchPollMs: 60000,
+  launchCommandMs: 600000,
   startConfirmMs: 15000,
   startStableMs: 2000,
   startPollMs: 500,
@@ -259,6 +264,7 @@ const launchTiming = {
   portReservationMs: 180000,
   instanceBudgetMs: INSTANCE_LAUNCH_POLL_TIMEOUT_MS,
   argsHelpGraceMs: 1500,
+  launchOutputMs: 2000,
 };
 
 export function configureLaunchTiming(overrides = {}) {
@@ -1932,13 +1938,13 @@ function toolDefinitions({ launchHelp = "" } = {}) {
       },
       {
         name: "simulate_input",
-        description: "Press or hold input: exactly one of 'action', 'binding' (a key binding, '<mod id>/<binding name>'), 'sequence' (steps) or 'tracks' (2-8 sequences at once). Replies when the plan ends: 'framesRead' counts the frames that read each press, and an unread press fails. Only 'player''s controller or binding entry reads it. 'start' opens the pause menu, never 'escape'; that pause takes only the opening controller's input, never the real Esc key. 'highFive' (interact) high-fives a prisoner, melees and activates the first switch within 16 units across, 24 up or down. A teleport door in range, a live grenade within 20 units or a citizen within 32 units takes it first, and a held grenade or mook or a running special blocks it.",
+        description: "Press or hold input: exactly one of 'action', 'binding' (a key binding, '<mod id>/<binding name>'), 'sequence' (steps) or 'tracks' (2-8 sequences at once). Replies when the plan ends: 'framesRead' counts the frames that read each press, and an unread press fails. Only 'player''s controller or binding entry reads it. 'start' opens the pause menu, as 'escape', the keyboard's Escape key, does in a level; a pause takes only its opener's input, so 'escape' closes a pause it opened and 'cancel', a controller's cancel press that also backs out of menus, closes a pause that controller's 'start' opened. 'highFive' (interact) high-fives a prisoner, melees and activates the first switch within 16 units across, 24 up or down. A teleport door in range, a live grenade within 20 units or a citizen within 32 units takes it first, and a held grenade or mook or a running special blocks it.",
         inputSchema: {
           type: "object",
           properties: {
             action: {
               type: "string",
-              description: "up, down, left, right, fire, jump, special, highFive, gesture, sprint, start or escape",
+              description: "up, down, left, right, fire, jump, special, highFive, gesture, sprint, start, cancel or escape",
             },
             binding: { type: "string" },
             sequence: {
@@ -2156,7 +2162,7 @@ export async function instanceLaunchRefusal(config = activeConfig(), { reader, f
 
 // The launch command runs to completion and only its exit status carries a refusal the poll cannot see
 export function launcherExitWatcher(child) {
-  const watcher = { reason: null };
+  const watcher = { reason: null, exited: null, gameSeen: false };
   let onFailure;
   // A clean exit leaves this pending on purpose: resolving it would make the poll race itself
   watcher.failure = new Promise((resolve) => { onFailure = resolve; });
@@ -2164,6 +2170,7 @@ export function launcherExitWatcher(child) {
     child.once('exit', (code, signal) => {
       if (signal) watcher.reason = `was killed by ${signal}`;
       else if (code !== 0) watcher.reason = `exited with status ${code}`;
+      watcher.exited = { code, signal };
       if (watcher.reason) onFailure();
       resolve({ code, signal });
     });
@@ -2203,6 +2210,108 @@ export function collectLauncherStderr(child, limitBytes = LAUNCH_STDERR_LIMIT_BY
   return box;
 }
 
+async function fileSize(file) {
+  return fs.stat(file).then((stat) => stat.size, () => null);
+}
+
+function partialMarkerLength(bytes, marker) {
+  for (let length = Math.min(bytes.length, marker.length - 1); length > 0; length--) {
+    if (bytes.subarray(bytes.length - length).equals(marker.subarray(0, length))) return length;
+  }
+  return 0;
+}
+
+async function scanForMarker(file, marker, from) {
+  let handle;
+  try {
+    handle = await fs.open(file, 'r');
+    const { size } = await handle.stat();
+    const start = Math.max(0, from - (marker.length - 1));
+    const buffer = Buffer.alloc(Math.max(0, size - start));
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
+    const read = buffer.subarray(0, bytesRead);
+    const at = read.indexOf(marker);
+    return { at: at === -1 ? -1 : start + at, size: start + bytesRead, partial: partialMarkerLength(read, marker) };
+  } catch {
+    return { at: -1, size: from, partial: 0 };
+  } finally {
+    await handle?.close();
+  }
+}
+
+async function outputBeforeMarker(file, marker, drainEnded, deadline, signal) {
+  let scanned = 0;
+  let ended = false;
+  for (;;) {
+    const { at, size, partial } = await scanForMarker(file, marker, scanned);
+    if (at !== -1) return { end: at, cut: false };
+    scanned = size;
+    if (ended || signal?.aborted || size >= LAUNCH_OUTPUT_LIMIT_BYTES || Date.now() >= deadline) {
+      return { end: size - partial, cut: size >= LAUNCH_OUTPUT_LIMIT_BYTES };
+    }
+    ended = await within(drainEnded, Math.max(0, Math.min(LAUNCH_OUTPUT_POLL_MS, deadline - Date.now())), signal, false);
+  }
+}
+
+async function retryMark(handOff, marker, drainEnded, deadline, signal) {
+  for (;;) {
+    const ended = await within(drainEnded, Math.max(0, Math.min(LAUNCH_OUTPUT_POLL_MS, deadline - Date.now())), signal, false);
+    if (ended || signal?.aborted || Date.now() >= deadline || handOff.mark(marker)) break;
+  }
+  handOff.close();
+}
+
+export function collectLaunchOutput(child, file, signal = null) {
+  const handOff = child.stderrHandOff;
+  if (!handOff) return null;
+  const { drain } = handOff;
+  const drainEnded = drain.exitCode !== null || drain.signalCode !== null
+    ? Promise.resolve(true)
+    : new Promise((resolve) => drain.once('exit', () => resolve(true)));
+  let open = true;
+  const close = () => {
+    open = false;
+    signal?.removeEventListener('abort', close);
+    handOff.close();
+  };
+  if (signal?.aborted) close();
+  else signal?.addEventListener('abort', close, { once: true });
+  const box = { file, atExit: null };
+  child.once('exit', () => {
+    if (!open) return;
+    open = false;
+    signal?.removeEventListener('abort', close);
+    const marker = Buffer.from(`\n${LAUNCH_OUTPUT_MARK}${randomBytes(16).toString('hex')}\n`);
+    const deadline = Date.now() + launchTiming.launchOutputMs;
+    if (!handOff.mark(marker)) retryMark(handOff, marker, drainEnded, deadline, signal);
+    box.atExit = outputBeforeMarker(file, marker, drainEnded, deadline, signal);
+  });
+  return box;
+}
+
+async function launchOutputText({ file, atExit }) {
+  let end, cut;
+  if (atExit) ({ end, cut } = await atExit);
+  else {
+    end = (await fileSize(file)) ?? 0;
+    cut = end >= LAUNCH_OUTPUT_LIMIT_BYTES;
+  }
+  if (end === 0) return null;
+  const start = Math.max(0, end - LAUNCH_STDERR_LIMIT_BYTES);
+  let handle;
+  try {
+    handle = await fs.open(file, 'r');
+    const buffer = Buffer.alloc(end - start);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
+    const text = buffer.subarray(0, bytesRead).toString('utf8');
+    return { text: start === 0 ? text : text.slice(text.indexOf('\n') + 1), cut };
+  } catch {
+    return null;
+  } finally {
+    await handle?.close();
+  }
+}
+
 export function stderrTail(text) {
   const lines = String(text ?? '').split('\n').map(line => line.trimEnd()).filter(Boolean);
   return lines.length > 0 ? lines.slice(-LAUNCH_LOG_TAIL_LINES).join('\n') : null;
@@ -2211,7 +2320,13 @@ export function stderrTail(text) {
 // The launch log first, since it is the launcher's own account; its stderr is the fallback. Both
 // have to be this launch's: a log left by an earlier run explains nothing about this one
 export async function launchFailureTail(config, stderr, notBeforeMs = null) {
-  if (!config.isAgentInstance) return '';
+  if (!config.isAgentInstance) {
+    const output = stderr?.file ? await launchOutputText(stderr) : null;
+    const lines = stderrTail(output?.text);
+    if (!lines) return '';
+    const kept = output.cut ? ` (only its first ${LAUNCH_OUTPUT_LIMIT_BYTES / (1024 * 1024)} MiB was kept)` : '';
+    return `\n\nLast lines of the launch command's error output${kept}:\n${lines}`;
+  }
   const log = await launchLogTail(config, notBeforeMs);
   if (log) return `\n\nLast lines of ${config.launchLog}:\n${log}`;
   const errors = stderrTail(stderr?.text);
@@ -2325,11 +2440,15 @@ async function waitForCapSlot(config, deadline, signal = null) {
   }
 }
 
-export async function pollUntilResponsive(timeoutMs, intervalMs, watcher = null, { launchedPort = null, launchedPortUntil = Infinity, signal = null } = {}) {
+export async function pollUntilResponsive(timeoutMs, intervalMs, watcher = null, { launchedPort = null, launchedPortUntil = Infinity, signal = null, pendingLaunch = null } = {}) {
   const { budgetMs: budget, intervalMs: interval } = resolvePollBudget(timeoutMs, intervalMs);
 
   const startTime = Date.now();
-  const deadline = startTime + budget;
+  const plainDeadline = startTime + budget;
+  let deadline = plainDeadline;
+  const ceiling = pendingLaunch ? startTime + Math.max(budget, pendingLaunch.ceilingMs) : plainDeadline;
+  let pending = false;
+  let toldPending = false;
   const secondsSoFar = () => Number(((Date.now() - startTime) / 1000).toFixed(1));
 
   let attempts = 0;
@@ -2389,11 +2508,22 @@ export async function pollUntilResponsive(timeoutMs, intervalMs, watcher = null,
 
     if (watcher?.reason) break;
 
+    if (pendingLaunch) {
+      pending = await pendingLaunch.isPending();
+      if (pending) deadline = Math.max(deadline, Math.min(Date.now() + budget, ceiling));
+      if (pending && !toldPending && Date.now() >= plainDeadline) {
+        toldPending = true;
+        console.error(`The launch command is still running with no game yet after ${secondsSoFar()}s; ` +
+          `waiting for it up to ${(ceiling - startTime) / 1000}s from the start of the wait`);
+      }
+    }
+
     const remaining = deadline - Date.now();
     if (remaining <= 0) break;
     await within(watcher?.failure ?? new Promise(() => {}), Math.min(interval, remaining), signal);
     throwIfCancelled(signal, 'The wait for the game');
-    if (watcher?.reason || Date.now() >= deadline) break;
+    if (watcher?.reason) break;
+    if (Date.now() >= deadline && !(pending && Date.now() < ceiling)) break;
   }
 
   if (watcher?.reason) {
@@ -2903,12 +3033,14 @@ async function launchOnTarget({ args, signal, config, nextTarget, hasInstance, l
   let spawned = 0;
   const spawnLauncher = async () => {
     try {
+      const outputFile = !config.isAgentInstance && launch.waitsOnExit ? launchOutputFile() : null;
       spawnedAt = Date.now();
-      // The Steam client and the game would inherit a pipe and fill it with their own chatter
       const child = await spawnDetached(launch.command, launch.args, {
         captureStderr: config.isAgentInstance,
+        stderrTo: outputFile ? { file: outputFile, limitBytes: LAUNCH_OUTPUT_LIMIT_BYTES } : null,
       });
       if (config.isAgentInstance) launcherStderr = collectLauncherStderr(child);
+      else if (outputFile) launcherStderr = collectLaunchOutput(child, outputFile, signal);
       spawned++;
       return child;
     } catch (err) {
@@ -3052,14 +3184,22 @@ async function launchOnTarget({ args, signal, config, nextTarget, hasInstance, l
     return vanillaOutcome({ signal, config, nextTarget, launch, carried, steamLead, watcher, launcherExited, launcherStderr, spawnedAt, ignoredArgsNote, withTargetNotes });
   }
 
+  const waitsOnUserLaunch = !config.isAgentInstance && launch.waitsOnExit;
   const poll = await pollUntilResponsive(
     config.isAgentInstance
       ? launchTiming.instanceBudgetMs
-      : launch.waitsOnExit ? LAUNCH_POLL_TIMEOUT_MS : launchTiming.steamStartMs,
+      : launch.waitsOnExit ? launchTiming.launchPollMs : launchTiming.steamStartMs,
     3000,
     // A launch command that hands off and exits cleanly says nothing; a failing one ends the wait
     watcher,
-    { launchedPort, launchedPortUntil, signal },
+    {
+      launchedPort,
+      launchedPortUntil,
+      signal,
+      pendingLaunch: waitsOnUserLaunch
+        ? { isPending: () => launchPending(watcher, config), ceilingMs: launchTiming.launchCommandMs }
+        : null,
+    },
   );
   if (poll.success) {
     const running = config.isAgentInstance ? await runningInstanceReport() : null;
@@ -3085,6 +3225,10 @@ async function launchOnTarget({ args, signal, config, nextTarget, hasInstance, l
     state: poll.state,
     message: (poll.state === "launcher-failed"
       ? `\`${launch.display}\` failed: ${poll.message}.`
+      : poll.state === "no-process" && waitsOnUserLaunch && !watcher.exited
+        ? `\`${launch.display}\` was still running after ${poll.elapsed}s (${poll.attempts} attempts) and no Broforce ` +
+          `process is running. It was left running: call wait_for_game to wait for a game it may still start, rather than ` +
+          `launching again, which would run a second launch command beside the first.`
       : poll.state === "no-process"
         ? `Ran \`${launch.display}\` but no Broforce process is running after ${poll.elapsed}s (${poll.attempts} attempts)` +
           (launch.waitsOnExit ? ` — the launch command exited without leaving a game running.` : `.`)
@@ -3097,6 +3241,14 @@ async function launchOnTarget({ args, signal, config, nextTarget, hasInstance, l
     attempts: poll.attempts,
     ...(ignoredArgsNote ? { note: ignoredArgsNote } : {}),
   });
+}
+
+export async function launchPending(watcher, config) {
+  if (watcher.exited || watcher.gameSeen) return false;
+  invalidateGameProcessScan();
+  const running = await isGameRunning(config);
+  if (running === true) watcher.gameSeen = true;
+  return running === false;
 }
 
 async function vanillaOutcome({ signal, config, nextTarget, launch, carried, steamLead, watcher, launcherExited, launcherStderr, spawnedAt, ignoredArgsNote, withTargetNotes }) {
@@ -3112,9 +3264,19 @@ async function vanillaOutcome({ signal, config, nextTarget, launch, carried, ste
     ? launchTiming.instanceBudgetMs
     : launchTiming.vanillaExitWaitMs;
   let finished = launcherExited !== null;
+  let waitedS = vanillaBudgetMs / 1000;
   if (!config.isAgentInstance && launch.waitsOnExit) {
+    const waitStart = Date.now();
     finished = await within(watcher.exit.then(() => true), vanillaBudgetMs, signal, false);
     throwIfCancelled(signal, 'launch_game');
+    let extended = false;
+    while (!finished && Date.now() - waitStart < launchTiming.launchCommandMs && await launchPending(watcher, config)) {
+      extended = true;
+      const left = launchTiming.launchCommandMs - (Date.now() - waitStart);
+      finished = await within(watcher.exit.then(() => true), Math.min(launchTiming.startPollMs, left), signal, false);
+      throwIfCancelled(signal, 'launch_game');
+    }
+    if (extended) waitedS = Number(((Date.now() - waitStart) / 1000).toFixed(1));
   }
 
   const launcherFailed = async () => withTargetNotes({
@@ -3132,7 +3294,7 @@ async function vanillaOutcome({ signal, config, nextTarget, launch, carried, ste
     ? `Ran \`${launch.display}\``
     : finished
       ? `\`${launch.display}\` exited cleanly`
-      : `\`${launch.display}\` was still running after ${vanillaBudgetMs / 1000}s and was left to finish`;
+      : `\`${launch.display}\` was still running after ${waitedS}s and was left to finish`;
   const confirmMs = launch.waitsOnExit ? launchTiming.startConfirmMs : launchTiming.steamStartMs;
   const started = await confirmGameStarted(config, { budgetMs: confirmMs, watcher, signal });
   if (watcher.reason) return launcherFailed();
@@ -3160,7 +3322,7 @@ async function vanillaOutcome({ signal, config, nextTarget, launch, carried, ste
     launchCommand: launch.display,
     vanilla: true,
     message: noInspector +
-      (finished || !launch.waitsOnExit ? '' : ` The launch command was still running after ${vanillaBudgetMs / 1000}s and was left to finish.`) +
+      (finished || !launch.waitsOnExit ? '' : ` The launch command was still running after ${waitedS}s and was left to finish.`) +
       (started === 'unknown' ? ' Process detection is unavailable, so whether the game is running could not be checked.' : ''),
     ...note,
   });
@@ -3921,10 +4083,10 @@ process.on('unhandledRejection', (reason) => {
 
 let shutdownTriggered = false;
 
-function shutdownOnce(reason) {
+export function shutdownOnce(reason, options = {}) {
   if (shutdownTriggered) return;
   shutdownTriggered = true;
-  shutdownServer(reason).catch((err) => {
+  shutdownServer(reason, options).catch((err) => {
     console.error(`Shutdown failed: ${err.message}`);
     process.exit(0);
   });

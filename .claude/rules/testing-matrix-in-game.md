@@ -275,8 +275,8 @@ paths:
 | C | `player` 7 | input 40 |
 | C | bro actions: highFive, gesture, sprint | input 42-44 |
 | S | `highFive` with a citizen beside the bro, facing it: the high-five connects | spawning 38-40 |
-| C | `start` and `escape` in a level | input 45-49 |
-| S | a press the pause menu takes as accept | input 99-102 |
+| C | `start` and `cancel` in a level | input 45-49 |
+| S | a press the pause menu takes as accept | input 101-104 |
 | S | paused | input 47 |
 | S | speed 0: the press taken, with a `note` and no `warning` | input 52-53; player-states 33, 187-188 |
 | C | fire in a level, for player 0, and for player 1 not playing, which no frame reads | input 65-69 |
@@ -287,25 +287,31 @@ paths:
 | S | a later plan taking over a running plan's key, and one track's key of a `tracks` call | input-sequence 23-26 |
 | S | a plan and a `tracks` call stopped by a scene load | input-sequence 32-36 |
 | S | two players holding one action at once | not produced by any step: no script presses for two players at once |
-| S | `escape` backing out of the Offline/Online choice, an `InputObserver` menu, and fire opening it again | input 82-92 |
+| S | `escape` backing out of the Offline/Online choice (an `InputObserver` menu), `fire` reopening it | input 82-91, 94 |
+| S | `cancel` declining the Offline/Online choice | input 90-93 |
 | S | the deathmatch score screen and flyby helicopter (`IsControllerPressing*`), cutscene fast-forward and the credits (`GetControllerHoldingFire`) | not produced by any step: no script plays deathmatch, a fast-forwardable cutscene or the credits |
 | S | menu keys at the main menu; fire through to the join screen | game-states 54-68, 73 |
 | S | a level loading | game-states 27-29 |
 | S | `player` 1 with two players | player-states 106-107 |
-| C | `binding` for a bro's binding read every frame whatever its key: Furibrosa's Switch Weapon switching his weapon | input 104-107 |
-| C | `binding` for a mod's own binding: Utility Mod's Pause/Unpause Game pausing the game, then resuming it | input 115-118 |
-| C | a `binding` step in a sequence | input 112-114 |
-| C | a binding the mod never calls `IsDown` for (another player's Utility Mod binding): no frame read | input 119 |
-| C | an unknown binding, in a known mod and in an unknown one | input 108-109 |
-| C | `binding` beside `action`; a sequence step with both | input 110-111 |
+| C | `binding` on a binding a bro reads every frame, whatever its key: Furibrosa's weapon switched | input 106-109 |
+| C | `binding` on a mod's own binding: Utility Mod's Pause/Unpause Game pausing, then resuming | input 117-120 |
+| C | a `binding` step in a sequence | input 114-116 |
+| C | a binding its mod never reads (another player's Utility Mod binding): no frame read | input 121 |
+| C | an unknown binding, in a known mod and in an unknown one | input 110-111 |
+| C | `binding` beside `action`; a sequence step with both | input 112-113 |
 | S | RocketLib absent, or the `KeyBinding.IsDown` patch not installed | not produced by any step: the mod requires RocketLib, and a step cannot unpatch the mod's own postfix |
 | C | `tracks`: a direction held on one track and `fire` from an offset on another, through the tool and the mod's message handler | input-sequence 17-19 |
 | C | a key repeated across tracks | input-sequence 20 |
 | C | unread `tracks` results under the 32-result keep, a call counted once | input-sequence 30-31 |
-| S | `escape` in a level with no pause open | input-sequence 21-22 |
-| S | a pause a simulated `start` opened: closed by that controller's `start`, `escape` or accept on Resume; left open by another controller's press and the real Esc key | `escape`: input 45-49, 71-74; `start`: input 121-124; accept on Resume: input 99-102; the rest: not produced by any step: no script presses a second controller during a pause, and `simulate_input` has no real Esc key |
+| S | `cancel` in a level with no pause open | input-sequence 21-22 |
+| S | a pause `start` opened: closed by that controller's `start`, `cancel` or accept on Resume; `escape` backing out of its submenu, not closing it; another controller's press leaving it open | `cancel`: input 45-49, 71-74, 143-154; `start`: input 123-126; accept on Resume: input 101-104; `escape`, `down` and `fire` into the options submenu: input 143-152; another controller's press: not produced by any step: no script presses a second controller during a pause |
+| S | a pause `escape` opened: `start` and `cancel` read and dropped; closed by `escape` | input 130-138, 155-160 |
+| S | a press for a slot nobody plays under a pause `escape` opened: no frame read, the highlight unmoved | input 155-160 |
+| C | a held `escape` through `Input.GetKeyDown`, `GetKey` and `GetKeyUp`: down on its first frame, held through it, up the frame after; a `cancel` seen by none | input 127-142 |
+| S | a keyboard player's and a gamepad player's own presses under a pause `escape` opened | not produced by any step: which controller player 0 sits on depends on how the game reached the level |
+| S | `JoinScreen`: `escape` and `cancel` | not produced by any step: no script presses `escape` or `cancel` on the join screen |
 | S | `JoinScreen` with a local player playing: a press for a slot nobody plays joins through controller 5, the `note` naming it | game-states 69-72 |
-| S | `HeroSelectController`, `escape` from a joined controller there; every gamepad controller owned; a slot a player on another machine plays, in a level and in a menu | not produced by any step: no script reaches the versus hero select or plays online |
+| S | `HeroSelectController`: `cancel` and `escape`; every gamepad controller owned; a slot an online player plays | not produced by any step: no script reaches the versus hero select or plays online |
 
 ## spawn_entity
 
@@ -387,7 +393,8 @@ paths:
 | C | a highlight by a component's and by a GameObject's `instanceId` | inspection 164-165, which call `ScreenshotCapture.TakeScreenshot` off the main thread through execute_code, not the tool |
 | S | the `Screenshots` folder removed under the running game | inspection 150-151 |
 | C | more than 50 screenshots kept; the newest a complete PNG | inspection 152-154 |
-| S | a screenshot file that never appears | not produced by any step: code review only |
+| S | another caller's `ScreenCapture.CaptureScreenshot` every frame: both captures written | levels 97-102 |
+| S | a frame not ended within the 3s wait: the main-thread answer, nothing written late | not produced by any step: a step's hold (levels 48, inspection 155) starts before the request, never inside its frame |
 | S | two captures from two connections in one frame | not produced by any step: a test script sends one command at a time; the capture lock is code review only |
 | C | `backdrop` true and a colour | inspection 182-183 |
 | S | a backdrop render on the starting level: over half its PNG exactly `#FF00FF`, and the enabled renderers the same before and after it | inspection 184 |

@@ -1,11 +1,11 @@
 {
   "name": "simulate_input sequence",
-  "description": "Runs a two-press special combo as one game-side sequence and a repeated fire press with a per-press hold, then the mod's refusals of a misnamed step key, a fractional count sent to the mod's message handler directly, and a count beside a sequence, that the mod keeps only the newest unread plan results, and the cancel of a plan by its own connection and by another. Then a direction held on one track while fire is pressed from an offset on another, through the tool and again, the other way, through the mod's message handler, where each track's framesRead is checked, the mod's refusal of a key repeated across tracks, and an escape in a level opening no pause. Then, through the mod's message handler, so a plan runs on across steps: a later call taking over one track's key of a tracks call and a single plan's key, only that track and that plan failing; a tracks call cancelled by its planId and another, with a single plan started under the same connection, whose connection's plans are released as a closed connection's are, every plan stopped and its keys released; the 32-result keep counting a tracks call once; and a tracks call and a single plan stopped by the closing reload's scene load. Plays campaign 0 level 2: its first steps load it and its last steps reload the level it started in. Its cleanup cancels every plan a step started through the handler and runs that reload when the steps stopped before it",
+  "description": "Runs a two-press special combo as one game-side sequence and a repeated fire press with a per-press hold, then the mod's refusals of a misnamed step key, a fractional count sent to the mod's message handler directly, and a count beside a sequence, that the mod keeps only the newest unread plan results, and the cancel of a plan by its own connection and by another. Then a direction held on one track while fire is pressed from an offset on another, through the tool and again, the other way, through the mod's message handler, where each track's framesRead is checked, the mod's refusal of a key repeated across tracks, and a cancel in a level opening no pause. Then, through the mod's message handler, so a plan runs on across steps: a later call taking over one track's key of a tracks call and a single plan's key, only that track and that plan failing; a tracks call cancelled by its planId and another, with a single plan started under the same connection, whose connection's plans are released as a closed connection's are, every plan stopped and its keys released; the 32-result keep counting a tracks call once; and a tracks call and a single plan stopped by the closing reload's scene load. Plays campaign 0 level 2: its first steps load it and its last steps reload the level it started in. Its cleanup cancels every plan a step started through the handler and runs that reload when the steps stopped before it",
   "steps": [
     {
       "command": "simulate_input",
       "params": {
-        "action": "escape"
+        "action": "cancel"
       },
       "until": {
         "timeout": 90,
@@ -330,7 +330,7 @@
     {
       "command": "simulate_input",
       "params": {
-        "action": "escape"
+        "action": "cancel"
       },
       "expect": {
         "notContains": [

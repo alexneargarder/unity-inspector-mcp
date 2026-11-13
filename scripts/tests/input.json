@@ -1,11 +1,11 @@
 {
   "name": "simulate_input forms and set_game_speed values",
-  "description": "Covers simulate_input single presses, holds (with their effect on the bro), a 5 second hold, count and interval repeats, sequences and wait-only sequences, menu buttons, bro actions, unknown actions, the 60 second limits, negative values, malformed sequences, and the frames that read each press, the warning when no bro can act on read input (paused), the note when the bro took it at game speed 0, and the failure when no frame read it (a player who is not playing, an input block, players held still), a held start toggling the pause once, a pause closed by the start that opened it, fire joining no player in a level, escape backing out of the Offline/Online choice at the main menu and fire opening it again, mod key bindings pressed through binding (Furibrosa's Switch Weapon, alone and as a sequence step, and Utility Mod's Pause/Unpause Game pausing and resuming the game) with player 1's Pause/Unpause, which Utility Mod never reads, failing unread, and unknown bindings and mixed forms refused; and set_game_speed at 0, fractional, above 1, the 10 limit, and the refused range (negative, above 10), with bare NaN and Infinity literals sent to the mod's message handler directly, since JSON as the server sends it carries neither. Plays campaign 0 level 2. It changes one Utility Mod setting itself where the build has it, the isGamePaused flag its Pause/Unpause binding toggles, from the step that records it until it is put back, with whether that binding is polled, before the level is reloaded; its restore otherwise only puts back what a failed spawning.json run recorded, so a settings save outside those steps writes the user's values. Its first steps undo whatever an earlier run left changed; its last steps restore the speed and the pause and reload the level it started in. Its cleanup runs the restore again whatever ended the steps: pause, speed, the Utility Mod pause, the second player, IronBro, the lock, the Swap Bros selection, and the Utility Mod settings and HeroController values that a failed spawning or inspection run recorded. It then reloads the level it started in.",
+  "description": "Covers simulate_input single presses, holds (with their effect on the bro), a 5 second hold, count and interval repeats, sequences and wait-only sequences, menu buttons, bro actions, unknown actions, the 60 second limits, negative values, malformed sequences, and the frames that read each press, the warning when no bro can act on read input (paused), the note when the bro took it at game speed 0, and the failure when no frame read it (a player who is not playing, an input block, players held still), a held start toggling the pause once, a pause closed by the start or the cancel of the controller that opened it, fire joining no player in a level, escape backing out of the Offline/Online choice at the main menu, fire opening it again and cancel declining it, mod key bindings pressed through binding (Furibrosa's Switch Weapon, alone and as a sequence step, and Utility Mod's Pause/Unpause Game pausing and resuming the game) with player 1's Pause/Unpause, which Utility Mod never reads, failing unread, and unknown bindings and mixed forms refused; escape as the keyboard's Escape key, through a recorder script it loads and unloads: the frames on which the game's GetKeyDown, GetKey and GetKeyUp see a held escape, and none seeing a cancel; a pause escape opens, owned by keyboard controller 0, which start and cancel leave open and escape closes; under it a press for a slot nobody plays failing unread with the highlight unmoved; and a pause start opens, which escape leaves open but backs out of its options submenu and cancel closes; and set_game_speed at 0, fractional, above 1, the 10 limit, and the refused range (negative, above 10), with bare NaN and Infinity literals sent to the mod's message handler directly, since JSON as the server sends it carries neither. Plays campaign 0 level 2. It changes one Utility Mod setting itself where the build has it, the isGamePaused flag its Pause/Unpause binding toggles, from the step that records it until it is put back, with whether that binding is polled, before the level is reloaded; its restore otherwise only puts back what a failed spawning.json run recorded, so a settings save outside those steps writes the user's values. Its first steps undo whatever an earlier run left changed; its last steps restore the speed and the pause and reload the level it started in. Its cleanup runs the restore again whatever ended the steps: pause, speed, the escape key recorder, the Utility Mod pause, the second player, IronBro, the lock, the Swap Bros selection, and the Utility Mod settings and HeroController values that a failed spawning or inspection run recorded. It then reloads the level it started in.",
   "steps": [
     {
       "command": "simulate_input",
       "params": {
-        "action": "escape"
+        "action": "cancel"
       },
       "until": {
         "timeout": 90,
@@ -660,7 +660,7 @@
     {
       "command": "simulate_input",
       "params": {
-        "action": "escape"
+        "action": "cancel"
       },
       "expect": {
         "success": true,
@@ -963,7 +963,7 @@
     {
       "command": "simulate_input",
       "params": {
-        "action": "escape"
+        "action": "cancel"
       },
       "expect": {
         "success": true
@@ -1059,7 +1059,7 @@
     {
       "command": "simulate_input",
       "params": {
-        "action": "escape"
+        "action": "cancel"
       },
       "expect": {
         "success": true
@@ -1178,6 +1178,31 @@
         "success": true,
         "contains": [
           "online menu open=True"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "cancel"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var m = OnlineOrOfflineMenu.instance;\nif (m == null) return \"no online menu\";\nvar f = typeof(OnlineOrOfflineMenu).GetField(\"isOpen\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);\nreturn \"online menu open=\" + f.GetValue(m) + \" scene \" + UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;"
+      },
+      "until": {
+        "timeout": 10,
+        "interval": 0.5
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "online menu open=False"
         ]
       }
     },
@@ -1653,6 +1678,442 @@
     {
       "command": "execute_code",
       "params": {
+        "code": "var s = \"pause=\" + PauseController.pauseStatus;\nint by = PauseController.pausedByController;\ns += \" owner=\" + (by == 0 ? \"key\" : (by >= 4 && by <= 7 ? \"gamepad\" : (by < 0 ? \"none\" : \"keyboard\"))) + \"(\" + by + \")\";\ns += \" delay=\" + PauseController.DelayInput;\nvar pm = PauseMenu.instance;\nif (pm == null) return s + \" list=none\";\nvar opt = typeof(PauseMenu).GetField(\"m_InGameOptions\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(pm) as InGameOptionsMenu;\nbool list = pm.MenuActive && pm.gameObject.activeInHierarchy;\nbool options = opt != null && opt.MenuActive && opt.gameObject.activeInHierarchy;\nreturn s + \" list=\" + (list ? \"active\" : \"inactive\") + \" options=\" + (options ? \"active\" : \"inactive\") + \" index=\" + pm.Index;"
+      },
+      "until": {
+        "timeout": 20,
+        "interval": 0.5
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "pause=UnPaused owner=none(-1) delay=False"
+        ]
+      }
+    },
+    {
+      "command": "execute_script",
+      "params": {
+        "name": "uimtest-escape-key",
+        "source": "using System.Collections.Generic;\nusing UnityEngine;\n\npublic class UimtestEscapeKeyRecorder : MonoBehaviour\n{\n    void Update()\n    {\n        if ( !UimtestEscapeKey.Recording || UimtestEscapeKey.Rows.Count >= 600 )\n        {\n            return;\n        }\n        UimtestEscapeKey.Rows.Add( Time.frameCount + \":\" + ( Input.GetKeyDown( KeyCode.Escape ) ? \"D\" : \"-\" ) + ( Input.GetKey( KeyCode.Escape ) ? \"H\" : \"-\" ) + ( Input.GetKeyUp( KeyCode.Escape ) ? \"U\" : \"-\" ) );\n    }\n}\n\npublic static class UimtestEscapeKey\n{\n    public static bool Recording;\n    public static List<string> Rows = new List<string>();\n\n    public static void Main()\n    {\n        Recording = false;\n        Rows.Clear();\n        var go = new GameObject( \"UimtestEscapeKeyRecorder\" );\n        go.tag = \"Unpausable\";\n        go.AddComponent<UimtestEscapeKeyRecorder>();\n        ScriptContext.GameObjects.Add( go );\n        ScriptContext.Logger( \"escape key recorder loaded\" );\n    }\n\n    public static void Unload()\n    {\n        Recording = false;\n        Rows.Clear();\n    }\n\n    public static string Begin()\n    {\n        Rows.Clear();\n        Recording = true;\n        return \"recording from frame \" + Time.frameCount;\n    }\n\n    public static string Timing()\n    {\n        Recording = false;\n        string[] rows = Rows.ToArray();\n        int downs = 0, downAt = -1, ups = 0, upAt = -1, firstHeld = -1, lastHeld = -1;\n        bool gap = false;\n        foreach ( string row in rows )\n        {\n            string[] part = row.Split( ':' );\n            int frame = int.Parse( part[0] );\n            if ( part[1][0] == 'D' )\n            {\n                downs++;\n                downAt = frame;\n            }\n            if ( part[1][1] == 'H' )\n            {\n                if ( lastHeld >= 0 && frame != lastHeld + 1 )\n                {\n                    gap = true;\n                }\n                if ( firstHeld < 0 )\n                {\n                    firstHeld = frame;\n                }\n                lastHeld = frame;\n            }\n            if ( part[1][2] == 'U' )\n            {\n                ups++;\n                upAt = frame;\n            }\n        }\n        bool ok = downs == 1 && ups == 1 && !gap && firstHeld == downAt && upAt == lastHeld + 1;\n        return ( ok ? \"escape key timing ok: \" : \"escape key timing wrong: \" ) + \"down \" + downs + \"x at \" + downAt + \", held \" + firstHeld + \"-\" + lastHeld + ( gap ? \" with a gap\" : \"\" ) + \", up \" + ups + \"x at \" + upAt + \" | \" + string.Join( \" \", rows );\n    }\n\n    public static string Silent()\n    {\n        Recording = false;\n        string[] rows = Rows.ToArray();\n        string[] hits = rows.Where( r => r.Split( ':' )[1] != \"---\" ).ToArray();\n        if ( rows.Length == 0 )\n        {\n            return \"nothing recorded\";\n        }\n        return hits.Length == 0 ? \"no escape key read across \" + rows.Length + \" frames\" : \"escape key read: \" + string.Join( \" \", hits );\n    }\n}\n"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "escape key recorder loaded"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return UimtestEscapeKey.Begin();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "recording from frame"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "escape",
+        "duration": 300
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"duration\": 300",
+          "\"framesRead\": "
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return UimtestEscapeKey.Timing();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "escape key timing ok"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var s = \"pause=\" + PauseController.pauseStatus;\nint by = PauseController.pausedByController;\ns += \" owner=\" + (by == 0 ? \"key\" : (by >= 4 && by <= 7 ? \"gamepad\" : (by < 0 ? \"none\" : \"keyboard\"))) + \"(\" + by + \")\";\ns += \" delay=\" + PauseController.DelayInput;\nvar pm = PauseMenu.instance;\nif (pm == null) return s + \" list=none\";\nvar opt = typeof(PauseMenu).GetField(\"m_InGameOptions\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(pm) as InGameOptionsMenu;\nbool list = pm.MenuActive && pm.gameObject.activeInHierarchy;\nbool options = opt != null && opt.MenuActive && opt.gameObject.activeInHierarchy;\nreturn s + \" list=\" + (list ? \"active\" : \"inactive\") + \" options=\" + (options ? \"active\" : \"inactive\") + \" index=\" + pm.Index;"
+      },
+      "until": {
+        "timeout": 20,
+        "interval": 0.5
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "pause=MenuPause owner=key(0)",
+          "list=active"
+        ]
+      },
+      "wait": 500
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "start"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var s = \"pause=\" + PauseController.pauseStatus;\nint by = PauseController.pausedByController;\ns += \" owner=\" + (by == 0 ? \"key\" : (by >= 4 && by <= 7 ? \"gamepad\" : (by < 0 ? \"none\" : \"keyboard\"))) + \"(\" + by + \")\";\ns += \" delay=\" + PauseController.DelayInput;\nvar pm = PauseMenu.instance;\nif (pm == null) return s + \" list=none\";\nvar opt = typeof(PauseMenu).GetField(\"m_InGameOptions\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(pm) as InGameOptionsMenu;\nbool list = pm.MenuActive && pm.gameObject.activeInHierarchy;\nbool options = opt != null && opt.MenuActive && opt.gameObject.activeInHierarchy;\nreturn s + \" list=\" + (list ? \"active\" : \"inactive\") + \" options=\" + (options ? \"active\" : \"inactive\") + \" index=\" + pm.Index;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "pause=MenuPause owner=key(0)",
+          "list=active"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "cancel"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var s = \"pause=\" + PauseController.pauseStatus;\nint by = PauseController.pausedByController;\ns += \" owner=\" + (by == 0 ? \"key\" : (by >= 4 && by <= 7 ? \"gamepad\" : (by < 0 ? \"none\" : \"keyboard\"))) + \"(\" + by + \")\";\ns += \" delay=\" + PauseController.DelayInput;\nvar pm = PauseMenu.instance;\nif (pm == null) return s + \" list=none\";\nvar opt = typeof(PauseMenu).GetField(\"m_InGameOptions\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(pm) as InGameOptionsMenu;\nbool list = pm.MenuActive && pm.gameObject.activeInHierarchy;\nbool options = opt != null && opt.MenuActive && opt.gameObject.activeInHierarchy;\nreturn s + \" list=\" + (list ? \"active\" : \"inactive\") + \" options=\" + (options ? \"active\" : \"inactive\") + \" index=\" + pm.Index;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "pause=MenuPause owner=key(0)",
+          "list=active"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "escape"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var s = \"pause=\" + PauseController.pauseStatus;\nint by = PauseController.pausedByController;\ns += \" owner=\" + (by == 0 ? \"key\" : (by >= 4 && by <= 7 ? \"gamepad\" : (by < 0 ? \"none\" : \"keyboard\"))) + \"(\" + by + \")\";\ns += \" delay=\" + PauseController.DelayInput;\nvar pm = PauseMenu.instance;\nif (pm == null) return s + \" list=none\";\nvar opt = typeof(PauseMenu).GetField(\"m_InGameOptions\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(pm) as InGameOptionsMenu;\nbool list = pm.MenuActive && pm.gameObject.activeInHierarchy;\nbool options = opt != null && opt.MenuActive && opt.gameObject.activeInHierarchy;\nreturn s + \" list=\" + (list ? \"active\" : \"inactive\") + \" options=\" + (options ? \"active\" : \"inactive\") + \" index=\" + pm.Index;"
+      },
+      "until": {
+        "timeout": 20,
+        "interval": 0.5
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "pause=UnPaused owner=none(-1) delay=False"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return UimtestEscapeKey.Begin();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "recording from frame"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "cancel"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "return UimtestEscapeKey.Silent();"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "no escape key read across"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "path": "uimtest-escape-key"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "\"destroyedObjects\": 1"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "start"
+      },
+      "expect": {
+        "success": true,
+        "notContains": [
+          "warning"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var s = \"pause=\" + PauseController.pauseStatus;\nint by = PauseController.pausedByController;\ns += \" owner=\" + (by == 0 ? \"key\" : (by >= 4 && by <= 7 ? \"gamepad\" : (by < 0 ? \"none\" : \"keyboard\"))) + \"(\" + by + \")\";\ns += \" delay=\" + PauseController.DelayInput;\nvar pm = PauseMenu.instance;\nif (pm == null) return s + \" list=none\";\nvar opt = typeof(PauseMenu).GetField(\"m_InGameOptions\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(pm) as InGameOptionsMenu;\nbool list = pm.MenuActive && pm.gameObject.activeInHierarchy;\nbool options = opt != null && opt.MenuActive && opt.gameObject.activeInHierarchy;\nreturn s + \" list=\" + (list ? \"active\" : \"inactive\") + \" options=\" + (options ? \"active\" : \"inactive\") + \" index=\" + pm.Index;"
+      },
+      "until": {
+        "timeout": 20,
+        "interval": 0.5
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "pause=MenuPause owner=gamepad(",
+          "list=active options=inactive"
+        ]
+      },
+      "wait": 500
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "escape"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var s = \"pause=\" + PauseController.pauseStatus;\nint by = PauseController.pausedByController;\ns += \" owner=\" + (by == 0 ? \"key\" : (by >= 4 && by <= 7 ? \"gamepad\" : (by < 0 ? \"none\" : \"keyboard\"))) + \"(\" + by + \")\";\ns += \" delay=\" + PauseController.DelayInput;\nvar pm = PauseMenu.instance;\nif (pm == null) return s + \" list=none\";\nvar opt = typeof(PauseMenu).GetField(\"m_InGameOptions\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(pm) as InGameOptionsMenu;\nbool list = pm.MenuActive && pm.gameObject.activeInHierarchy;\nbool options = opt != null && opt.MenuActive && opt.gameObject.activeInHierarchy;\nreturn s + \" list=\" + (list ? \"active\" : \"inactive\") + \" options=\" + (options ? \"active\" : \"inactive\") + \" index=\" + pm.Index;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "pause=MenuPause owner=gamepad(",
+          "list=active options=inactive"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "down"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var s = \"pause=\" + PauseController.pauseStatus;\nint by = PauseController.pausedByController;\ns += \" owner=\" + (by == 0 ? \"key\" : (by >= 4 && by <= 7 ? \"gamepad\" : (by < 0 ? \"none\" : \"keyboard\"))) + \"(\" + by + \")\";\ns += \" delay=\" + PauseController.DelayInput;\nvar pm = PauseMenu.instance;\nif (pm == null) return s + \" list=none\";\nvar opt = typeof(PauseMenu).GetField(\"m_InGameOptions\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(pm) as InGameOptionsMenu;\nbool list = pm.MenuActive && pm.gameObject.activeInHierarchy;\nbool options = opt != null && opt.MenuActive && opt.gameObject.activeInHierarchy;\nreturn s + \" list=\" + (list ? \"active\" : \"inactive\") + \" options=\" + (options ? \"active\" : \"inactive\") + \" index=\" + pm.Index;"
+      },
+      "until": {
+        "timeout": 5,
+        "interval": 0.5
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "pause=MenuPause owner=gamepad(",
+          "list=active options=inactive index=1"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "fire"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var s = \"pause=\" + PauseController.pauseStatus;\nint by = PauseController.pausedByController;\ns += \" owner=\" + (by == 0 ? \"key\" : (by >= 4 && by <= 7 ? \"gamepad\" : (by < 0 ? \"none\" : \"keyboard\"))) + \"(\" + by + \")\";\ns += \" delay=\" + PauseController.DelayInput;\nvar pm = PauseMenu.instance;\nif (pm == null) return s + \" list=none\";\nvar opt = typeof(PauseMenu).GetField(\"m_InGameOptions\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(pm) as InGameOptionsMenu;\nbool list = pm.MenuActive && pm.gameObject.activeInHierarchy;\nbool options = opt != null && opt.MenuActive && opt.gameObject.activeInHierarchy;\nreturn s + \" list=\" + (list ? \"active\" : \"inactive\") + \" options=\" + (options ? \"active\" : \"inactive\") + \" index=\" + pm.Index;"
+      },
+      "until": {
+        "timeout": 5,
+        "interval": 0.5
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "pause=MenuPause owner=gamepad(",
+          "list=inactive options=active"
+        ]
+      },
+      "wait": 500
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "escape"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var s = \"pause=\" + PauseController.pauseStatus;\nint by = PauseController.pausedByController;\ns += \" owner=\" + (by == 0 ? \"key\" : (by >= 4 && by <= 7 ? \"gamepad\" : (by < 0 ? \"none\" : \"keyboard\"))) + \"(\" + by + \")\";\ns += \" delay=\" + PauseController.DelayInput;\nvar pm = PauseMenu.instance;\nif (pm == null) return s + \" list=none\";\nvar opt = typeof(PauseMenu).GetField(\"m_InGameOptions\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(pm) as InGameOptionsMenu;\nbool list = pm.MenuActive && pm.gameObject.activeInHierarchy;\nbool options = opt != null && opt.MenuActive && opt.gameObject.activeInHierarchy;\nreturn s + \" list=\" + (list ? \"active\" : \"inactive\") + \" options=\" + (options ? \"active\" : \"inactive\") + \" index=\" + pm.Index;"
+      },
+      "until": {
+        "timeout": 5,
+        "interval": 0.5
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "pause=MenuPause owner=gamepad(",
+          "list=active options=inactive"
+        ]
+      },
+      "wait": 500
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "cancel"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var s = \"pause=\" + PauseController.pauseStatus;\nint by = PauseController.pausedByController;\ns += \" owner=\" + (by == 0 ? \"key\" : (by >= 4 && by <= 7 ? \"gamepad\" : (by < 0 ? \"none\" : \"keyboard\"))) + \"(\" + by + \")\";\ns += \" delay=\" + PauseController.DelayInput;\nvar pm = PauseMenu.instance;\nif (pm == null) return s + \" list=none\";\nvar opt = typeof(PauseMenu).GetField(\"m_InGameOptions\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(pm) as InGameOptionsMenu;\nbool list = pm.MenuActive && pm.gameObject.activeInHierarchy;\nbool options = opt != null && opt.MenuActive && opt.gameObject.activeInHierarchy;\nreturn s + \" list=\" + (list ? \"active\" : \"inactive\") + \" options=\" + (options ? \"active\" : \"inactive\") + \" index=\" + pm.Index;"
+      },
+      "until": {
+        "timeout": 20,
+        "interval": 0.5
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "pause=UnPaused owner=none(-1) delay=False"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "escape"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var s = \"pause=\" + PauseController.pauseStatus;\nint by = PauseController.pausedByController;\ns += \" owner=\" + (by == 0 ? \"key\" : (by >= 4 && by <= 7 ? \"gamepad\" : (by < 0 ? \"none\" : \"keyboard\"))) + \"(\" + by + \")\";\ns += \" delay=\" + PauseController.DelayInput;\nvar pm = PauseMenu.instance;\nif (pm == null) return s + \" list=none\";\nvar opt = typeof(PauseMenu).GetField(\"m_InGameOptions\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(pm) as InGameOptionsMenu;\nbool list = pm.MenuActive && pm.gameObject.activeInHierarchy;\nbool options = opt != null && opt.MenuActive && opt.gameObject.activeInHierarchy;\nreturn s + \" list=\" + (list ? \"active\" : \"inactive\") + \" options=\" + (options ? \"active\" : \"inactive\") + \" index=\" + pm.Index;"
+      },
+      "until": {
+        "timeout": 20,
+        "interval": 0.5
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "pause=MenuPause owner=key(0)",
+          "list=active options=inactive index=0"
+        ]
+      },
+      "wait": 500
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "down",
+        "player": 1
+      },
+      "expect": {
+        "success": false,
+        "contains": [
+          "No frame read down",
+          "\"player\": 1",
+          "\"framesRead\": 0"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var s = \"pause=\" + PauseController.pauseStatus;\nint by = PauseController.pausedByController;\ns += \" owner=\" + (by == 0 ? \"key\" : (by >= 4 && by <= 7 ? \"gamepad\" : (by < 0 ? \"none\" : \"keyboard\"))) + \"(\" + by + \")\";\ns += \" delay=\" + PauseController.DelayInput;\nvar pm = PauseMenu.instance;\nif (pm == null) return s + \" list=none\";\nvar opt = typeof(PauseMenu).GetField(\"m_InGameOptions\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(pm) as InGameOptionsMenu;\nbool list = pm.MenuActive && pm.gameObject.activeInHierarchy;\nbool options = opt != null && opt.MenuActive && opt.gameObject.activeInHierarchy;\nreturn s + \" list=\" + (list ? \"active\" : \"inactive\") + \" options=\" + (options ? \"active\" : \"inactive\") + \" index=\" + pm.Index;"
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "pause=MenuPause owner=key(0)",
+          "list=active options=inactive index=0"
+        ]
+      }
+    },
+    {
+      "command": "simulate_input",
+      "params": {
+        "action": "escape"
+      },
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
+        "code": "var s = \"pause=\" + PauseController.pauseStatus;\nint by = PauseController.pausedByController;\ns += \" owner=\" + (by == 0 ? \"key\" : (by >= 4 && by <= 7 ? \"gamepad\" : (by < 0 ? \"none\" : \"keyboard\"))) + \"(\" + by + \")\";\ns += \" delay=\" + PauseController.DelayInput;\nvar pm = PauseMenu.instance;\nif (pm == null) return s + \" list=none\";\nvar opt = typeof(PauseMenu).GetField(\"m_InGameOptions\", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(pm) as InGameOptionsMenu;\nbool list = pm.MenuActive && pm.gameObject.activeInHierarchy;\nbool options = opt != null && opt.MenuActive && opt.gameObject.activeInHierarchy;\nreturn s + \" list=\" + (list ? \"active\" : \"inactive\") + \" options=\" + (options ? \"active\" : \"inactive\") + \" index=\" + pm.Index;"
+      },
+      "until": {
+        "timeout": 20,
+        "interval": 0.5
+      },
+      "expect": {
+        "success": true,
+        "contains": [
+          "pause=UnPaused owner=none(-1) delay=False"
+        ]
+      }
+    },
+    {
+      "command": "execute_code",
+      "params": {
         "code": "var d = System.AppDomain.CurrentDomain;\nvar rec = (d.GetData(\"uimtest.level\") as string) ?? \"0|1\";\nd.SetData(\"uimtest.level\", null);\nvar p = rec.Split('|');\nvar r = Unity_Inspector_Mod.StateModifier.GoToLevel(int.Parse(p[0]), int.Parse(p[1]));\nvar j = Newtonsoft.Json.Linq.JToken.FromObject(r);\nreturn \"loading recorded level \" + rec + \": success=\" + j[\"success\"] + \" \" + j.ToString(Newtonsoft.Json.Formatting.None);"
       },
       "expect": {
@@ -1738,6 +2199,17 @@
         "success": true,
         "notContains": [
           "failed"
+        ]
+      }
+    },
+    {
+      "command": "unload_script",
+      "params": {
+        "path": "uimtest-escape-key"
+      },
+      "expect": {
+        "notContains": [
+          "\"warnings\""
         ]
       }
     },

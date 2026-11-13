@@ -1,6 +1,7 @@
 import { LAUNCH_RECORDS_SCRATCH, NO_LISTENER_PORT, NO_OP_LAUNCH_CMD, NO_TOKEN_FILE } from './support/session.js';
 import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'child_process';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
@@ -32,7 +33,7 @@ const instanceCalls = path.join(instancesRoot, 'calls.log');
 
 const { activeTarget, configureLaunchTiming, handleToolCall, resetTargetResolution, setLaunchResolver, unityClient } = await import('../index.js');
 const { LINUX_GAME_COMM, invalidateGameProcessScan, resetInstanceModeProbe, resolveLaunchCommand, setKillSignaller, setProcReader } = await import('../lib/game-process.js');
-const { forgetLaunchRecords, lastLaunch, launchRecordFile, pruneLaunchRecords, setLaunchRecordWriter } = await import('../lib/launch-record.js');
+const { forgetLaunchRecords, lastLaunch, launchOutputFile, launchRecordFile, pruneLaunchRecords, setLaunchRecordWriter } = await import('../lib/launch-record.js');
 
 const exists = (file) => fs.access(file).then(() => true, () => false);
 const STEAM_PID = '801';
@@ -299,7 +300,8 @@ test('the record outlives the server process: a new process reads it back from t
   assert.equal(path.dirname(file), LAUNCH_RECORDS_SCRATCH);
   assert.equal(path.basename(file), `pid-${process.ppid}.json`);
   assert.deepEqual(JSON.parse(await fs.readFile(file, 'utf8')).steam, { launchArgs: '--some-flag', vanilla: false });
-  assert.deepEqual((await fs.readdir(LAUNCH_RECORDS_SCRATCH)).sort(), [path.basename(file)], 'no temp file is left beside it');
+  const beside = (await fs.readdir(LAUNCH_RECORDS_SCRATCH)).filter((name) => name !== path.basename(launchOutputFile()));
+  assert.deepEqual(beside, [path.basename(file)], 'no temp file is left beside it');
   await steamGameDies();
 
   forgetLaunchRecords();
@@ -340,14 +342,17 @@ test('a launch prunes other sessions\' records idle for a week, and nothing it d
   await fs.mkdir(root);
   const now = Date.now();
   const week = 7 * 24 * 60 * 60 * 1000;
-  const files = { 'idle.json': now - week - 1000, 'fresh.json': now - week + 60000, 'kept.json': now - 2 * week, 'notes.txt': now - 2 * week, 'bad id!.json': now - 2 * week };
+  const files = {
+    'idle.json': now - week - 1000, 'fresh.json': now - week + 60000, 'kept.json': now - 2 * week, 'notes.txt': now - 2 * week, 'bad id!.json': now - 2 * week,
+    'idle.steam.stderr': now - week - 1000, 'fresh.steam.stderr': now - week + 60000, 'kept.steam.stderr': now - 2 * week, 'notes.stderr': now - 2 * week,
+  };
   for (const [name, mtime] of Object.entries(files)) {
     await fs.writeFile(path.join(root, name), '{}');
     await fs.utimes(path.join(root, name), new Date(mtime), new Date(mtime));
   }
   await fs.mkdir(path.join(root, 'dir.json'));
   await pruneLaunchRecords(root, path.join(root, 'kept.json'), { nowMs: now });
-  assert.deepEqual((await fs.readdir(root)).sort(), ['bad id!.json', 'dir.json', 'fresh.json', 'kept.json', 'notes.txt']);
+  assert.deepEqual((await fs.readdir(root)).sort(), ['bad id!.json', 'dir.json', 'fresh.json', 'fresh.steam.stderr', 'kept.json', 'kept.steam.stderr', 'notes.stderr', 'notes.txt']);
 
   await fs.mkdir(LAUNCH_RECORDS_SCRATCH, { recursive: true });
   const idle = path.join(LAUNCH_RECORDS_SCRATCH, 'idle-session.json');
@@ -356,6 +361,24 @@ test('a launch prunes other sessions\' records idle for a week, and nothing it d
   await launched({});
   assert.equal(await exists(idle), false, 'the launch pruned the idle session');
   assert.equal(await exists(launchRecordFile()), true);
+});
+
+test('a launch removes the launch-output streams a crashed server left, any session\'s, and never a fresh one', { timeout: 30000, skip: !isLinux }, async () => {
+  const root = path.join(scratch, 'prune-streams');
+  await fs.rm(root, { recursive: true, force: true });
+  await fs.mkdir(root);
+  const now = Date.now();
+  const streams = { 'kept.steam.stderr.41-aa.fifo': now - 120000, 'other.steam.stderr.42-bb.fifo': now - 120000, 'other.steam.stderr.43-cc.fifo': now - 1000 };
+  for (const [name, mtime] of Object.entries(streams)) {
+    execFileSync('mkfifo', [path.join(root, name)]);
+    await fs.utimes(path.join(root, name), new Date(mtime), new Date(mtime));
+  }
+  await fs.writeFile(path.join(root, 'notes.fifo'), '');
+  await fs.utimes(path.join(root, 'notes.fifo'), new Date(now - 120000), new Date(now - 120000));
+
+  await pruneLaunchRecords(root, path.join(root, 'kept.json'), { nowMs: now });
+
+  assert.deepEqual((await fs.readdir(root)).sort(), ['notes.fifo', 'other.steam.stderr.43-cc.fifo']);
 });
 
 test('a launch the protocol fallback made without its arguments records none', { timeout: 30000, skip: !isLinux }, async () => {

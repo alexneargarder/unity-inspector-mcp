@@ -10,7 +10,7 @@ import { conditionalProcReader, fakeProcReader } from './support/fake-proc.js';
 import { reply, startStubServer } from './support/stub-server.js';
 
 const { configureLaunchTiming, handleToolCall, setLaunchResolver, unityClient } = await import('../index.js');
-const { LINUX_GAME_COMM, composeExtraLaunchArgs, resolveLaunchCommand, setProcReader, wineserverHoldsPrefix } = await import('../lib/game-process.js');
+const { LINUX_GAME_COMM, composeExtraLaunchArgs, lastSpawnOptions, resolveLaunchCommand, setProcReader, wineserverHoldsPrefix } = await import('../lib/game-process.js');
 const { LAUNCH_REFUSED, parseRegQuery, preflightSteamLaunch, prepareSteamLaunch, r2modmanProfileRoots, realFlatpakDataRoot, realOnPath, realProfilesRoot, resolveSteamLaunch, withWinhttpOverride, withdrawWrapperArgs } = await import('../lib/steam-launch.js');
 const { COMMAND_CANCELLED, FLATPAK_STEAM_ROOT } = await import('../lib/unity-client.js');
 
@@ -771,7 +771,7 @@ test('a Steam executable that exits non-zero ends a vanilla launch\'s wait as la
 });
 
 test('a Steam executable that exits non-zero ends a modded launch\'s poll as launcher-failed', { timeout: 30000, skip: !isLinux }, async (t) => {
-  await stubSteam(t, 'exit 3');
+  await stubSteam(t, "printf 'steam: client chatter\\n' >&2\nexit 3");
   noGame();
   configureLaunchTiming({ steamStartMs: 60000 });
 
@@ -780,6 +780,10 @@ test('a Steam executable that exits non-zero ends a modded launch\'s poll as lau
   assert.equal(payload.state, 'launcher-failed', payload.message);
   assert.match(payload.message, /exited with status 3/);
   assert.doesNotMatch(payload.message, /Allow game launch/);
+  // The Steam executable may become the Steam client, so its stderr is never read
+  assert.equal(lastSpawnOptions().stdio, 'ignore');
+  assert.equal(lastSpawnOptions().drainPid, null);
+  assert.doesNotMatch(payload.message, /error output|client chatter/);
 });
 
 test('a modded launch through a Steam that never exits is ready when the inspector answers, its scripts already executable at the spawn', { timeout: 30000, skip: !isLinux }, async (t) => {

@@ -8,7 +8,7 @@ On Windows the server reads the `InstallPath` value of `HKLM\SOFTWARE\WOW6432Nod
 
 On Linux it uses `steam` on `PATH`, or else `steam.sh` in `~/.local/share/Steam` or `~/.steam/steam`. Flatpak Steam is run with `flatpak run com.valvesoftware.Steam`, when `flatpak` is on `PATH`.
 
-If none of those are found, or on macOS, the server does a protocol launch of `steam://rungameid/274190` through `cmd /c start ""` on Windows, `xdg-open` on Linux and `open` on macOS. That passes no arguments, so `launchArgs` and `vanilla` are dropped and the reply's note names them. The server then waits up to 60 seconds for the game to answer.
+If none of those are found, or on macOS, the server does a protocol launch of `steam://rungameid/274190` through `cmd /c start ""` on Windows, `xdg-open` on Linux and `open` on macOS. That passes no arguments, so `launchArgs` and `vanilla` are dropped and the reply's note names them. The server then gives the game 60 seconds to answer once the launch command has exited or the game has started, and waits up to 10 minutes while the command is still running with no game.
 
 ## Finding the profile
 

@@ -122,6 +122,7 @@ test('launch_game starts this session\'s instance and reads the allocated port b
 
   // Only the launcher's stderr is piped; its stdout would collide with this process's MCP stream
   assert.deepEqual(lastSpawnOptions().stdio, ['ignore', 'ignore', 'pipe']);
+  assert.equal(lastSpawnOptions().drainPid, null, 'the instance launcher\'s stderr goes to no drain');
 
   const calls = await launcherCalls();
   assert.deepEqual(calls.slice(0, 2), ['--help', 'instance list --json'],
