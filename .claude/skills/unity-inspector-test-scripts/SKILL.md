@@ -5,7 +5,7 @@ description: Procedure for writing and debugging the JSON test scripts that the 
 
 # Unity Inspector test scripts
 
-Read the script format, every field and the reply's fields in [scripts/README.md](https://github.com/alexneargarder/unity-inspector-mcp/blob/master/scripts/README.md) before writing a script. Paths below are relative to the server checkout.
+Read the script format and every field in [scripts/README.md](https://github.com/alexneargarder/unity-inspector-mcp/blob/master/scripts/README.md) before writing a script. Paths below are relative to the server checkout.
 
 ## Choosing to script
 
@@ -26,6 +26,7 @@ Read the script format, every field and the reply's fields in [scripts/README.md
      { "command": "game_state", "until": { "timeout": 60, "interval": 1 }, "expect": { "contains": ["\"state\": \"alive\""] } }
      ```
    - Before pressing keys at the main menu, poll an `execute_code` step that returns the `MainMenu` object's `MenuActive` with `until` for `True` and give it `"wait": 500`, as `scripts/tests/game-states.json` does: the game ignores menu input for 3 s after the scene loads and for up to 0.3 s each time the menu becomes active.
+   - Start menu presses 0.2 s or more apart: a menu drops a direction within 0.2 s of the last press it took and an accept or decline within 0.05 s, and the dropped press still answers as read.
    - Make every `until` timeout cover the first load after a launch, about 20 s.
    - Use `wait` only after a step whose effect no command can read back.
 6. Give every step that can fail an `expect`. Without one a step fails only when its command throws or returns `success: false`, so an `execute_code` step whose returned text reports a failure still passes: return a fixed word on success and `expect` it with `contains`. A step that should fail gets `"success": false` and a `contains` naming the error. `contains` matches the result pretty-printed as the tool returns it, a space after each key's colon.

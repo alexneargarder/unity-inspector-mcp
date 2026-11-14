@@ -1,10 +1,20 @@
 # C# Script Library
 
-Runtime C# scripts that compile and execute inside the Unity game process via the MCP tool.
+C# scripts that compile and run inside the game. `list_scripts` lists them with their descriptions and arguments, `execute_script` runs one and `unload_script` unloads it.
+
+## Running a Script
+
+`execute_script` takes a script's file name or its `// #name`, plus `args` for its arguments. A script outside this folder runs by absolute path; it just won't show up in `list_scripts`. `compileOnly: true` compiles it without running it, to check for errors.
+
+`run-script.js` runs one script from the shell as soon as the game answers, for a script that has to be running in the game's first few seconds. `--wait` keeps trying until the game is up, and `--new-token` waits for a token other than the one the file held when it started, so you can start it before a relaunch.
+
+```bash
+node run-script.js --port <port> --token-file <file> [--host <host>] [--wait <seconds>] [--new-token] [--arg <key>=<value>]... <script>
+```
 
 ## Script Format
 
-Scripts are `.cs` files with optional comment-header metadata:
+Scripts are `.cs` files with optional comment-header metadata, which `list_scripts` reads:
 
 ```csharp
 // #name Human-Readable Name
@@ -22,127 +32,27 @@ public static class MyScript
 
     public static void Unload()
     {
-        // Cleanup: called when the script is unloaded
+        // Undo what Main() did
     }
 }
 ```
 
-## Lifecycle
+`Main()` runs the script and `Unload()` undoes it, and both are optional. Running a loaded script again unloads it first: `Unload()` runs and its patches and tracked GameObjects are removed, then `Main()` runs.
 
-- **`Main()`** — Called when the script is executed. Optional — scripts without Main() just register their types.
-- **`Unload()`** — Called when the script is unloaded via `unload_script`. Optional but recommended for scripts that apply patches or create GameObjects.
+`ScriptContext` holds `Harmony` (the script's own Harmony instance, unpatched on unload), `Logger(msg)` (logs as `[Script:name]`), `GameObjects` (a `List<GameObject>` destroyed on unload), `Args` (a `Dictionary<string, string>` of the `args` passed) and `GetArg(key, defaultValue)`. `args` values arrive as strings, a non-string as its JSON text: `5`, `true`, `{"a":1}`.
 
-`Main()` and `Unload()` are each stopped at their next loop iteration once they have run 15 seconds.
-An unload also destroys every component in the scene whose type the script declares, on any GameObject.
+- `Main()` and `Unload()` are each stopped at their next loop iteration once they have run 15 seconds.
+- `ScriptContext.Harmony`, `GameObjects` and `Args` are null outside `Main()` and `Unload()`, so code that runs later (patches, coroutines, MonoBehaviours) keeps what it needs in a static field set in `Main()`.
+- Opening the pause menu offline deactivates every GameObject not tagged `Unpausable`, and returning to the world map from it can lose an untagged `DontDestroyOnLoad` object for good, so tag a GameObject that outlives a scene `Unpausable`. `Time.time` keeps counting under the pause menu.
 
-Re-running `execute_script` **restarts** the script: `Unload()` runs, patches are removed and
-tracked GameObjects are destroyed, then `Main()` runs again. Unchanged source still skips
-recompilation. `Main()` is never entered twice on top of its own state, so it does not need
-to be idempotent — but `Unload()` must actually undo what `Main()` did, or the restart leaks.
+## Limits
 
-## ScriptContext API
-
-Available as static fields/methods during `Main()` and `Unload()`:
-
-- `ScriptContext.Harmony` — Isolated Harmony instance for this script. Patches are auto-unpatched on unload.
-- `ScriptContext.Logger(string msg)` — Log to the mod logger. Output prefixed with `[Script:name]`.
-- `ScriptContext.GameObjects` — `List<GameObject>`. Add GameObjects here for auto-cleanup on unload.
-- `ScriptContext.Args` — `Dictionary<string, string>` of arguments passed from the MCP tool. A string value arrives as sent; any other value arrives as its JSON text (`5`, `true`, `{"a":1}`, `null`).
-- `ScriptContext.GetArg(string key, string defaultValue)` — Safe argument getter (.NET 3.5 compatible).
-
-`ScriptContext` describes the script whose `Main()` or `Unload()` is currently running, and
-is restored when that call returns — so running or unloading another script never disturbs
-yours. Code that runs later (Harmony patches, coroutines, MonoBehaviours) must capture what
-it needs into a static field during `Main()`:
-
-```csharp
-private static System.Action<string> cachedLogger;
-
-public static void Main()
-{
-    cachedLogger = ScriptContext.Logger;  // keeps the [Script:name] prefix
-    ...
-}
-```
-
-`ScriptContext.Logger` is never null; outside `Main()`/`Unload()` it falls back to the mod
-logger under a plain `[Script]` prefix. `Harmony`, `GameObjects` and `Args` are null outside
-`Main()`/`Unload()`.
-
-`ex.StackTrace` and `ex.ToString()` on a caught exception both return a normal managed trace
-naming your script's own methods. No file names or line numbers in it, since the script
-assembly is compiled in memory.
-
-## The Pause Menu
-
-Opening the pause menu offline deactivates every active GameObject not tagged `Unpausable`,
-`DontDestroyOnLoad` ones included, so their MonoBehaviours stop updating until it closes.
-"Return to world map" from the pause menu loads the map without closing it, and the next pause
-forgets every object the first one deactivated, so an untagged `DontDestroyOnLoad` object is
-lost for good. A script whose GameObject outlives a scene tags it `go.tag = "Unpausable";`,
-and its `Update` returns while `PauseController.Paused` unless it means to run under the menu,
-as `scenario-menus.cs` does. The pause sets `Time.timeScale` to 1, so `Time.time` and
-`Time.realtimeSinceStartup` both keep counting through it; a timer that should not counts its
-own `Time.deltaTime` or `Time.unscaledDeltaTime` in the frames it runs.
-
-## .NET 3.5 Constraints
-
-The game runs on .NET 3.5. Key limitations:
-- No `Dictionary.GetValueOrDefault()` — use `ScriptContext.GetArg()` or `TryGetValue`
-- No `string.IsNullOrWhiteSpace()` — use `string.IsNullOrEmpty(s) || s.Trim().Length == 0`
-- No `async/await`
-- LINQ is available (`System.Linq`)
-- `string.Join` takes a `string[]`, not a `List<string>` or other `IEnumerable<string>` — call `.ToArray()` first
-- `Math` is the game's own class and hides `System.Math`, with no `Min`, `Max`, `Log` or `Abs` — use `System.Math` or `Mathf`
-
-## Auto-Imported Namespaces
-
-The following are automatically imported — no `using` statements needed:
-`System`, `System.Collections`, `System.Collections.Generic`, `System.IO`, `System.Linq`, `System.Reflection`, `System.Text`, `UnityEngine`, `HarmonyLib`, `Unity_Inspector_Mod`
-
-A type in any other namespace, such as a mod's, `UnityModManagerNet`'s or the game's namespaced ones, needs a `using` or its full name.
-
-## Private Member Access
-
-Scripts can directly access private and internal fields and methods on game types, and a mod's internal types such as its `Main` by their full name (`Utility_Mod.Main`), with no reflection needed.
+- .NET 3.5: no `async`/`await` or `string.IsNullOrWhiteSpace`, and `string.Join` needs a `string[]`, so call `.ToArray()` on a list first. No local functions either: use a delegate local.
+- Unity 2017.4: no `GameObject.TryGetComponent` or `FindAnyObjectByType`/`FindObjectsByType`; use `GetComponent` plus a null check and `FindObjectOfType`/`FindObjectsOfType`.
+- The game's own `Math` class hides `System.Math` and has no `Min`, `Max`, `Log` or `Abs`: use `System.Math` or `Mathf`.
+- An enum a script declares can't be used, by that script or any other: use `int` constants or an enum from a mod DLL.
+- Stack traces name the script's methods but carry no file names or line numbers.
 
 ## Capturing Spawn Calls
 
-`spawn-capture.cs` patches a method with a prefix that logs the call arguments and a postfix that
-dumps the returned object's initial state (type, name, GameObject and position for a Component,
-plus its simple public fields). Arguments are `typeName`, `methodName` and `captureCount`.
-
-Every overload of the name is patched with the same pair of patch methods, and each capture line
-carries the overload's parameter-type list, so entries stay attributable; `Main()` logs the
-signatures it patched. `captureCount` is the total across all of them. An overload that returns
-void gets the prefix only, since there is no `__result` to read. Everything lands in the UMM
-log — read it back with `read_log`.
-
-Reaching `captureCount` only stops the logging. The patches stay applied, so every call of every
-patched overload still pays for Harmony's argument array and the boxing of its value arguments —
-run `unload_script` to remove them once you have the captures you wanted.
-
-### Holding a Spawn Still Long Enough to Inspect It
-
-Projectile lifetime is driven by `Time.timeScale`, so `set_game_speed` decides whether a fresh
-spawn is still around by the time the next MCP call reaches the game. At speed 1 a projectile is
-gone before the first round-trip completes. At 0.02 it survives roughly two round-trips. At 0.002
-it is still present and has barely moved after three seconds of wall-clock time, which makes
-0.002 the setting for inspecting transient objects — set the speed back to 1 when finished.
-
-### BroMakerLib Spawn Prefixes
-
-BroMakerLib patches `ProjectileController.SpawnGrenadeLocally`, `SpawnProjectileLocally` (all
-three overloads), `SpawnGrenadeOverNetwork` and `SpawnProjectileOverNetwork` with prefixes at
-default priority. When the prefab is a BroMaker custom projectile — or, for the `*OverNetwork`
-methods, the firing unit is a custom bro — those prefixes perform the spawn themselves, assign
-`__result` and return `false`; otherwise they return `true` and the game's own method runs.
-
-A prefix that only wants to observe the call therefore needs priority `int.MaxValue`, or
-BroMakerLib's prefix consumes the invocation first and the observer never runs. A postfix always
-runs and still receives the spawned object in `__result` even when the original was skipped;
-`__runOriginal` (Harmony 2.2+) distinguishes the two cases.
-
-## Temporary Scripts
-
-Scripts outside this directory can be executed via absolute path. They won't appear in `list_scripts` or the catalog resource.
+`spawn-capture` writes to the log `read_log` reads, and its patches stay after it has logged `captureCount` calls, so unload it once you have the captures.

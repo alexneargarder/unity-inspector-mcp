@@ -37,6 +37,10 @@ The server reads none of these and behaves the same with a launcher that does no
 - **Disk**: an instance's game runs with core dumps off, since a crash would otherwise leave a core the size of the game's memory in `work/` until the instance is retired.
 - **On launch**: the launcher stops the game of an instance that nothing owns any more: its `owner.pid` is absent or names a process that is gone, and the launcher's own record of the session that launched it shows that session gone. It skips any instance with a launch or a stop of its own in flight, and never stops on its own one whose `owner.pid` names a live process. It removes a stage directory once no instance directory for that id is left and nothing under it has been written for the launcher's idle-instance retirement period. Retiring idle instance directories at all, and after how long, is the launcher's own policy; the stage rule only follows it.
 
+## Your own game's launch command
+
+`BROFORCE_LAUNCH_CMD`, the command line that starts your own game, is parsed with shell-style quoting too. The server runs it as configured, appending `--vanilla` for a vanilla launch and then the call's `launchArgs`, and asks it for `--args-help` as above.
+
 ## Your own game's data folders
 
 On Linux a launcher may run your own game, whose working directory is outside the instances root, with its data folders moved. The server then finds them through the game's environment, reading `XDG_CONFIG_HOME` or else `HOME`'s `.config` for a native game and `WINEPREFIX` or else `STEAM_COMPAT_DATA_PATH`'s `pfx` under Proton. It reads Unity Mod Manager's log beside the Doorstop target assembly. That target comes from `--doorstop-target-assembly`, or Doorstop 3's `--doorstop-target`, on the command line of the game or of a process that started it, or else from `DOORSTOP_TARGET_ASSEMBLY` or Doorstop 3's `DOORSTOP_INVOKE_DLL_PATH`.

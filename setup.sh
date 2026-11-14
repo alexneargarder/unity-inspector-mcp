@@ -43,7 +43,7 @@ claude mcp add unity-inspector -- node "$WRAPPER"
 command = "node"
 args = ["$WRAPPER"]
 
-Other clients: see README.md, section "Installation".
+Other clients: see README.md, section "Client configuration".
 
 Then reconnect the client and make sure Broforce is running with the Unity
 Inspector Mod loaded.
