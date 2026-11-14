@@ -268,6 +268,95 @@ test('without a UMM log each mirrored call counts once, at its mirror\'s severit
   assert.ok(logs.bySource.some((s) => s.source === 'Manager'), 'UMM\'s other console lines stand in for its log');
 });
 
+const NRE = 'NullReferenceException: Object reference not set to an instance of an object';
+
+const nreCall = (...frames) => [
+  `[Unity] <color=red>${NRE}</color>`,
+  '[Unity] <color=red>Stack trace:',
+  ...frames,
+  '</color>',
+  NRE,
+  ...frames.map((frame) => `   at ${frame}`),
+  ' ',
+  '(Filename:  Line: -1)',
+  '',
+].join('\n') + '\n';
+
+test('one message is one group per credited frame', async (t) => {
+  const { paths } = await logPair(t);
+  const snapshot = await snapshotLogs(paths);
+  const slime = nreCall('void JigglySlimeDoodad.OnDestroy()');
+  const egg = nreCall('void Map.RemoveAlienEggExplosive(AlienEggExplosive egg)', 'void AlienEggExplosive.OnDestroy()');
+  const box = nreCall('void ScalingBox.Update()');
+  await appendFile(paths.player, slime + egg + slime + egg + box);
+
+  const logs = await collectLogDelta(snapshot);
+  const game = logs.bySource.filter((s) => s.source === 'Unity');
+  assert.equal(game.length, 1, JSON.stringify(logs.bySource));
+  assert.equal(game[0].origin, 'Broforce');
+  assert.equal(game[0].errors, 5);
+  assert.deepEqual(game[0].groups.map(({ count, message, frame }) => ({ count, message, frame })), [
+    { count: 2, message: NRE, frame: 'JigglySlimeDoodad.OnDestroy' },
+    { count: 2, message: NRE, frame: 'Map.RemoveAlienEggExplosive' },
+    { count: 1, message: NRE, frame: 'ScalingBox.Update' },
+  ]);
+  assert.equal(logs.summary.errors, 5);
+});
+
+test("a framework frame's throw is credited to its game caller", () => {
+  const lookup = (caller) => ({
+    source: 'Unity',
+    message: 'KeyNotFoundException: The given key was not present in the dictionary.',
+    severity: 'error',
+    frames: [
+      'at System.Collections.Generic.Dictionary`2[System.String,System.Int32].get_Item (System.String key) [0x00000] in <filename unknown>:0 ',
+      `at ${caller} () [0x00000] in <filename unknown>:0 `,
+    ],
+    lineCount: 4,
+    unityCall: true,
+  });
+  const { bySource } = groupEntries([lookup('HeroController.GetHeroIndex'), lookup('Map.GetBlockName'), lookup('HeroController.GetHeroIndex')]);
+  assert.equal(bySource.length, 1);
+  assert.equal(bySource[0].origin, 'Broforce');
+  assert.deepEqual(bySource[0].groups.map(({ count, frame }) => ({ count, frame })), [
+    { count: 2, frame: 'HeroController.GetHeroIndex' },
+    { count: 1, frame: 'Map.GetBlockName' },
+  ]);
+});
+
+test("each frame's group floods on its own count", () => {
+  const nre = (frame) => ({ source: 'Unity', message: NRE, severity: 'error', frames: [`at ${frame} ()`], lineCount: 4, unityCall: true });
+  const entries = [
+    ...Array.from({ length: FLOOD_MIN_COUNT + 10 }, () => nre('ScalingBox.Update')),
+    ...Array.from({ length: 3 }, () => nre('DoodadSignPost.SetupTextBox')),
+  ];
+  const { summary, bySource } = groupEntries(entries);
+  assert.deepEqual(bySource[0].groups.map(({ severity, count, flood, frame }) => ({ severity, count, flood, frame })), [
+    { severity: 'error', count: FLOOD_MIN_COUNT + 10, flood: true, frame: 'ScalingBox.Update' },
+    { severity: 'error', count: 3, flood: undefined, frame: 'DoodadSignPost.SetupTextBox' },
+  ]);
+  assert.equal(summary.errors, FLOOD_MIN_COUNT + 13);
+  assert.equal(summary.floods, 1);
+});
+
+test('many frames and sources fit the payload cap', async (t) => {
+  const { paths } = await logPair(t);
+  const snapshot = await snapshotLogs(paths);
+  const lines = [];
+  for (let source = 0; source < 30; source++) {
+    for (let frame = 0; frame < 20; frame++) {
+      lines.push(`[Mod ${source}] [Error] ${'x'.repeat(400)}`, `  at Mod${source}.Type${frame}.${'Method'.repeat(80)} ()`);
+    }
+  }
+  await appendFile(paths.player, lines.join('\n') + '\n');
+
+  const logs = await collectLogDelta(snapshot);
+  const size = JSON.stringify(logs).length;
+  assert.ok(size <= LOG_PAYLOAD_MAX_CHARS, `logs payload is ${size} chars`);
+  assert.equal(logs.truncated, true);
+  assert.equal(logs.summary.errors, 600);
+});
+
 test('one line repeated past the flood threshold is one flood group with its count', async (t) => {
   const { paths } = await logPair(t);
   const snapshot = await snapshotLogs(paths);
